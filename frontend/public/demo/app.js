@@ -443,8 +443,7 @@ function resolveAdmissionCategoryValue(categoryValue, services) {
   return serviceNames.join(", ");
 }
 
-function repairDemoText(value) {
-  const replacements = {
+const _repairDemoTextMap = {
     "Р вЂњР В»Р В°Р Р†Р Р…Р В°РЎРЏ": "Главная",
     "Р вЂ™РЎР‚Р В°РЎвЂЎР С‘": "Врачи",
     "Р Р€РЎРѓР В»РЎС“Р С–Р С‘": "Услуги",
@@ -493,10 +492,15 @@ function repairDemoText(value) {
     "В·": "·",
   };
 
-  return Object.entries(replacements).reduce(
-    (result, [broken, fixed]) => result.replaceAll(broken, fixed),
-    String(value ?? ""),
-  );
+const _repairDemoTextRegex = new RegExp(
+  Object.keys(_repairDemoTextMap).map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  "g",
+);
+
+function repairDemoText(value) {
+  const str = String(value ?? "");
+  if (!str) return str;
+  return str.replace(_repairDemoTextRegex, (m) => _repairDemoTextMap[m] ?? m);
 }
 
 function loadPersistedDemoState() {
@@ -763,7 +767,10 @@ function getDoctorTemplate(doctorRoleId) {
   return getDoctorTemplates().find((item) => item.id === doctorRoleId) || null;
 }
 
+let _clientPoolCache = null;
+
 function getClientPool() {
+  if (_clientPoolCache) return _clientPoolCache;
   const merged = [...(data.backendClients || []), ...(data.clients || [])];
   const uniqueClients = [];
   const seen = new Set();
@@ -775,7 +782,12 @@ function getClientPool() {
     uniqueClients.push(client);
   });
 
+  _clientPoolCache = uniqueClients;
   return uniqueClients;
+}
+
+function invalidateClientPool() {
+  _clientPoolCache = null;
 }
 
 function getSelectedClient() {
@@ -1661,7 +1673,7 @@ async function loadWorkflowData(options = {}) {
 
   data.workflowDataLoading = true;
   data.workflowDataError = "";
-  renderApp();
+  setTimeout(renderApp, 0);
 
   try {
     const [
@@ -1728,6 +1740,7 @@ function upsertClientInMemory(client) {
     data.backendClients.unshift(mappedClient);
   }
 
+  invalidateClientPool();
   return mappedClient;
 }
 
@@ -2074,24 +2087,30 @@ async function loadDoctorExamsForClient(client, visit = null) {
 
 async function preloadDoctorMarksForClients(clients) {
   const items = Array.isArray(clients) ? clients.filter(Boolean) : [];
-  await Promise.all(
-    items.map(async (client) => {
-      const clientId = client?.backendId || client?.id;
-      if (!clientId) return;
-      try {
-        const exams = await apiRequest(`/doctor-exams?client_id=${encodeURIComponent(clientId)}`);
-        const mapped = (Array.isArray(exams) ? exams : []).map((exam) => ({
-          doctorRoleId: exam.doctor_role_id,
-          isCompleted: Boolean(exam.is_completed),
-          backendEncounterId: exam.encounter_id || null,
-          visitId: exam.encounter_id ? `encounter-${exam.encounter_id}` : null,
-        }));
-        syncCompletedDoctorMarksToClient(client, mapped);
-      } catch (error) {
-        console.warn("Failed to preload doctor marks", error);
-      }
-    }),
-  );
+  if (!items.length) return;
+  const ids = items.map((c) => c?.backendId || c?.id).filter(Boolean);
+  if (!ids.length) return;
+  try {
+    const params = ids.map((id) => `client_ids=${encodeURIComponent(id)}`).join("&");
+    const exams = await apiRequest(`/doctor-exams?${params}`);
+    const examsByClientId = {};
+    for (const exam of Array.isArray(exams) ? exams : []) {
+      const cid = String(exam.client_id);
+      if (!examsByClientId[cid]) examsByClientId[cid] = [];
+      examsByClientId[cid].push({
+        doctorRoleId: exam.doctor_role_id,
+        isCompleted: Boolean(exam.is_completed),
+        backendEncounterId: exam.encounter_id || null,
+        visitId: exam.encounter_id ? `encounter-${exam.encounter_id}` : null,
+      });
+    }
+    for (const client of items) {
+      const cid = String(client?.backendId || client?.id);
+      syncCompletedDoctorMarksToClient(client, examsByClientId[cid] || []);
+    }
+  } catch (error) {
+    console.warn("Failed to preload doctor marks", error);
+  }
 }
 
 async function loadClientWorkspace(client) {
@@ -2611,7 +2630,7 @@ async function loadClientsFromBackend(searchValue) {
 
   data.backendSearchLoading = true;
   data.backendSearchError = "";
-  renderApp();
+  setTimeout(renderApp, 0);
 
   try {
     const params = new URLSearchParams({ limit: String(DASHBOARD_PAGE_SIZE) });
@@ -2624,6 +2643,7 @@ async function loadClientsFromBackend(searchValue) {
     if (requestId !== clientSearchRequestId) return;
 
     data.backendClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
+    invalidateClientPool();
     await preloadDoctorMarksForClients(data.backendClients);
     if (requestId !== clientSearchRequestId) return;
     data.backendSearch = search;
@@ -2640,6 +2660,7 @@ async function loadClientsFromBackend(searchValue) {
   } catch (error) {
     if (requestId !== clientSearchRequestId) return;
     data.backendClients = [];
+    invalidateClientPool();
     data.backendSearch = search;
     data.backendSearchError = "Backend недоступен. Проверь, что сервер запущен на http://127.0.0.1:8000";
     data.backendSearchError = humanizeApiError(error, "Backend недоступен. Проверь, что сервер запущен на http://127.0.0.1:8000");
@@ -2775,7 +2796,7 @@ function renderNav() {
         return;
       }
       appState.page = page;
-      renderApp();
+      setTimeout(renderApp, 0);
       if (page === "employee" && (appState.auth.roleCode === "chairman" || appState.auth.roleCode === "admin") && !data.staffLoading) {
         loadStaffWorkspace();
       }
@@ -7780,6 +7801,7 @@ function bindMedicalRecordPanelResize() {
 }
 
 function renderApp() {
+  _clientPoolCache = null;
   if (appState.page === "reports" && !canAccessReportsWorkspace()) {
     appState.page = appState.auth.accessToken ? "employee" : "dashboard";
   }

@@ -40,12 +40,15 @@ def apply_completion_state(exam: DoctorExam) -> None:
 @router.get("", response_model=list[DoctorExamRead])
 def list_doctor_exams(
     client_id: int | None = Query(default=None),
+    client_ids: list[int] = Query(default=[]),
     encounter_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[DoctorExamRead]:
     query = select(DoctorExam).where(DoctorExam.deleted_at.is_(None)).order_by(DoctorExam.id.desc())
     if client_id is not None:
         query = query.where(DoctorExam.client_id == client_id)
+    if client_ids:
+        query = query.where(DoctorExam.client_id.in_(client_ids))
     if encounter_id is not None:
         query = query.where(DoctorExam.encounter_id == encounter_id)
     exams = db.execute(query).scalars().all()
