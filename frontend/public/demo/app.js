@@ -1493,7 +1493,7 @@ function getServerServiceByName(name) {
 const RU_DATE_FORMAT_OPTIONS = {
   day: "2-digit",
   month: "2-digit",
-  year: "2-digit",
+  year: "numeric",
 };
 
 const RU_DATE_TIME_FORMAT_OPTIONS = {
@@ -1503,6 +1503,20 @@ const RU_DATE_TIME_FORMAT_OPTIONS = {
 };
 
 function formatDateTime(value = new Date()) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const isoDateTimeMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2}))?/);
+  if (isoDateTimeMatch) {
+    const dateText = `${isoDateTimeMatch[3]}.${isoDateTimeMatch[2]}.${isoDateTimeMatch[1]}`;
+    return isoDateTimeMatch[4] ? `${dateText}, ${isoDateTimeMatch[4].padStart(2, "0")}:${isoDateTimeMatch[5]}` : dateText;
+  }
+
+  const ruDateTimeMatch = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})(?:[,\s]+(\d{1,2}):(\d{2}))?/);
+  if (ruDateTimeMatch) {
+    const year = ruDateTimeMatch[3].length === 2 ? `20${ruDateTimeMatch[3]}` : ruDateTimeMatch[3];
+    const dateText = `${ruDateTimeMatch[1].padStart(2, "0")}.${ruDateTimeMatch[2].padStart(2, "0")}.${year}`;
+    return ruDateTimeMatch[4] ? `${dateText}, ${ruDateTimeMatch[4].padStart(2, "0")}:${ruDateTimeMatch[5]}` : dateText;
+  }
+
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("ru-RU", RU_DATE_TIME_FORMAT_OPTIONS);
@@ -1510,6 +1524,16 @@ function formatDateTime(value = new Date()) {
 
 function formatApiDate(value) {
   if (!value) return "";
+  const text = String(value).trim();
+  const isoDateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+  if (isoDateMatch) return `${isoDateMatch[3]}.${isoDateMatch[2]}.${isoDateMatch[1]}`;
+
+  const ruDateMatch = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})/);
+  if (ruDateMatch) {
+    const year = ruDateMatch[3].length === 2 ? `20${ruDateMatch[3]}` : ruDateMatch[3];
+    return `${ruDateMatch[1].padStart(2, "0")}.${ruDateMatch[2].padStart(2, "0")}.${year}`;
+  }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString("ru-RU", RU_DATE_FORMAT_OPTIONS);
@@ -1545,7 +1569,7 @@ function mapApiClient(client) {
     snils: client.snils || "",
     email: client.email || "",
     note: client.notes || "",
-    lastVisit: client.real_date_text || client.encounter_date_text || "",
+    lastVisit: formatDateTime(client.real_date_text || client.encounter_date_text || ""),
     services,
     registration: client.registration_text || client.address_text || "",
     admissionCategory: client.admission_category || "",
@@ -1563,7 +1587,7 @@ function mapApiClient(client) {
     infectionist: client.doctor_infectionist || "",
     phthisiatrician: client.doctor_phthisiatrician || "",
     uzist: client.doctor_uzist || "",
-    encounterDate: client.encounter_date_text || "",
+    encounterDate: formatDateTime(client.encounter_date_text || client.real_date_text || ""),
     cardNumber: client.card_number || "",
     profession: client.profession || "",
     workPlace: client.work_place || "",
@@ -2283,7 +2307,7 @@ async function loadWorkflowData(options = {}) {
 
 function parseRuDateToIso(value, fallback = "1900-01-01") {
   const text = String(value || "").trim();
-  const match = text.match(/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})(?:[\s,].*)?$/);
+  const match = text.match(/^(\d{2})\.(\d{2})\.(\d{4}|\d{2})(?:[\s,].*)?$/);
   if (match) {
     const year = match[3].length === 2 ? expandTwoDigitYear(match[3]) : match[3];
     return `${year}-${match[2]}-${match[1]}`;
@@ -2434,7 +2458,7 @@ const CHAIRMAN_CERTIFICATE_DEFAULTS = {
 };
 
 function extractRuDate(value) {
-  return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{2}|\d{4})\b/)?.[0] || "";
+  return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{4}|\d{2})\b/)?.[0] || "";
 }
 
 function todayRuDate() {
@@ -3559,7 +3583,7 @@ function normalizeEncounterDateFilterValue(value) {
   const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (isoMatch) return `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1].slice(-2)}`;
 
-  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})(?:\s+\d{1,2}:\d{2})?/);
+  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{4}|\d{2})(?:[,\s]+\d{1,2}:\d{2})?/);
   if (ruMatch) return `${ruMatch[1]}.${ruMatch[2]}.${ruMatch[3].slice(-2)}`;
 
   const parsed = new Date(text);
@@ -3569,7 +3593,7 @@ function normalizeEncounterDateFilterValue(value) {
 
 function isCompleteEncounterDateFilter(value) {
   const text = String(value || "").trim();
-  return !text || /^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{2}\.\d{2}\.(?:\d{2}|\d{4})$/.test(text);
+  return !text || /^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{2}\.\d{2}\.(?:\d{4}|\d{2})$/.test(text);
 }
 
 function matchesEncounterDate(client) {
@@ -7872,7 +7896,7 @@ function parseCalendarDate(value) {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const text = String(value).trim();
-  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})/);
+  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{4}|\d{2})/);
   if (ruMatch) {
     const year = ruMatch[3].length === 2 ? expandTwoDigitYear(ruMatch[3]) : ruMatch[3];
     const date = new Date(Number(year), Number(ruMatch[2]) - 1, Number(ruMatch[1]));
