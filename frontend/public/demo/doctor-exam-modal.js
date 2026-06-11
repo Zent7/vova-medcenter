@@ -1728,7 +1728,8 @@
     // соответствующие значения полей из window.doctorPresets.
     const presetSelect = form.querySelector('select[name="complaintsPreset"]');
     if (presetSelect) {
-      let lastAppliedPresetValues = null;
+      const initialPresets = (window.doctorPresets || {})[form.dataset.doctorRoleId];
+      let lastAppliedPresetValues = findDoctorPreset(initialPresets, presetSelect.value);
       presetSelect.addEventListener("change", () => {
         const doctorRoleId = form.dataset.doctorRoleId;
         const presetName = presetSelect.value;
