@@ -52,6 +52,45 @@
 
   window.rememberChairmanMedicalRequirement = rememberMedicalRequirementValue;
 
+  function repairPresetText(value) {
+    const text = String(value ?? "");
+    if (!text) return "";
+    if (typeof window.repairDemoText === "function") {
+      const repaired = window.repairDemoText(text);
+      if (repaired && repaired !== text) return repaired;
+    }
+    try {
+      return decodeURIComponent(escape(text));
+    } catch {
+      return text;
+    }
+  }
+
+  function normalizePresetKey(value) {
+    return repairPresetText(value).trim().toLowerCase();
+  }
+
+  function findDoctorPreset(presets, presetName) {
+    if (!presets || typeof presets !== "object") return null;
+    if (Object.prototype.hasOwnProperty.call(presets, presetName)) {
+      return presets[presetName];
+    }
+
+    const normalizedPresetName = normalizePresetKey(presetName);
+    const match = Object.entries(presets).find(([key]) => normalizePresetKey(key) === normalizedPresetName);
+    return match ? match[1] : null;
+  }
+
+  function notifyMissingDoctorPreset(doctorRoleId, presetName, presets) {
+    const availablePresets = presets && typeof presets === "object" ? Object.keys(presets) : [];
+    console.warn("Doctor preset was not found", {
+      doctorRoleId,
+      presetName,
+      availablePresets,
+    });
+    window.showToast?.(`Не найден пресет врача: ${repairPresetText(presetName) || "без названия"}`);
+  }
+
   const AUTO_EKG_CONCLUSION_PREFIX =
     "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей";
 
@@ -844,7 +883,16 @@
 
                 <div class="chairman-main-row chairman-main-row--requirements">
                   <label class="chairman-main-label">Мед. требования:</label>
-                  <textarea class="doctor-classic-textarea chairman-textarea chairman-textarea--big" name="medicalRequirements" data-medical-requirements-input>${escapeHtml(fields.medicalRequirements ?? "")}</textarea>
+                  <div class="chairman-requirements-control">
+                    <textarea class="doctor-classic-textarea chairman-textarea chairman-textarea--big" name="medicalRequirements" data-medical-requirements-input>${escapeHtml(fields.medicalRequirements ?? "")}</textarea>
+                    <button
+                      type="button"
+                      class="chairman-requirements-picker-btn"
+                      data-medical-requirements-open
+                      title="Выбрать из сохраненных"
+                      aria-label="Выбрать из сохраненных"
+                    >...</button>
+                  </div>
                 </div>
               </div>
 
@@ -1590,14 +1638,12 @@
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");
       if (medicalRequirementsInput) {
         const rememberCurrentRequirements = () => rememberMedicalRequirementValue(medicalRequirementsInput.value);
-        const showRequirementsPicker = (event) => {
+        const medicalRequirementsOpenButton = form.querySelector("[data-medical-requirements-open]");
+        medicalRequirementsOpenButton?.addEventListener("click", (event) => {
+          event.preventDefault();
           event.stopPropagation();
           openMedicalRequirementsPicker(medicalRequirementsInput);
-        };
-        medicalRequirementsInput.addEventListener("pointerdown", showRequirementsPicker);
-        medicalRequirementsInput.addEventListener("mousedown", showRequirementsPicker);
-        medicalRequirementsInput.addEventListener("click", showRequirementsPicker);
-        medicalRequirementsInput.addEventListener("focus", showRequirementsPicker);
+        });
         medicalRequirementsInput.addEventListener("change", rememberCurrentRequirements);
         medicalRequirementsInput.addEventListener("blur", rememberCurrentRequirements);
       }
@@ -1687,15 +1733,18 @@
         const doctorRoleId = form.dataset.doctorRoleId;
         const presetName = presetSelect.value;
         const presets = (window.doctorPresets || {})[doctorRoleId];
-        const preset = presets ? presets[presetName] : null;
-        if (!preset) return;
+        const preset = findDoctorPreset(presets, presetName);
+        if (!preset) {
+          notifyMissingDoctorPreset(doctorRoleId, presetName, presets);
+          return;
+        }
 
         Object.entries(preset).forEach(([fieldKey, value]) => {
           const elements = form.elements[fieldKey];
           if (!elements) return;
           const el = elements.length && elements.tagName === undefined ? elements[0] : elements;
           if (!el || el.type === "radio" || el.type === "checkbox") return;
-          const nextValue = value == null ? "" : String(value);
+          const nextValue = value == null ? "" : repairPresetText(value);
           const currentValue = String(el.value ?? "");
           const previousPresetValue = lastAppliedPresetValues && fieldKey in lastAppliedPresetValues
             ? String(lastAppliedPresetValues[fieldKey] ?? "")

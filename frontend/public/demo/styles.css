@@ -2822,6 +2822,28 @@ textarea {
   resize: vertical;
 }
 
+.chairman-requirements-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.chairman-requirements-picker-btn {
+  min-height: 58px;
+  border: 1px solid rgba(23, 48, 74, 0.24);
+  border-radius: 9px;
+  background: #eef3f6;
+  color: #17304a;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.chairman-requirements-picker-btn:hover {
+  background: #dfeaf2;
+}
+
 .doctor-classic-textarea--diagnosis {
   min-height: 78px;
 }
@@ -3743,6 +3765,19 @@ textarea {
 
 .driver-print-classic__input--date {
   font-size: 14px;
+}
+
+.chairman-checkbox {
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.chairman-checkbox input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
 }
 
 .driver-print-classic__button {
