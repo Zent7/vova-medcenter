@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String
+from sqlalchemy import ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -17,4 +17,4 @@ class EncounterService(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     line_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     sequence_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -492,6 +492,7 @@ const CHAIRMAN_FORM_CONFIGS = {
   },
 };
 const DRIVER_BASE_CATEGORIES = new Set(["A", "B", "M", "A1", "B1"]);
+const DRIVER_DEFAULT_CATEGORIES = ["A", "B", "C", "D", "BE", "M"];
 const DRIVER_CATEGORY_OPTIONS = ["A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E"];
 const DRIVER_CATEGORY_ADVANCED_ROLES = ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"];
 const DRIVER_CATEGORY_BASE_ROLES = ["therapist", "ophthalmologist", "chairman"];
@@ -1417,7 +1418,7 @@ function getDoctorRoleCodeById(roleId) {
 function getDoctorRoleCodeSetFromService(service, detail = {}) {
   if (!service) return new Set();
   if (isDriverService(service)) {
-    return new Set(getDriverRoleCodes(detail.categories));
+    return new Set(getDriverRoleCodes(detail.categories || DRIVER_DEFAULT_CATEGORIES));
   }
   if (isSportService(service)) {
     return new Set(["chairman"]);
@@ -1493,7 +1494,7 @@ function getServerServiceByName(name) {
 const RU_DATE_FORMAT_OPTIONS = {
   day: "2-digit",
   month: "2-digit",
-  year: "2-digit",
+  year: "numeric",
 };
 
 const RU_DATE_TIME_FORMAT_OPTIONS = {
@@ -1503,6 +1504,20 @@ const RU_DATE_TIME_FORMAT_OPTIONS = {
 };
 
 function formatDateTime(value = new Date()) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const isoDateTimeMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2}))?/);
+  if (isoDateTimeMatch) {
+    const dateText = `${isoDateTimeMatch[3]}.${isoDateTimeMatch[2]}.${isoDateTimeMatch[1]}`;
+    return isoDateTimeMatch[4] ? `${dateText}, ${isoDateTimeMatch[4].padStart(2, "0")}:${isoDateTimeMatch[5]}` : dateText;
+  }
+
+  const ruDateTimeMatch = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})(?:[,\s]+(\d{1,2}):(\d{2}))?/);
+  if (ruDateTimeMatch) {
+    const year = ruDateTimeMatch[3].length === 2 ? `20${ruDateTimeMatch[3]}` : ruDateTimeMatch[3];
+    const dateText = `${ruDateTimeMatch[1].padStart(2, "0")}.${ruDateTimeMatch[2].padStart(2, "0")}.${year}`;
+    return ruDateTimeMatch[4] ? `${dateText}, ${ruDateTimeMatch[4].padStart(2, "0")}:${ruDateTimeMatch[5]}` : dateText;
+  }
+
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("ru-RU", RU_DATE_TIME_FORMAT_OPTIONS);
@@ -1510,6 +1525,16 @@ function formatDateTime(value = new Date()) {
 
 function formatApiDate(value) {
   if (!value) return "";
+  const text = String(value).trim();
+  const isoDateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+  if (isoDateMatch) return `${isoDateMatch[3]}.${isoDateMatch[2]}.${isoDateMatch[1]}`;
+
+  const ruDateMatch = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})/);
+  if (ruDateMatch) {
+    const year = ruDateMatch[3].length === 2 ? `20${ruDateMatch[3]}` : ruDateMatch[3];
+    return `${ruDateMatch[1].padStart(2, "0")}.${ruDateMatch[2].padStart(2, "0")}.${year}`;
+  }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString("ru-RU", RU_DATE_FORMAT_OPTIONS);
@@ -1545,7 +1570,7 @@ function mapApiClient(client) {
     snils: client.snils || "",
     email: client.email || "",
     note: client.notes || "",
-    lastVisit: client.real_date_text || client.encounter_date_text || "",
+    lastVisit: formatDateTime(client.real_date_text || client.encounter_date_text || ""),
     services,
     registration: client.registration_text || client.address_text || "",
     admissionCategory: client.admission_category || "",
@@ -1563,7 +1588,7 @@ function mapApiClient(client) {
     infectionist: client.doctor_infectionist || "",
     phthisiatrician: client.doctor_phthisiatrician || "",
     uzist: client.doctor_uzist || "",
-    encounterDate: client.encounter_date_text || "",
+    encounterDate: formatDateTime(client.encounter_date_text || client.real_date_text || ""),
     cardNumber: client.card_number || "",
     profession: client.profession || "",
     workPlace: client.work_place || "",
@@ -2283,7 +2308,7 @@ async function loadWorkflowData(options = {}) {
 
 function parseRuDateToIso(value, fallback = "1900-01-01") {
   const text = String(value || "").trim();
-  const match = text.match(/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})(?:[\s,].*)?$/);
+  const match = text.match(/^(\d{2})\.(\d{2})\.(\d{4}|\d{2})(?:[\s,].*)?$/);
   if (match) {
     const year = match[3].length === 2 ? expandTwoDigitYear(match[3]) : match[3];
     return `${year}-${match[2]}-${match[1]}`;
@@ -2434,7 +2459,7 @@ const CHAIRMAN_CERTIFICATE_DEFAULTS = {
 };
 
 function extractRuDate(value) {
-  return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{2}|\d{4})\b/)?.[0] || "";
+  return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{4}|\d{2})\b/)?.[0] || "";
 }
 
 function todayRuDate() {
@@ -3127,7 +3152,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
   const indicationsText = indicationsList.join(", ") || String(fields.diagnosis || raw.indications || "").trim() || null;
   const chairmanMedicalRecordData = buildChairmanMedicalRecordData(fields);
 
-  if (isDriverChairmanFlow && visit && Object.keys(driverDetail).length) {
+  if (isDriverChairmanFlow && visit) {
     driverDetail.categories = chairmanCategories.slice();
     driverDetail.indications = indicationsList;
     driverDetail.limitations = limitationsList;
@@ -3559,7 +3584,7 @@ function normalizeEncounterDateFilterValue(value) {
   const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (isoMatch) return `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1].slice(-2)}`;
 
-  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})(?:\s+\d{1,2}:\d{2})?/);
+  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{4}|\d{2})(?:[,\s]+\d{1,2}:\d{2})?/);
   if (ruMatch) return `${ruMatch[1]}.${ruMatch[2]}.${ruMatch[3].slice(-2)}`;
 
   const parsed = new Date(text);
@@ -3569,7 +3594,7 @@ function normalizeEncounterDateFilterValue(value) {
 
 function isCompleteEncounterDateFilter(value) {
   const text = String(value || "").trim();
-  return !text || /^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{2}\.\d{2}\.(?:\d{2}|\d{4})$/.test(text);
+  return !text || /^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{2}\.\d{2}\.(?:\d{4}|\d{2})$/.test(text);
 }
 
 function matchesEncounterDate(client) {
@@ -6711,6 +6736,15 @@ function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   return config.templateType;
 }
 
+const CHAIRMAN_NUMBERED_CERTIFICATE_SERIES = new Map([
+  ["086", "086У"],
+  ["095", "095У"],
+]);
+
+function getChairmanNumberedCertificateSeries(printType) {
+  return CHAIRMAN_NUMBERED_CERTIFICATE_SERIES.get(String(printType || "").toLowerCase()) || "";
+}
+
 function registerGeneratedDocument(result, type, client, visit) {
   const documentItem = {
     id: result.generated_document_id || generateId("document"),
@@ -6859,14 +6893,15 @@ async function printChairmanDocumentFromExam(examId) {
     return null;
   }
 
+  const printType = getChairmanTemplatePrintType(visit);
   const formInfo = getChairmanFormInfo(visit, client);
-  if (formInfo.printMode === "driver-flow") {
+  const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
+  if (formInfo.printMode === "driver-flow" || numberedCertificateSeries) {
     window.closeSportCard?.();
-    await openDriverPrintFlow();
+    await openDriverPrintFlow(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {});
     return null;
   }
 
-  const printType = getChairmanTemplatePrintType(visit);
   if (!printType) {
     showToast("Не найден шаблон для печати");
     return null;
@@ -7355,15 +7390,17 @@ async function openDriverPrintFlow(options = {}) {
 
   await syncVisitToBackend(visit, client);
 
+  const preselectedSeries = normalizeBlankSeries(options.preselectedSeries);
+  const preselectedCertificateType = getDriverPrintCertificateType(preselectedSeries);
   const template = pickDocumentTemplate("driver", visit, client);
-  if (!template) {
+  if (!template && !preselectedCertificateType) {
     showToast("Не найден шаблон водительской справки");
     return;
   }
 
   const clientId = client.backendId || client.id;
   const centerId = await resolveCenterIdForVisit(visit, client);
-  const blankType = template.blank_type || "driver_medical_certificate";
+  const blankType = template?.blank_type || "driver_medical_certificate";
 
   let seriesOptions = [];
   let fallbackBlank = options.preselectedBlank || null;
@@ -7431,7 +7468,7 @@ async function openDriverPrintFlow(options = {}) {
     blankType,
     seriesOptions,
     selectedSeries:
-      normalizeBlankSeries(options.preselectedSeries) ||
+      preselectedSeries ||
       getStoredDriverPrintSeries() ||
       normalizeBlankSeries(seriesOptions[0]?.series),
     selectedCertificateType: "",
@@ -7469,10 +7506,10 @@ async function openDriverPrintFlow(options = {}) {
     }
 
     return `
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_front" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Печатать лицевую часть</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_back" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Печатать оборот</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_front" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Лицевая трактора</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_back" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Оборот трактора</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_front" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Печатать лицевую часть</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_back" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Печатать оборот</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_front" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Лицевая трактора</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_back" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Оборот трактора</button>
     `;
   };
 
@@ -7549,6 +7586,11 @@ async function openDriverPrintFlow(options = {}) {
     const skipConfirmation = Boolean(options.skipConfirmation);
     const variant = DRIVER_PRINT_VARIANTS.find((item) => item.id === variantId);
     if (!variant || !flowState.currentBlank?.id) return;
+    if (!flowState.template) {
+      flowState.error = "Не найден шаблон водительской справки";
+      renderFlow();
+      return;
+    }
     flowState.loading = true;
     flowState.error = "";
     renderFlow();
@@ -7872,7 +7914,7 @@ function parseCalendarDate(value) {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const text = String(value).trim();
-  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})/);
+  const ruMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{4}|\d{2})/);
   if (ruMatch) {
     const year = ruMatch[3].length === 2 ? expandTwoDigitYear(ruMatch[3]) : ruMatch[3];
     const date = new Date(Number(year), Number(ruMatch[2]) - 1, Number(ruMatch[1]));
@@ -8191,11 +8233,11 @@ function openActionModal(title, html, className = "") {
 }
 
 function formatDateInput(value) {
-  const digits = String(value || "").replace(/\D/g, "").slice(0, 6);
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
   const parts = [];
   if (digits.slice(0, 2)) parts.push(digits.slice(0, 2));
   if (digits.slice(2, 4)) parts.push(digits.slice(2, 4));
-  if (digits.slice(4, 6)) parts.push(digits.slice(4, 6));
+  if (digits.slice(4, 8)) parts.push(digits.slice(4, 8));
   return parts.join(".");
 }
 
@@ -9335,21 +9377,7 @@ function bindContentEvents() {
       button.textContent = label;
       return button;
     };
-    const initialExamId = chairmanForm.dataset.examId;
-    const initialExam = initialExamId ? data.doctorExams.find((item) => String(item.id) === String(initialExamId)) : null;
-    const initialClient = initialExam
-      ? getClientPool().find((item) => String(item.id) === String(initialExam.clientId))
-      : getSelectedClient();
-    const initialVisit = initialExam
-      ? data.visits.find((item) => String(item.id) === String(initialExam.visitId))
-      : initialClient
-        ? getCurrentVisitForClient(initialClient.id)
-        : null;
-    const initialFormInfo = getChairmanFormInfo(initialVisit, initialClient);
-    const printButtons =
-      initialFormInfo.type === "prof"
-        ? [createPrintButton("Печать заключения", "conclusion"), createPrintButton("Печать выписки", "extract")]
-        : [createPrintButton("Печать", "conclusion")];
+    const printButtons = [createPrintButton("Печать", "conclusion")];
     printButtons
       .slice()
       .reverse()
@@ -9359,7 +9387,7 @@ function bindContentEvents() {
       event.preventDefault();
       event.stopPropagation();
       const printKind = event.currentTarget?.dataset.chairmanPrint || "conclusion";
-      const actionLabel = printKind === "extract" ? "выписка" : "заключение";
+      const actionLabel = printKind === "extract" ? "выписка" : "документ";
       const currentButton = event.currentTarget;
 
       const examId = chairmanForm.dataset.examId;
@@ -9387,6 +9415,13 @@ function bindContentEvents() {
           : null;
       const printType = getChairmanTemplatePrintType(visit, printKind);
       const formInfo = getChairmanFormInfo(visit, client);
+      const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
+
+      if (formInfo.printMode === "driver-flow" || numberedCertificateSeries) {
+        window.closeDoctorExamCard?.();
+        await window.openDriverPrintFlow?.(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {});
+        return;
+      }
 
       if (formInfo.printMode !== "driver-flow" && printType) {
         try {
