@@ -4376,7 +4376,7 @@ function renderSketchHome() {
                       (row) => `
                         <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Двойной клик откроет амбулаторную карту">
                           <span>${escapeHtml(row.encounterDate)}</span>
-                          <span>${escapeHtml(displayTableValue(row.fullName))}</span>
+                          <span class="sketch-table__fio">${escapeHtml(displayTableValue(row.fullName))}</span>
                           <span>${escapeHtml(row.birthDate)}</span>
                           <span>${renderCopyableValue(row.registration, "регистрацию", { className: "copyable-table-value", fallback: "—", copyMessage: "Регистрация скопирована", keyboard: false })}</span>
                           <span title="${escapeHtml(row.category || "не указана")}">${escapeHtml(displayTableValue(row.category))}</span>

@@ -13,7 +13,7 @@
   --danger: #9d2f2f;
   --shadow: 0 24px 60px rgba(15, 31, 56, 0.08);
   --excel-col-encounterDate: clamp(86px, 5.4vw, 112px);
-  --excel-col-fio: clamp(150px, 11vw, 220px);
+  --excel-col-fio: clamp(190px, 14vw, 290px);
   --excel-col-birth: clamp(82px, 5.2vw, 104px);
   --excel-col-registration: clamp(150px, 11vw, 230px);
   --excel-col-category: clamp(96px, 6.6vw, 138px);
@@ -2370,6 +2370,15 @@ textarea {
   display: flex;
   align-items: center;
   white-space: nowrap;
+}
+
+.sketch-table__grid--row > .sketch-table__fio {
+  align-items: center;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.12;
+  color: #0f2438;
+  white-space: normal;
 }
 
 .sketch-table__grid--row:hover,
