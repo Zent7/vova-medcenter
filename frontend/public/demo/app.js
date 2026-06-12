@@ -2329,20 +2329,29 @@ function expandTwoDigitYear(value) {
 function upsertClientInMemory(client) {
   if (!client) return null;
   const mappedClient = client.rawApiClient ? client : mapApiClient(client);
+  const mergeClient = (existing, incoming) => {
+    const existingServices = Array.isArray(existing?.services) ? existing.services : [];
+    const incomingServices = Array.isArray(incoming?.services) ? incoming.services : [];
+    return {
+      ...existing,
+      ...incoming,
+      services: incomingServices.length ? incomingServices : existingServices,
+    };
+  };
   const existingIndex = data.clients.findIndex(
     (item) =>
       String(item.backendId || item.id) === String(mappedClient.backendId || mappedClient.id) ||
       String(item.patientNumber || "") === String(mappedClient.patientNumber || ""),
   );
   if (existingIndex >= 0) {
-    data.clients[existingIndex] = { ...data.clients[existingIndex], ...mappedClient };
+    data.clients[existingIndex] = mergeClient(data.clients[existingIndex], mappedClient);
   } else {
     data.clients.unshift(mappedClient);
   }
 
   const backendIndex = data.backendClients.findIndex((item) => String(item.id) === String(mappedClient.id));
   if (backendIndex >= 0) {
-    data.backendClients[backendIndex] = mappedClient;
+    data.backendClients[backendIndex] = mergeClient(data.backendClients[backendIndex], mappedClient);
   } else {
     data.backendClients.unshift(mappedClient);
   }

@@ -369,7 +369,14 @@ def search_clients(
         encounter_date_from,
         encounter_date_to,
     ).limit(limit)
-    return [ClientSearchRead.model_validate(row) for row in db.execute(query).mappings().all()]
+    rows = db.execute(query).mappings().all()
+    services_by_client = latest_services_by_client_ids(db, [row["id"] for row in rows])
+    result: list[ClientSearchRead] = []
+    for row in rows:
+        payload = dict(row)
+        payload["services"] = services_by_client.get(row["id"], [])
+        result.append(ClientSearchRead.model_validate(payload))
+    return result
 
 
 @router.get("", response_model=list[ClientRead])
