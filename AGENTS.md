@@ -44,6 +44,21 @@ alembic downgrade -1                                   # roll back one step
 
 Default DB: `postgresql+psycopg://medcenters:medcenters@127.0.0.1:5434/medcenters`
 
+## Git and PR Workflow
+
+Before changing files, check the branch state:
+```bash
+git fetch origin
+git status --short --branch
+git branch --show-current
+```
+
+If the working tree is dirty, preserve the user's changes and do not overwrite them. If the current branch is behind or has diverged from its upstream/target branch, update or report that before making edits.
+
+When implementation and verification are complete, opening a pull request is enough. The PR will be merged shortly by the normal automation/process; do not wait for the merge unless explicitly asked.
+
+After opening a PR, check whether it is mergeable and whether it has conflicts, for example with `gh pr view --json mergeable,mergeStateStatus,statusCheckRollup` or the GitHub PR page. If there are conflicts, fix them before handing off; if they cannot be fixed locally, clearly report the conflict status and affected files.
+
 ## Backend Architecture
 
 **Stack**: FastAPI + SQLAlchemy 2.0 (async-style sync sessions) + Pydantic v2 + Alembic + PostgreSQL 16
