@@ -4059,7 +4059,7 @@ function renderAmbulatoryCardPage() {
         <article class="card chart-profile-card">
           <h3>Паспортная часть</h3>
           <div class="chart-fields">
-            <div><span>ФИО</span>${renderCopyableValue(selectedClient.fullName, "ФИО", { fallback: "не указано", copyMessage: "ФИО скопировано" })}</div>
+            <div><span>ФИО</span><strong>${escapeHtml(selectedClient.fullName || "не указано")}</strong></div>
             <div><span>Дата рождения</span><strong>${escapeHtml(selectedClient.birthDate || "не указана")}</strong></div>
             <div><span>Телефон</span><strong>${escapeHtml(selectedClient.phone || "не указан")}</strong></div>
             <div><span>Документ</span><strong>${escapeHtml(selectedClient.document || "не указан")}</strong></div>
@@ -4376,7 +4376,7 @@ function renderSketchHome() {
                       (row) => `
                         <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Двойной клик откроет амбулаторную карту">
                           <span>${escapeHtml(row.encounterDate)}</span>
-                          <span>${renderCopyableValue(row.fullName, "ФИО", { className: "copyable-table-value", fallback: "—", copyMessage: "ФИО скопировано", keyboard: false })}</span>
+                          <span>${escapeHtml(displayTableValue(row.fullName))}</span>
                           <span>${escapeHtml(row.birthDate)}</span>
                           <span>${renderCopyableValue(row.registration, "регистрацию", { className: "copyable-table-value", fallback: "—", copyMessage: "Регистрация скопирована", keyboard: false })}</span>
                           <span title="${escapeHtml(row.category || "не указана")}">${escapeHtml(displayTableValue(row.category))}</span>
