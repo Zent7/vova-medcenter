@@ -3874,7 +3874,22 @@ function buildExcelRows(clients) {
 
   return clients.map((client) => {
     const status = getDashboardDoctorStatus(client);
-    const currentVisit = getDashboardDoctorStatusVisit(client);
+    const fallbackServiceIds = (Array.isArray(client.services) ? client.services : [])
+      .map((name) => getServerServiceByName(name))
+      .filter(Boolean)
+      .map((service) => getServiceToken(service))
+      .filter(Boolean);
+    const currentVisit = getDashboardDoctorStatusVisit(client) || (
+      fallbackServiceIds.length
+        ? {
+            id: `dashboard-client-services-${client.id}`,
+            clientId: client.id,
+            serviceIds: fallbackServiceIds,
+            serviceDetails: {},
+            status: "draft",
+          }
+        : null
+    );
     const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit) : new Map();
     const completedDoctors = new Set(status?.completedDoctorRoleIds || []);
     const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors);
