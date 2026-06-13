@@ -1388,7 +1388,7 @@ function openClientModal(clientId = null, options = {}) {
           targetClient = savedMapped;
           targetClient = window.showClientInDashboardResults?.(targetClient, {
             resetSearch: isCreated,
-            refresh: true,
+            refresh: false,
           }) || targetClient;
         }
       }
@@ -1441,9 +1441,16 @@ function openClientModal(clientId = null, options = {}) {
           targetClient.rawApiClient.encounter_date_text = effectiveEncounterDate;
         }
       }
-      await window.syncVisitToBackend?.(effectiveVisit, targetClient);
-      await window.ensureRequiredDoctorExamsForVisit?.(targetClient, effectiveVisit);
-      await window.loadDashboardDoctorStatuses?.([targetClient], { render: false });
+      const backendSyncedVisit = await window.syncVisitToBackend?.(effectiveVisit, targetClient);
+      if (backendSyncedVisit?.backendId) {
+        effectiveVisit.backendId = backendSyncedVisit.backendId;
+      }
+      await window.ensureRequiredDoctorExamsForVisit?.(targetClient, effectiveVisit, { syncToBackend: Boolean(effectiveVisit?.backendId) });
+      await window.loadDashboardDoctorStatuses?.([targetClient], { render: true });
+      targetClient = window.showClientInDashboardResults?.(targetClient, {
+        resetSearch: false,
+        refresh: true,
+      }) || targetClient;
       window.persistDemoState?.();
     }
 
