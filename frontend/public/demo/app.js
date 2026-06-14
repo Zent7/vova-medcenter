@@ -346,6 +346,7 @@ const CHAIRMAN_FORM_CONFIGS = {
     type: "driver",
     label: "Председатель: водительская комиссия",
     templateType: "driver",
+    printTemplateType: "medical",
     printMode: "driver-flow",
     note: "Используется водительский шаблон и бланк водительской комиссии.",
   },
@@ -1195,9 +1196,11 @@ function getChairmanFormInfo(examOrVisit = null, client = null) {
     : examOrVisit;
   const resolvedClient = client || (visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient());
   const config = getChairmanFormConfigForVisit(visit);
-  const template = data.documentTemplatesLoaded ? pickDocumentTemplate(config.templateType, visit, resolvedClient) : null;
+  const printTemplateType = config.printTemplateType || config.templateType;
+  const template = data.documentTemplatesLoaded ? pickDocumentTemplate(printTemplateType, visit, resolvedClient) : null;
   return {
     ...config,
+    printTemplateType,
     template,
     templateId: template?.id || null,
     templateName: template?.name || template?.file_name || "",
@@ -2176,6 +2179,34 @@ async function openGeneratedDocumentManually(documentItem, options = {}) {
     console.warn("Не удалось открыть документ по временной ссылке", error);
   }
   return openGeneratedDocumentInBrowser(documentItem);
+}
+
+function prepareGeneratedDocumentTargetWindow(targetWindow) {
+  if (!targetWindow || targetWindow.closed) return;
+  try {
+    targetWindow.document.open();
+    targetWindow.document.write(`<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Word</title>
+          <style>
+            body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f8fafc; }
+            main { padding: 24px; text-align: center; }
+            strong { display: block; margin-bottom: 8px; font-size: 18px; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <strong>&#1060;&#1086;&#1088;&#1084;&#1080;&#1088;&#1091;&#1077;&#1084; Word</strong>
+            <span>&#1055;&#1086;&#1078;&#1072;&#1083;&#1091;&#1081;&#1089;&#1090;&#1072;, &#1087;&#1086;&#1076;&#1086;&#1078;&#1076;&#1080;&#1090;&#1077;...</span>
+          </main>
+        </body>
+      </html>`);
+    targetWindow.document.close();
+  } catch (error) {
+    console.warn("Unable to prepare document target window", error);
+  }
 }
 
 async function openGeneratedDocumentDirectly(documentItem, options = {}) {
@@ -6704,6 +6735,18 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     return findDocxSafely(["086у.муж_шаблон", "086у.жен_шаблон"], ["086"], []);
   };
 
+  if (normalizedType === "medical") {
+    return findDocxSafely(
+      [
+        "C\u043f\u0440\u0430\u0432\u043a\u0430_\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440_\u0448\u0430\u0431\u043b\u043e\u043d",
+        "\u0421\u043f\u0440\u0430\u0432\u043a\u0430_\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440_\u0448\u0430\u0431\u043b\u043e\u043d",
+        "\u0421\u043f\u0440\u0430\u0432\u043a\u0430 \u0448\u0430\u0431\u043b\u043e\u043d",
+      ],
+      ["\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440", "\u043c\u0435\u0434\u0438\u0446\u0438\u043d\u0441\u043a\u0430\u044f \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f"],
+      ["086", "095", "070", "072", "082", "13082", "13098", "\u0431\u0430\u0441\u0441\u0435\u0439\u043d", "\u0441\u043f\u043e\u0440\u0442", "\u0433\u0442\u043e"],
+    );
+  }
+
   if (normalizedType === "contract") {
     return findDocx(["договор_шаблон_2", "договор"]) || null;
   }
@@ -6788,7 +6831,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
 function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   const config = getChairmanFormConfigForVisit(visit);
   if (config.type === "prof" && printKind === "extract") return "prof_extract";
-  return config.templateType;
+  return config.printTemplateType || config.templateType;
 }
 
 const CHAIRMAN_NUMBERED_CERTIFICATE_SERIES = new Map([
@@ -9554,6 +9597,7 @@ function bindContentEvents() {
       const actionLabel = printKind === "extract" ? "выписка" : "документ";
       const currentButton = event.currentTarget;
       const targetWindow = window.open("about:blank", "_blank");
+      prepareGeneratedDocumentTargetWindow(targetWindow);
 
       const examId = chairmanForm.dataset.examId;
       if (!examId) {
