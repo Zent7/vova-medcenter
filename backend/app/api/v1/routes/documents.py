@@ -299,13 +299,12 @@ def create_generated_file_print_ticket(
 
     return DocumentPrintTicketResponse(
         file_name=file_path.name,
-        file_url=str(request.url_for("download_print_ticket_file", token=token)),
+        file_url=str(request.url_for("download_print_ticket_file_named", token=token, file_name=file_path.name)),
         expires_in_seconds=_PRINT_TICKET_TTL_SECONDS,
     )
 
 
-@router.get("/print-ticket/{token}", name="download_print_ticket_file")
-def download_print_ticket_file(token: str) -> FileResponse:
+def _download_print_ticket(token: str) -> FileResponse:
     now = datetime.now(timezone.utc)
     with _print_ticket_lock:
         _cleanup_expired_print_tickets(now)
@@ -325,6 +324,16 @@ def download_print_ticket_file(token: str) -> FileResponse:
         content_disposition_type=_document_disposition_type(file_path, inline_requested=True),
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"},
     )
+
+
+@router.get("/print-ticket/{token}/{file_name}", name="download_print_ticket_file_named")
+def download_print_ticket_file_named(token: str, file_name: str) -> FileResponse:
+    return _download_print_ticket(token)
+
+
+@router.get("/print-ticket/{token}", name="download_print_ticket_file")
+def download_print_ticket_file(token: str) -> FileResponse:
+    return _download_print_ticket(token)
 
 
 @router.get("/generated/{file_name}")
