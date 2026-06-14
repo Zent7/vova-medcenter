@@ -2270,6 +2270,24 @@ async function openGeneratedDocumentManually(documentItem, options = {}) {
   return openGeneratedDocumentInBrowser(documentItem);
 }
 
+async function openGeneratedDocumentDirectly(documentItem, options = {}) {
+  const targetWindow = options.targetWindow || null;
+  try {
+    const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = ticket.file_url;
+      return true;
+    }
+    window.location.href = ticket.file_url;
+    return true;
+  } catch (error) {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.close();
+    }
+    throw error;
+  }
+}
+
 async function openGeneratedDocumentForPrint(documentItem, options = {}) {
   try {
     await sendDocumentToPrintAgent(documentItem);
@@ -7876,11 +7894,8 @@ async function openDriverPrintFlow(options = {}) {
     try {
       const printOptions = { blankFormId: Number(flowState.currentBlank.id) };
       const documentItem = await createDocumentForVisit(finalCertificateType, client, visit, { ...printOptions, print: true });
-      const sentToPrinter = await openGeneratedDocumentForPrint(documentItem, { targetWindow: options.targetWindow });
-      if (!sentToPrinter) {
-        throw new Error("Документ сформирован, но не открыт для печати");
-      }
-      showToast(`Справка отправлена в печать: ${documentItem?.title || "документ"}`);
+      await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
+      showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
     } catch (error) {
       if (options.targetWindow && !options.targetWindow.closed) {
         options.targetWindow.close();
