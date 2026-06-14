@@ -6891,6 +6891,15 @@ function getChairmanNumberedCertificateSeries(printType) {
   return CHAIRMAN_NUMBERED_CERTIFICATE_SERIES.get(String(printType || "").toLowerCase()) || "";
 }
 
+const CHAIRMAN_CERTIFICATE_PRINT_FLOWS = new Map([
+  ["sport", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "sport" }],
+  ["gto", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "gto" }],
+]);
+
+function getChairmanCertificatePrintFlowOptions(printType) {
+  return CHAIRMAN_CERTIFICATE_PRINT_FLOWS.get(String(printType || "").toLowerCase()) || null;
+}
+
 function registerGeneratedDocument(result, type, client, visit) {
   const documentItem = {
     id: result.generated_document_id || generateId("document"),
@@ -7042,9 +7051,13 @@ async function printChairmanDocumentFromExam(examId) {
   const printType = getChairmanTemplatePrintType(visit);
   const formInfo = getChairmanFormInfo(visit, client);
   const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
-  if (formInfo.printMode === "driver-flow" || numberedCertificateSeries) {
+  const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
+  if (formInfo.printMode === "driver-flow" || numberedCertificateSeries || certificatePrintFlowOptions) {
     window.closeSportCard?.();
-    await openDriverPrintFlow(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {});
+    await openDriverPrintFlow({
+      ...(certificatePrintFlowOptions || {}),
+      ...(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {}),
+    });
     return null;
   }
 
@@ -7153,6 +7166,29 @@ const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["13082", "13082"],
   ["13098", "13098"],
 ]);
+const CERTIFICATE_PRINT_TYPE_LABELS = {
+  "070": "Справка 070У",
+  "071": "Справка 071У",
+  "072": "Справка 072У",
+  "082": "Справка 082У",
+  "086": "Справка 086У",
+  "095": "Справка 095У",
+  gsu: "Справка 001 ГСУ",
+  gostaina: "Справка гостайна",
+  gto: "Справка ГТО",
+  pool: "Справка в бассейн",
+  sport: "Справка Спорт",
+  ekg: "ЭКГ",
+  lmk: "ЛМК",
+  gims: "ГИМС",
+  chod: "Справка ЧОД",
+  guard: "Справка охрана",
+  prof: "Заключение 29Н",
+  drug: "Drug/alcohol test",
+  marine: "Морская справка",
+  "13082": "13082",
+  "13098": "13098",
+};
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071У"],
   ["профосмотр", "29Н"],
@@ -7233,6 +7269,10 @@ function getDriverPrintCertificateType(series) {
   if (normalized.includes("морск") || normalized.includes("marine") || normalized.includes("seafar")) return "marine";
   if (normalized === "13082" || normalized === "13098") return normalized;
   return "";
+}
+
+function getCertificatePrintTypeLabel(type) {
+  return CERTIFICATE_PRINT_TYPE_LABELS[String(type || "").toLowerCase()] || "Печать документа";
 }
 
 function isCertificatePrintSeries(series) {
@@ -7537,9 +7577,12 @@ async function openDriverPrintFlow(options = {}) {
   await syncVisitToBackend(visit, client);
 
   const preselectedSeries = normalizeBlankSeries(options.preselectedSeries);
+  const requestedCertificateTypes = Array.isArray(options.certificateTypes)
+    ? options.certificateTypes.map((type) => String(type || "").toLowerCase()).filter(Boolean)
+    : [];
   const preselectedCertificateType = getDriverPrintCertificateType(preselectedSeries);
   const template = pickDocumentTemplate("driver", visit, client);
-  if (!template && !preselectedCertificateType) {
+  if (!template && !preselectedCertificateType && !requestedCertificateTypes.length) {
     showToast("Не найден шаблон водительской справки");
     return;
   }
@@ -7618,11 +7661,16 @@ async function openDriverPrintFlow(options = {}) {
       getStoredDriverPrintSeries() ||
       normalizeBlankSeries(seriesOptions[0]?.series),
     selectedCertificateType: "",
+    certificateTypes: requestedCertificateTypes,
     currentBlank: fallbackBlank,
     loading: false,
     error: "",
   };
-  flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries);
+  flowState.selectedCertificateType =
+    String(options.selectedCertificateType || "").toLowerCase() ||
+    getDriverPrintCertificateType(flowState.selectedSeries) ||
+    flowState.certificateTypes[0] ||
+    "";
 
   const seriesHints = flowState.seriesOptions
     .map((item) => normalizeBlankSeries(item.series))
@@ -7645,10 +7693,19 @@ async function openDriverPrintFlow(options = {}) {
   }
 
   const renderPrintActions = () => {
-    if (flowState.selectedCertificateType) {
-      return `
-        <button type="button" class="driver-print-classic__button" data-driver-print-selected-certificate="${escapeHtml(flowState.selectedCertificateType)}" ${flowState.loading || !flowState.currentBlank?.id ? "disabled" : ""}>Печать документа</button>
-      `;
+    const certificateTypes = flowState.certificateTypes.length
+      ? flowState.certificateTypes
+      : flowState.selectedCertificateType
+        ? [flowState.selectedCertificateType]
+        : [];
+    if (certificateTypes.length) {
+      return certificateTypes
+        .map(
+          (certificateType) => `
+            <button type="button" class="driver-print-classic__button" data-driver-print-selected-certificate="${escapeHtml(certificateType)}" ${flowState.loading || !flowState.currentBlank?.id ? "disabled" : ""}>${escapeHtml(getCertificatePrintTypeLabel(certificateType))}</button>
+          `,
+        )
+        .join("");
     }
 
     return `
@@ -7672,7 +7729,11 @@ async function openDriverPrintFlow(options = {}) {
 
   const restartDriverPrintFlow = async () => {
     await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-    await openDriverPrintFlow({ preselectedSeries: flowState.selectedSeries });
+    await openDriverPrintFlow({
+      preselectedSeries: flowState.selectedSeries,
+      certificateTypes: flowState.certificateTypes,
+      selectedCertificateType: flowState.selectedCertificateType,
+    });
   };
 
   const handleSpoiledBlank = async (generatedDocumentId) => {
@@ -7780,8 +7841,9 @@ async function openDriverPrintFlow(options = {}) {
     }
   };
 
-  const printSelectedCertificate = async () => {
-    if (!flowState.selectedCertificateType) return;
+  const printSelectedCertificate = async (certificateType = flowState.selectedCertificateType) => {
+    const finalCertificateType = String(certificateType || "").toLowerCase();
+    if (!finalCertificateType) return;
     if (!flowState.currentBlank?.id) {
       flowState.error = isPreenteredBlankSeries(flowState.selectedSeries)
         ? "Сначала нажмите \"Найти номер\", чтобы подобрать свободный бланк из заведенного диапазона."
@@ -7794,7 +7856,7 @@ async function openDriverPrintFlow(options = {}) {
     renderFlow();
     try {
       const printOptions = { blankFormId: Number(flowState.currentBlank.id) };
-      const documentItem = await printDocumentForVisit(flowState.selectedCertificateType, client, visit, printOptions);
+      const documentItem = await printDocumentForVisit(finalCertificateType, client, visit, printOptions);
       showToast(`Справка отправлена в печать: ${documentItem?.title || "документ"}`);
     } catch (error) {
       console.error(error);
@@ -7912,7 +7974,7 @@ async function openDriverPrintFlow(options = {}) {
 
     document.querySelectorAll("[data-driver-print-selected-certificate]").forEach((button) => {
       button.addEventListener("click", async () => {
-        await printSelectedCertificate();
+        await printSelectedCertificate(button.dataset.driverPrintSelectedCertificate || "");
       });
     });
   };
@@ -9562,10 +9624,14 @@ function bindContentEvents() {
       const printType = getChairmanTemplatePrintType(visit, printKind);
       const formInfo = getChairmanFormInfo(visit, client);
       const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
+      const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
 
-      if (formInfo.printMode === "driver-flow" || numberedCertificateSeries) {
+      if (formInfo.printMode === "driver-flow" || numberedCertificateSeries || certificatePrintFlowOptions) {
         window.closeDoctorExamCard?.();
-        await window.openDriverPrintFlow?.(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {});
+        await window.openDriverPrintFlow?.({
+          ...(certificatePrintFlowOptions || {}),
+          ...(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {}),
+        });
         return;
       }
 
