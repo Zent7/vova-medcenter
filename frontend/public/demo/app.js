@@ -6740,7 +6740,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "13082") return findDocxSafely(["13082"], ["13082"], []);
   if (normalizedType === "13098") return findDocxSafely(["13098"], ["13098"], []);
 
-  if (normalizedType === "driver" || serviceText.includes("водител")) {
+  if (normalizedType === "driver" || (normalizedType !== "medical" && serviceText.includes("водител"))) {
     return (
       findXls(["все нужные шаблоны", "водительская", "тракторная"]) ||
       findDocx(["водительскаясправка_шаблон.docx", "водительскаясправка_шаблон"]) ||
@@ -6984,11 +6984,15 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
   }
 
   try {
-    const documentItem = await printDocumentForVisit(printType, client, visit, { targetWindow });
+    const directPrintType = printType === "driver" ? "medical" : printType;
+    const documentItem = await printDocumentForVisit(directPrintType, client, visit, { targetWindow });
     window.closeSportCard?.();
     showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
     return documentItem;
   } catch (error) {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.close();
+    }
     console.error(error);
     showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
     return null;
@@ -9600,7 +9604,8 @@ function bindContentEvents() {
 
       if (printType) {
         try {
-          const documentItem = await printDocumentForVisit(printType, client, visit, { targetWindow });
+          const directPrintType = printType === "driver" ? "medical" : printType;
+          const documentItem = await printDocumentForVisit(directPrintType, client, visit, { targetWindow });
           window.closeDoctorExamCard?.();
           showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
         } catch (error) {
