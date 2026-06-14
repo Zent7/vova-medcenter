@@ -8322,9 +8322,7 @@ function renderRecallCalendarPage() {
       <div class="calendar-page__header">
         <div>
           <h3>Календарь сроков</h3>
-          <p class="muted">Клиенты, у которых подходит срок действия услуги. Срок берется из карточки услуги.</p>
         </div>
-        <button class="primary-button" id="refreshRecallCalendar">Обновить</button>
       </div>
 
       <div class="calendar-summary">

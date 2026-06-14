@@ -232,6 +232,10 @@ body[data-page="dashboard"] .eyebrow {
   display: none;
 }
 
+body[data-page="calendar"] .topbar {
+  display: none;
+}
+
 body[data-page="dashboard"] .topbar h1 {
   font-size: 22px;
 }
