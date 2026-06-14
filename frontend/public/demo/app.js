@@ -2127,6 +2127,25 @@ function resolveApiUrl(url) {
   }
 }
 
+function isWordDocumentFile(fileName = "") {
+  return String(fileName || "").toLowerCase().endsWith(".docx");
+}
+
+function buildWordProtocolUrl(fileUrl) {
+  return `ms-word:ofe|u|${fileUrl}`;
+}
+
+function openDocumentFileUrl(fileUrl, documentItem = null, targetWindow = null) {
+  const isWordDocument = isWordDocumentFile(documentItem?.fileName || documentItem?.file_name || fileUrl);
+  const destinationUrl = isWordDocument ? buildWordProtocolUrl(fileUrl) : fileUrl;
+  if (targetWindow && !targetWindow.closed) {
+    targetWindow.location.href = destinationUrl;
+    return true;
+  }
+  window.location.href = destinationUrl;
+  return true;
+}
+
 async function requestGeneratedDocumentPrintTicket(documentItem) {
   const fileName = documentItem?.fileName;
   if (!fileName) {
@@ -2161,11 +2180,14 @@ async function openGeneratedDocumentManually(documentItem, options = {}) {
   try {
     const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
     const targetWindow = options.targetWindow;
+    if (isWordDocumentFile(documentItem?.fileName || ticket.file_name || ticket.file_url)) {
+      return openDocumentFileUrl(ticket.file_url, documentItem, targetWindow);
+    }
+
     if (targetWindow && !targetWindow.closed) {
       targetWindow.location.href = ticket.file_url;
       return true;
     }
-
     const fileWindow = window.open(ticket.file_url, "_blank");
     if (fileWindow) {
       return true;
@@ -2185,12 +2207,7 @@ async function openGeneratedDocumentDirectly(documentItem, options = {}) {
   const targetWindow = options.targetWindow || null;
   try {
     const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
-    if (targetWindow && !targetWindow.closed) {
-      targetWindow.location.href = ticket.file_url;
-      return true;
-    }
-    window.location.href = ticket.file_url;
-    return true;
+    return openDocumentFileUrl(ticket.file_url, documentItem, targetWindow);
   } catch (error) {
     if (targetWindow && !targetWindow.closed) {
       targetWindow.close();
