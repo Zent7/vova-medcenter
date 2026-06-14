@@ -2181,34 +2181,6 @@ async function openGeneratedDocumentManually(documentItem, options = {}) {
   return openGeneratedDocumentInBrowser(documentItem);
 }
 
-function prepareGeneratedDocumentTargetWindow(targetWindow) {
-  if (!targetWindow || targetWindow.closed) return;
-  try {
-    targetWindow.document.open();
-    targetWindow.document.write(`<!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <title>Word</title>
-          <style>
-            body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f8fafc; }
-            main { padding: 24px; text-align: center; }
-            strong { display: block; margin-bottom: 8px; font-size: 18px; }
-          </style>
-        </head>
-        <body>
-          <main>
-            <strong>&#1060;&#1086;&#1088;&#1084;&#1080;&#1088;&#1091;&#1077;&#1084; Word</strong>
-            <span>&#1055;&#1086;&#1078;&#1072;&#1083;&#1091;&#1081;&#1089;&#1090;&#1072;, &#1087;&#1086;&#1076;&#1086;&#1078;&#1076;&#1080;&#1090;&#1077;...</span>
-          </main>
-        </body>
-      </html>`);
-    targetWindow.document.close();
-  } catch (error) {
-    console.warn("Unable to prepare document target window", error);
-  }
-}
-
 async function openGeneratedDocumentDirectly(documentItem, options = {}) {
   const targetWindow = options.targetWindow || null;
   try {
@@ -9596,8 +9568,7 @@ function bindContentEvents() {
       const printKind = event.currentTarget?.dataset.chairmanPrint || "conclusion";
       const actionLabel = printKind === "extract" ? "выписка" : "документ";
       const currentButton = event.currentTarget;
-      const targetWindow = window.open("about:blank", "_blank");
-      prepareGeneratedDocumentTargetWindow(targetWindow);
+      const targetWindow = null;
 
       const examId = chairmanForm.dataset.examId;
       if (!examId) {
