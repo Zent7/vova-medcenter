@@ -2234,6 +2234,14 @@ async function openGeneratedDocumentForPrint(documentItem) {
     return true;
   } catch (error) {
     console.warn("Не удалось отправить документ в тихую печать", error);
+    try {
+      if (await openGeneratedDocumentInBrowser(documentItem)) {
+        showToast("Тихая печать недоступна. Документ открыт вручную.");
+        return true;
+      }
+    } catch (fallbackError) {
+      console.warn("Не удалось открыть документ вручную", fallbackError);
+    }
     showPrintAgentFallback(documentItem, error);
     return false;
   }
@@ -2465,7 +2473,67 @@ const CHAIRMAN_CERTIFICATE_DEFAULTS = {
     diagnosis:
       "патология органа зрения не выявлено, Патология ЛОР-органов не выявлено, рентгенологической симптоматики не выявлено, хирургической патологии не выявлено, По здоровью, По здоровью, по здоровью",
   },
+  pool: {
+    medicalRequirements: (client) => `${buildPoolAdmissionVerb(client)} к занятиям спортом и плаванию в бассейне.`,
+    conclusionText: (client) => `${buildPoolAdmissionVerb(client)} к занятиям спортом и плаванию в бассейне.`,
+    diagnosis:
+      "патология органа зрения не выявлено, Патология ЛОР-органов не выявлено, очаговой инфильтративной симптоматики не выявлено, хирургической патологии не выявлено, По здоровью, По здоровью, Практически здоров",
+    validity: "6 мес",
+    clearDriverFields: true,
+  },
 };
+
+const CHAIRMAN_DRIVER_FIELD_KEYS = [
+  "driverCategories",
+  "categoryA",
+  "categoryB",
+  "categoryC",
+  "categoryD",
+  "categoryBE",
+  "categoryCE",
+  "categoryDE",
+  "categoryTram",
+  "categoryTrolleybus",
+  "categoryM",
+  "categoryA1",
+  "categoryB1",
+  "categoryC1",
+  "categoryD1",
+  "categoryC1E",
+  "categoryD1E",
+  "categoryTractor",
+  "categoryBoat",
+  "categorySailing",
+  "indicationManual",
+  "indicationAutomatic",
+  "indicationAcoustic",
+  "indicationGlasses",
+  "indicationHearingAid",
+  "indicationNoHiring",
+  "indicationOneYear",
+  "restrictionAM",
+  "restrictionBBE",
+  "restrictionCCE",
+  "restrictionNoHands",
+  "restrictionNoLegs",
+];
+
+function getClientSexKey(client) {
+  const sex = String(client?.sex || client?.rawApiClient?.sex || client?.gender || client?.rawApiClient?.gender || "").toLowerCase();
+  if (/^(f|female|woman|ж|жен|женский)$/.test(sex) || sex.includes("жен")) return "female";
+  if (/^(m|male|man|м|муж|мужской)$/.test(sex) || sex.includes("муж")) return "male";
+  const patronymic = String(client?.fullName || "").trim().split(/\s+/)[2] || "";
+  if (/(вна|чна|ична)$/i.test(patronymic)) return "female";
+  if (/(вич|ич)$/i.test(patronymic)) return "male";
+  return "";
+}
+
+function buildPoolAdmissionVerb(client) {
+  const sex = getClientSexKey(client);
+  if (sex === "female") return "Допущена";
+  if (sex === "male") return "Допущен";
+  return "Допущен(а)";
+}
 
 function extractRuDate(value) {
   return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{4}|\d{2})\b/)?.[0] || "";
@@ -2486,19 +2554,29 @@ function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
   if (!defaults) return fields;
 
   const result = { ...fields };
+  const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
   const visitDate = extractRuDate(visit?.visitDate) || extractRuDate(visit?.createdAt) || todayRuDate();
+  const resolveDefault = (value) => (typeof value === "function" ? value(client, visit, result) : value);
   const setIfBlank = (key, value) => {
     if (String(result[key] ?? "").trim()) return;
-    result[key] = value;
+    result[key] = resolveDefault(value);
   };
+
+  if (defaults.clearDriverFields) {
+    CHAIRMAN_DRIVER_FIELD_KEYS.forEach((key) => {
+      result[key] = key === "driverCategories" ? "" : false;
+    });
+  }
 
   setIfBlank("examDate", visitDate);
   setIfBlank("ekg", `Медицинский центр ООО "ЦМО "ЮЛМЕД", ЭКГ от ${visitDate}`);
   setIfBlank("ekgConclusion", buildChairmanAutoEkgConclusion(visitDate));
   setIfBlank("fluorography", `от ${visitDate} ОГК б.п.`);
+  if (defaults.medicalRequirements) setIfBlank("medicalRequirements", defaults.medicalRequirements);
   setIfBlank("diagnosis", defaults.diagnosis);
+  if (defaults.conclusionText) setIfBlank("conclusionText", defaults.conclusionText);
   setIfBlank("conclusion", "Годен");
-  setIfBlank("validity", "1 год");
+  setIfBlank("validity", defaults.validity || "1 год");
   setIfBlank("organ", "По возрасту");
 
   return result;
@@ -3798,8 +3876,10 @@ function renderNav() {
               class="${appState.page === item.id ? "active" : ""}"
               data-page="${item.id}"
               data-toast="${item.toast || ""}"
+              title="${escapeHtml(item.label)}"
+              aria-label="${escapeHtml(item.label)}"
             >
-              ${item.label}
+              ${escapeHtml(item.label)}
             </button>
           `,
         )
@@ -9504,6 +9584,7 @@ function renderApp() {
   if (appState.page === "reports" && !canAccessReportsWorkspace()) {
     appState.page = appState.auth.accessToken ? "employee" : "dashboard";
   }
+  document.body.dataset.page = appState.page;
 
   if (authStatusLabel) {
     authStatusLabel.textContent = repairDemoText(

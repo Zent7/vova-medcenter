@@ -71,33 +71,38 @@ textarea {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 100vh;
 }
 
 .sidebar {
   background: linear-gradient(180deg, #14334f 0%, #10263f 100%);
   color: #f7fbfd;
-  padding: 14px 8px;
+  padding: 8px 10px;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
   position: sticky;
   top: 0;
-  height: 100vh;
-  overflow-y: auto;
+  z-index: 70;
+  height: auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .brand {
-  display: grid;
-  gap: 6px;
-  justify-items: start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 150px;
 }
 
 .brand__badge {
-  width: 38px;
-  height: 38px;
-  border-radius: 13px;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
   display: grid;
   place-items: center;
   background: linear-gradient(135deg, #2fd1d3 0%, #9ce9d5 100%);
@@ -107,32 +112,41 @@ textarea {
 }
 
 .brand__title {
+  display: block;
   font-size: 15px;
   font-weight: 700;
+  line-height: 1.05;
 }
 
 .brand__subtitle {
+  display: block;
   color: rgba(247, 251, 253, 0.68);
   font-size: 10px;
   margin-top: 2px;
 }
 
 .nav {
-  display: grid;
-  gap: 8px;
+  display: block;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
 .nav button {
   border: 0;
   background: transparent;
   color: rgba(247, 251, 253, 0.82);
-  text-align: left;
-  padding: 10px;
+  text-align: center;
+  padding: 7px 10px;
+  width: auto;
+  min-height: 34px;
   border-radius: 10px;
   cursor: pointer;
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.25;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .nav button:hover,
@@ -142,8 +156,10 @@ textarea {
 }
 
 .nav-group {
-  display: grid;
+  display: flex;
   gap: 6px;
+  align-items: center;
+  min-width: max-content;
 }
 
 .nav-link-button {
@@ -187,14 +203,16 @@ textarea {
 }
 
 .main {
-  padding: 10px 14px 14px;
+  padding: 6px 10px 10px;
+  min-width: 0;
 }
 
 .topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  min-height: 38px;
 }
 
 .eyebrow {
@@ -205,9 +223,31 @@ textarea {
 }
 
 .topbar h1 {
-  margin: 2px 0 0;
-  font-size: 28px;
+  margin: 0;
+  font-size: 24px;
   line-height: 1.05;
+}
+
+body[data-page="dashboard"] .eyebrow {
+  display: none;
+}
+
+body[data-page="dashboard"] .topbar h1 {
+  font-size: 22px;
+}
+
+body[data-page="dashboard"] .topbar {
+  min-height: 32px;
+  align-items: center;
+}
+
+body[data-page="dashboard"] .sketch-toolbar .primary-button,
+body[data-page="dashboard"] .sketch-toolbar .secondary-button,
+body[data-page="dashboard"] .sketch-toolbar .ghost-button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  line-height: 1.1;
 }
 
 .topbar-actions {
@@ -217,7 +257,7 @@ textarea {
 }
 
 .center-pill {
-  padding: 7px 11px;
+  padding: 6px 9px;
   border-radius: 999px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -228,7 +268,7 @@ textarea {
 
 .topbar-actions .primary-button {
   border-radius: 11px;
-  padding: 8px 12px;
+  padding: 7px 10px;
   font-size: 13px;
   line-height: 1.15;
 }
@@ -1961,27 +2001,27 @@ textarea {
   z-index: 40;
   min-width: 0;
   max-width: 100%;
-  margin: -14px -14px 10px;
-  padding: 14px 14px 10px;
+  margin: -14px -14px 8px;
+  padding: 8px 10px 8px;
   border-bottom: 1px solid rgba(14, 31, 53, 0.1);
-  border-radius: 24px 24px 0 0;
+  border-radius: 18px 18px 0 0;
   background: #ffffff;
   box-shadow: 0 12px 22px rgba(15, 31, 56, 0.08);
 }
 
 .dashboard-sticky-controls .sketch-doctors-block {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .dashboard-table-head-scroll {
-  width: calc(100% + 28px);
+  width: calc(100% + 20px);
   min-width: 0;
   max-width: none;
   overflow-x: auto;
   overflow-y: hidden;
   border: 1px solid var(--line);
   border-bottom: 0;
-  border-radius: 16px 16px 0 0;
+  border-radius: 12px 12px 0 0;
   background: #f7f8fa;
   scrollbar-width: thin;
 }
@@ -1990,7 +2030,7 @@ textarea {
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   margin-bottom: 0;
   flex-wrap: wrap;
 }
@@ -1998,12 +2038,12 @@ textarea {
 .sketch-toolbar__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .dashboard-new-visit-button {
-  min-height: 40px;
+  min-height: 34px;
   white-space: nowrap;
 }
 
@@ -2022,8 +2062,14 @@ textarea {
 }
 
 .sketch-search {
-  min-width: 280px;
-  max-width: 360px;
+  min-width: 220px;
+  max-width: 300px;
+}
+
+.sketch-search input {
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 12px;
 }
 
 .sketch-search span {
@@ -2033,33 +2079,33 @@ textarea {
 .client-period-filter {
   display: flex;
   align-items: end;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .client-period-filter label {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
 .client-period-filter input {
-  min-height: 34px;
-  width: 132px;
+  min-height: 32px;
+  width: 118px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 9px;
   background: #ffffff;
   color: var(--text);
-  padding: 6px 9px;
+  padding: 5px 8px;
 }
 
 .client-period-filter .ghost-button,
 .client-period-filter .primary-button {
-  min-height: 34px;
-  padding: 8px 11px;
-  border-radius: 10px;
+  min-height: 32px;
+  padding: 7px 10px;
+  border-radius: 9px;
 }
 
 .native-date-picker {
@@ -2591,28 +2637,35 @@ textarea {
 }
 
 .sketch-doctors-block {
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 .sketch-doctors {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .sketch-doctors--top {
   margin-top: 0;
   max-width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
 }
 
 .doctor-pill {
   border-radius: 999px;
-  min-height: 32px;
-  padding: 6px 12px;
+  min-height: 28px;
+  padding: 5px 10px;
   text-align: center;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .doctor-pill--completed {
@@ -5356,6 +5409,106 @@ textarea {
   .services-table__grid {
     min-width: 1180px;
   }
+}
+
+.sidebar {
+  flex-direction: row;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  height: auto;
+}
+
+.topbar {
+  flex-direction: row;
+}
+
+body[data-page="dashboard"] .topbar {
+  flex-direction: row;
+  justify-content: space-between;
+  min-height: 32px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+body[data-page="dashboard"] .topbar h1 {
+  flex: 0 0 auto;
+}
+
+body[data-page="dashboard"] .topbar-actions {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
+}
+
+body[data-page="dashboard"] .center-pill {
+  flex: 1 1 auto;
+  max-width: min(220px, calc(100% - 72px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-page="dashboard"] .topbar-actions .primary-button {
+  flex: 0 0 auto;
+}
+
+body[data-page="dashboard"] .dashboard-sticky-controls {
+  margin: -14px -14px 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 10px 24px rgba(30, 50, 70, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+body[data-page="dashboard"] .sketch-toolbar {
+  align-items: end;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+body[data-page="dashboard"] .sketch-toolbar > * {
+  flex: 0 0 auto;
+}
+
+body[data-page="dashboard"] .sketch-toolbar__actions {
+  flex-wrap: nowrap;
+  width: auto;
+}
+
+body[data-page="dashboard"] .sketch-toolbar__actions .primary-button,
+body[data-page="dashboard"] .sketch-toolbar__actions .secondary-button {
+  width: auto;
+}
+
+body[data-page="dashboard"] .client-period-filter {
+  align-items: end;
+  flex-wrap: nowrap;
+}
+
+body[data-page="dashboard"] .client-period-filter label,
+body[data-page="dashboard"] .client-period-filter input,
+body[data-page="dashboard"] .client-period-filter .ghost-button,
+body[data-page="dashboard"] .client-period-filter .primary-button {
+  width: auto;
+}
+
+body[data-page="dashboard"] .sketch-search {
+  max-width: 220px;
+  min-width: 220px;
+  width: 220px;
+}
+
+body[data-page="dashboard"] .dashboard-table-head-scroll {
+  width: calc(100% + 20px);
 }
 
 
