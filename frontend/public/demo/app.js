@@ -2200,7 +2200,7 @@ function showPrintAgentFallback(documentItem, error) {
   );
   document.getElementById("manualPrintDocumentFallback")?.addEventListener("click", async () => {
     try {
-      if (await openGeneratedDocumentInBrowser(documentItem)) {
+      if (await openGeneratedDocumentManually(documentItem)) {
         showToast("Документ открыт вручную");
       }
     } catch (fallbackError) {
@@ -2228,6 +2228,17 @@ async function openGeneratedDocumentInBrowser(documentItem) {
   return openAuthorizedFileUrl(inlineUrl);
 }
 
+async function openGeneratedDocumentManually(documentItem) {
+  try {
+    const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
+    const fileWindow = window.open(ticket.file_url, "_blank");
+    if (fileWindow) return true;
+  } catch (error) {
+    console.warn("Не удалось открыть документ по временной ссылке", error);
+  }
+  return openGeneratedDocumentInBrowser(documentItem);
+}
+
 async function openGeneratedDocumentForPrint(documentItem) {
   try {
     await sendDocumentToPrintAgent(documentItem);
@@ -2235,7 +2246,7 @@ async function openGeneratedDocumentForPrint(documentItem) {
   } catch (error) {
     console.warn("Не удалось отправить документ в тихую печать", error);
     try {
-      if (await openGeneratedDocumentInBrowser(documentItem)) {
+      if (await openGeneratedDocumentManually(documentItem)) {
         showToast("Тихая печать недоступна. Документ открыт вручную.");
         return true;
       }
