@@ -6940,6 +6940,7 @@ async function printDocumentForVisit(type, client, visit, options = {}) {
 }
 
 async function printChairmanDocumentFromExam(examId, options = {}) {
+  const targetWindow = options.targetWindow || null;
   const exam = data.doctorExams.find((item) => String(item.id) === String(examId));
   const client = exam
     ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
@@ -6958,7 +6959,10 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
   const formInfo = getChairmanFormInfo(visit, client);
   const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
   const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
-  if (formInfo.printMode === "driver-flow" || numberedCertificateSeries || certificatePrintFlowOptions) {
+  if (numberedCertificateSeries || certificatePrintFlowOptions) {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.close();
+    }
     window.closeSportCard?.();
     await openDriverPrintFlow({
       ...(certificatePrintFlowOptions || {}),
@@ -9577,7 +9581,7 @@ function bindContentEvents() {
       const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
       const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
 
-      if (formInfo.printMode === "driver-flow" || numberedCertificateSeries || certificatePrintFlowOptions) {
+      if (numberedCertificateSeries || certificatePrintFlowOptions) {
         if (targetWindow && !targetWindow.closed) targetWindow.close();
         window.closeDoctorExamCard?.();
         await window.openDriverPrintFlow?.({
@@ -9594,7 +9598,7 @@ function bindContentEvents() {
         return;
       }
 
-      if (formInfo.printMode !== "driver-flow" && printType) {
+      if (printType) {
         try {
           const documentItem = await printDocumentForVisit(printType, client, visit, { targetWindow });
           window.closeDoctorExamCard?.();
