@@ -2270,19 +2270,25 @@ async function openGeneratedDocumentManually(documentItem, options = {}) {
   return openGeneratedDocumentInBrowser(documentItem);
 }
 
-async function openGeneratedDocumentForPrint(documentItem) {
+async function openGeneratedDocumentForPrint(documentItem, options = {}) {
   try {
     await sendDocumentToPrintAgent(documentItem);
+    if (options.targetWindow && !options.targetWindow.closed) {
+      options.targetWindow.close();
+    }
     return true;
   } catch (error) {
     console.warn("Не удалось отправить документ в тихую печать", error);
     try {
-      if (await openGeneratedDocumentManually(documentItem)) {
+      if (await openGeneratedDocumentManually(documentItem, { targetWindow: options.targetWindow })) {
         showToast("Тихая печать недоступна. Документ открыт вручную.");
         return true;
       }
     } catch (fallbackError) {
       console.warn("Не удалось открыть документ вручную", fallbackError);
+    }
+    if (options.targetWindow && !options.targetWindow.closed) {
+      options.targetWindow.close();
     }
     showPrintAgentFallback(documentItem, error);
     return false;
@@ -7468,6 +7474,16 @@ function getDriverPrintBlankParts(blank, selectedSeries) {
   };
 }
 
+function normalizeDriverPrintBlank(blank) {
+  if (!blank || typeof blank !== "object") return blank;
+  return {
+    ...blank,
+    id: blank.id ?? blank.next_form_id ?? blank.form_id ?? null,
+    full_number: blank.full_number || blank.next_full_number || "",
+    series: normalizeBlankSeries(blank.series),
+  };
+}
+
 function renderDriverPrintResultPrompt({ printedDocument, printMessage }) {
   return `
     <div class="document-preview">
@@ -7662,7 +7678,7 @@ async function openDriverPrintFlow(options = {}) {
       normalizeBlankSeries(seriesOptions[0]?.series),
     selectedCertificateType: "",
     certificateTypes: requestedCertificateTypes,
-    currentBlank: fallbackBlank,
+    currentBlank: normalizeDriverPrintBlank(fallbackBlank),
     loading: false,
     error: "",
   };
@@ -7686,7 +7702,7 @@ async function openDriverPrintFlow(options = {}) {
         center_id: String(flowState.centerId),
       });
       query.set("series", flowState.selectedSeries || "");
-      flowState.currentBlank = await apiRequest(`/blanks/forms/next?${query.toString()}`);
+      flowState.currentBlank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
     } catch (error) {
       flowState.error = humanizeApiError(error, "Не удалось подобрать свободный бланк");
     }
@@ -7841,10 +7857,13 @@ async function openDriverPrintFlow(options = {}) {
     }
   };
 
-  const printSelectedCertificate = async (certificateType = flowState.selectedCertificateType) => {
+  const printSelectedCertificate = async (certificateType = flowState.selectedCertificateType, options = {}) => {
     const finalCertificateType = String(certificateType || "").toLowerCase();
     if (!finalCertificateType) return;
     if (!flowState.currentBlank?.id) {
+      if (options.targetWindow && !options.targetWindow.closed) {
+        options.targetWindow.close();
+      }
       flowState.error = isPreenteredBlankSeries(flowState.selectedSeries)
         ? "Сначала нажмите \"Найти номер\", чтобы подобрать свободный бланк из заведенного диапазона."
         : "Сначала нажмите \"Найти номер\", чтобы присвоить следующий 7-значный номер.";
@@ -7856,9 +7875,16 @@ async function openDriverPrintFlow(options = {}) {
     renderFlow();
     try {
       const printOptions = { blankFormId: Number(flowState.currentBlank.id) };
-      const documentItem = await printDocumentForVisit(finalCertificateType, client, visit, printOptions);
+      const documentItem = await createDocumentForVisit(finalCertificateType, client, visit, { ...printOptions, print: true });
+      const sentToPrinter = await openGeneratedDocumentForPrint(documentItem, { targetWindow: options.targetWindow });
+      if (!sentToPrinter) {
+        throw new Error("Документ сформирован, но не открыт для печати");
+      }
       showToast(`Справка отправлена в печать: ${documentItem?.title || "документ"}`);
     } catch (error) {
+      if (options.targetWindow && !options.targetWindow.closed) {
+        options.targetWindow.close();
+      }
       console.error(error);
       flowState.error = humanizeApiError(error, "Не удалось отправить справку в печать");
     } finally {
@@ -7951,7 +7977,7 @@ async function openDriverPrintFlow(options = {}) {
         if (!isPreenteredBlankSeries(lookupSeries || flowState.selectedSeries)) {
           query.set("auto_create", "true");
         }
-        flowState.currentBlank = await apiRequest(`/blanks/forms/next?${query.toString()}`);
+        flowState.currentBlank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         if (flowState.currentBlank?.series) {
           flowState.selectedSeries = normalizeBlankSeries(flowState.currentBlank.series);
           flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries) || flowState.selectedCertificateType;
@@ -7974,7 +8000,8 @@ async function openDriverPrintFlow(options = {}) {
 
     document.querySelectorAll("[data-driver-print-selected-certificate]").forEach((button) => {
       button.addEventListener("click", async () => {
-        await printSelectedCertificate(button.dataset.driverPrintSelectedCertificate || "");
+        const targetWindow = window.open("about:blank", "_blank");
+        await printSelectedCertificate(button.dataset.driverPrintSelectedCertificate || "", { targetWindow });
       });
     });
   };
