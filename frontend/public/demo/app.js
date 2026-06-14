@@ -1,6 +1,7 @@
 ﻿const API_BASE_URL = window.DEMO_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
 
 const PRINT_AGENT_BASE_URL = window.DEMO_PRINT_AGENT_URL || "http://127.0.0.1:8765";
+const PRINT_AGENT_PRINT_TIMEOUT_MS = 6000;
 
 function getLocalDateInputValue(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
@@ -2162,16 +2163,29 @@ async function ensurePrintAgentAvailable() {
 async function sendDocumentToPrintAgent(documentItem, options = {}) {
   await ensurePrintAgentAvailable();
   const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
-  const response = await fetch(`${PRINT_AGENT_BASE_URL}/print`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file_url: ticket.file_url,
-      file_name: ticket.file_name || documentItem?.fileName || "",
-      printer_name: options.printerName || "",
-      copies: options.copies || 1,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), options.timeoutMs || PRINT_AGENT_PRINT_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(`${PRINT_AGENT_BASE_URL}/print`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        file_url: ticket.file_url,
+        file_name: ticket.file_name || documentItem?.fileName || "",
+        printer_name: options.printerName || "",
+        copies: options.copies || 1,
+      }),
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Печатный агент не ответил вовремя. Документ будет открыт вручную.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
   let body = null;
   try {
     body = await response.json();
@@ -2199,11 +2213,15 @@ function showPrintAgentFallback(documentItem, error) {
     `,
   );
   document.getElementById("manualPrintDocumentFallback")?.addEventListener("click", async () => {
+    const targetWindow = window.open("about:blank", "_blank");
     try {
-      if (await openGeneratedDocumentManually(documentItem)) {
+      if (await openGeneratedDocumentManually(documentItem, { targetWindow })) {
         showToast("Документ открыт вручную");
+      } else if (targetWindow && !targetWindow.closed) {
+        targetWindow.close();
       }
     } catch (fallbackError) {
+      if (targetWindow && !targetWindow.closed) targetWindow.close();
       showToast(humanizeApiError(fallbackError, "Не удалось открыть документ вручную"));
     }
   });
@@ -2228,11 +2246,24 @@ async function openGeneratedDocumentInBrowser(documentItem) {
   return openAuthorizedFileUrl(inlineUrl);
 }
 
-async function openGeneratedDocumentManually(documentItem) {
+async function openGeneratedDocumentManually(documentItem, options = {}) {
   try {
     const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
+    const targetWindow = options.targetWindow;
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = ticket.file_url;
+      return true;
+    }
+
     const fileWindow = window.open(ticket.file_url, "_blank");
-    if (fileWindow) return true;
+    if (fileWindow) {
+      return true;
+    }
+
+    if (options.sameTabFallback !== false) {
+      window.location.href = ticket.file_url;
+      return true;
+    }
   } catch (error) {
     console.warn("Не удалось открыть документ по временной ссылке", error);
   }
