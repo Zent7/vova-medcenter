@@ -1,7 +1,5 @@
-﻿const API_BASE_URL = window.DEMO_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
+const API_BASE_URL = window.DEMO_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
 
-const PRINT_AGENT_BASE_URL = window.DEMO_PRINT_AGENT_URL || "http://127.0.0.1:8765";
-const PRINT_AGENT_PRINT_TIMEOUT_MS = 6000;
 
 function getLocalDateInputValue(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
@@ -1220,7 +1218,7 @@ async function openChairmanTemplateFile(examId = null) {
   try {
     return await openAuthorizedFileUrl(buildTemplateFileUrl(info.templateId));
   } catch (error) {
-    showToast(humanizeApiError(error, "Не удалось открыть файловый шаблон"));
+    showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
     return false;
   }
 }
@@ -2140,96 +2138,6 @@ async function requestGeneratedDocumentPrintTicket(documentItem) {
   };
 }
 
-async function ensurePrintAgentAvailable() {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 1500);
-  try {
-    const response = await fetch(`${PRINT_AGENT_BASE_URL}/health`, {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return true;
-  } catch (error) {
-    throw new Error("Печатный агент не запущен. Запустите print_agent/start-print-agent.ps1 на этом компьютере.");
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
-async function sendDocumentToPrintAgent(documentItem, options = {}) {
-  await ensurePrintAgentAvailable();
-  const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), options.timeoutMs || PRINT_AGENT_PRINT_TIMEOUT_MS);
-  let response;
-  try {
-    response = await fetch(`${PRINT_AGENT_BASE_URL}/print`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        file_url: ticket.file_url,
-        file_name: ticket.file_name || documentItem?.fileName || "",
-        printer_name: options.printerName || "",
-        copies: options.copies || 1,
-      }),
-    });
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error("Печатный агент не ответил вовремя. Документ будет открыт вручную.");
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-  let body = null;
-  try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-  if (!response.ok || body?.ok === false) {
-    throw new Error(body?.error || `Печатный агент вернул ошибку HTTP ${response.status}`);
-  }
-  return body || { ok: true };
-}
-
-function showPrintAgentFallback(documentItem, error) {
-  openActionModal(
-    "Печатный агент недоступен",
-    `
-      <div class="client-create-summary">
-        <strong>${escapeHtml(documentItem?.fileName || documentItem?.title || "Документ")}</strong>
-        <p>${escapeHtml(humanizeApiError(error, "Не удалось отправить документ в тихую печать"))}</p>
-      </div>
-      <div class="client-create-actions">
-        <button type="button" class="primary-button" id="manualPrintDocumentFallback">Открыть вручную</button>
-        <button type="button" class="ghost-button" id="closePrintAgentFallback">Закрыть</button>
-      </div>
-    `,
-  );
-  document.getElementById("manualPrintDocumentFallback")?.addEventListener("click", async () => {
-    const targetWindow = window.open("about:blank", "_blank");
-    try {
-      if (await openGeneratedDocumentManually(documentItem, { targetWindow })) {
-        showToast("Документ открыт вручную");
-      } else if (targetWindow && !targetWindow.closed) {
-        targetWindow.close();
-      }
-    } catch (fallbackError) {
-      if (targetWindow && !targetWindow.closed) targetWindow.close();
-      showToast(humanizeApiError(fallbackError, "Не удалось открыть документ вручную"));
-    }
-  });
-  document.getElementById("closePrintAgentFallback")?.addEventListener("click", () => {
-    actionModal?.classList.add("hidden");
-  });
-}
-
 function buildTemplateFileUrl(templateId) {
   return `${API_BASE_URL}/documents/templates/${encodeURIComponent(templateId)}/file`;
 }
@@ -2285,31 +2193,6 @@ async function openGeneratedDocumentDirectly(documentItem, options = {}) {
       targetWindow.close();
     }
     throw error;
-  }
-}
-
-async function openGeneratedDocumentForPrint(documentItem, options = {}) {
-  try {
-    await sendDocumentToPrintAgent(documentItem);
-    if (options.targetWindow && !options.targetWindow.closed) {
-      options.targetWindow.close();
-    }
-    return true;
-  } catch (error) {
-    console.warn("Не удалось отправить документ в тихую печать", error);
-    try {
-      if (await openGeneratedDocumentManually(documentItem, { targetWindow: options.targetWindow })) {
-        showToast("Тихая печать недоступна. Документ открыт вручную.");
-        return true;
-      }
-    } catch (fallbackError) {
-      console.warn("Не удалось открыть документ вручную", fallbackError);
-    }
-    if (options.targetWindow && !options.targetWindow.closed) {
-      options.targetWindow.close();
-    }
-    showPrintAgentFallback(documentItem, error);
-    return false;
   }
 }
 
@@ -2534,10 +2417,12 @@ const CHAIRMAN_CERTIFICATE_DEFAULTS = {
   certificate086: {
     diagnosis:
       "патология органа зрения не выявлено, Патология ЛОР-органов не выявлено, рентгенологической симптоматики не выявлено, хирургической патологии не выявлено, По здоровью, По здоровью, по здоровью",
+    clearDriverFields: true,
   },
   certificate095: {
     diagnosis:
       "патология органа зрения не выявлено, Патология ЛОР-органов не выявлено, рентгенологической симптоматики не выявлено, хирургической патологии не выявлено, По здоровью, По здоровью, по здоровью",
+    clearDriverFields: true,
   },
   pool: {
     medicalRequirements: (client) => `${buildPoolAdmissionVerb(client)} к занятиям спортом и плаванию в бассейне.`,
@@ -7050,14 +6935,11 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
 
 async function printDocumentForVisit(type, client, visit, options = {}) {
   const documentItem = await createDocumentForVisit(type, client, visit, { ...options, print: true });
-  const sentToPrinter = await openGeneratedDocumentForPrint(documentItem);
-  if (!sentToPrinter) {
-    throw new Error("Документ сформирован, но не отправлен в тихую печать");
-  }
+  await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
   return documentItem;
 }
 
-async function printChairmanDocumentFromExam(examId) {
+async function printChairmanDocumentFromExam(examId, options = {}) {
   const exam = data.doctorExams.find((item) => String(item.id) === String(examId));
   const client = exam
     ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
@@ -7080,7 +6962,14 @@ async function printChairmanDocumentFromExam(examId) {
     window.closeSportCard?.();
     await openDriverPrintFlow({
       ...(certificatePrintFlowOptions || {}),
-      ...(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {}),
+      ...(numberedCertificateSeries
+        ? {
+            preselectedSeries: numberedCertificateSeries,
+            certificateTypes: printType ? [printType] : [],
+            selectedCertificateType: printType || "",
+            compactCertificateFlow: true,
+          }
+        : {}),
     });
     return null;
   }
@@ -7091,13 +6980,13 @@ async function printChairmanDocumentFromExam(examId) {
   }
 
   try {
-    const documentItem = await printDocumentForVisit(printType, client, visit);
+    const documentItem = await printDocumentForVisit(printType, client, visit, { targetWindow });
     window.closeSportCard?.();
-    showToast(`Документ отправлен в печать: ${documentItem?.title || "документ"}`);
+    showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
     return documentItem;
   } catch (error) {
     console.error(error);
-    showToast(humanizeApiError(error, "Не удалось отправить шаблон в печать"));
+    showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
     return null;
   }
 }
@@ -7506,7 +7395,7 @@ function renderDriverPrintResultPrompt({ printedDocument, printMessage }) {
   return `
     <div class="document-preview">
       <strong>${escapeHtml(printedDocument?.title || "Водительская справка")}</strong>
-      <p>${escapeHtml(printMessage || "Документ отправлен в печать.")}</p>
+      <p>${escapeHtml(printMessage || "Документ открыт.")}</p>
       <p>После печати подтвердите результат. Если бланк испорчен, мы сразу спишем его и подберем следующий номер.</p>
       <div class="card" style="margin-top:12px;">
         <strong>Инструкция по двусторонней печати</strong>
@@ -7614,6 +7503,7 @@ async function openDriverPrintFlow(options = {}) {
   const requestedCertificateTypes = Array.isArray(options.certificateTypes)
     ? options.certificateTypes.map((type) => String(type || "").toLowerCase()).filter(Boolean)
     : [];
+  const compactCertificateFlow = Boolean(options.compactCertificateFlow);
   const preselectedCertificateType = getDriverPrintCertificateType(preselectedSeries);
   const template = pickDocumentTemplate("driver", visit, client);
   if (!template && !preselectedCertificateType && !requestedCertificateTypes.length) {
@@ -7696,6 +7586,7 @@ async function openDriverPrintFlow(options = {}) {
       normalizeBlankSeries(seriesOptions[0]?.series),
     selectedCertificateType: "",
     certificateTypes: requestedCertificateTypes,
+    compactCertificateFlow,
     currentBlank: normalizeDriverPrintBlank(fallbackBlank),
     loading: false,
     error: "",
@@ -7767,6 +7658,7 @@ async function openDriverPrintFlow(options = {}) {
       preselectedSeries: flowState.selectedSeries,
       certificateTypes: flowState.certificateTypes,
       selectedCertificateType: flowState.selectedCertificateType,
+      compactCertificateFlow: flowState.compactCertificateFlow,
     });
   };
 
@@ -7847,20 +7739,15 @@ async function openDriverPrintFlow(options = {}) {
         }),
       });
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
-      const sentToPrinter = await openGeneratedDocumentForPrint(printedDocument);
+      await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-      if (!sentToPrinter) {
-        flowState.loading = false;
-        renderFlow();
-        return;
-      }
       if (skipConfirmation) {
         try {
           await markPrintedDocument(result.generated_document_id, true);
           actionModal.classList.add("hidden");
-          showToast(`Оборот отправлен в печать: ${printedDocument.blankNumber || printedDocument.title}`);
+          showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
         } catch (error) {
-          showToast(humanizeApiError(error, "Не удалось подтвердить печать оборота"));
+          showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
       } else if (isFrontDriverPrintVariant(variant.id)) {
         const backVariantId = variant.id === "tractor_front" ? "tractor_back" : "driver_back";
@@ -7869,7 +7756,10 @@ async function openDriverPrintFlow(options = {}) {
         await handleStandardPrintResult(result, printedDocument);
       }
     } catch (error) {
-      flowState.error = humanizeApiError(error, `Не удалось отправить в печать ${variant.errorLabel}`);
+      if (options.targetWindow && !options.targetWindow.closed) {
+        options.targetWindow.close();
+      }
+      flowState.error = humanizeApiError(error, `Не удалось открыть ${variant.errorLabel}`);
       flowState.loading = false;
       renderFlow();
     }
@@ -7925,22 +7815,38 @@ async function openDriverPrintFlow(options = {}) {
             <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
           </div>
 
-          <button type="button" class="driver-print-classic__button driver-print-classic__button--duplicate" disabled>Печать дубликата</button>
+          ${
+            flowState.compactCertificateFlow
+              ? ""
+              : '<button type="button" class="driver-print-classic__button driver-print-classic__button--duplicate" disabled>Печать дубликата</button>'
+          }
 
-          <div class="driver-print-classic__caption driver-print-classic__caption--primary">Серия, номер, дата первоначального бланка:</div>
-          <div class="driver-print-classic__primary">
-            <input class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(blankParts.series)}" readonly />
-            <input class="driver-print-classic__input" value="${escapeHtml(blankParts.fullNumber || blankParts.number)}" readonly />
-            <input class="driver-print-classic__input driver-print-classic__input--date" value="${escapeHtml(blankParts.primaryDate)}" readonly />
-          </div>
+          ${
+            flowState.compactCertificateFlow
+              ? ""
+              : `
+                <div class="driver-print-classic__caption driver-print-classic__caption--primary">Серия, номер, дата первоначального бланка:</div>
+                <div class="driver-print-classic__primary">
+                  <input class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(blankParts.series)}" readonly />
+                  <input class="driver-print-classic__input" value="${escapeHtml(blankParts.fullNumber || blankParts.number)}" readonly />
+                  <input class="driver-print-classic__input driver-print-classic__input--date" value="${escapeHtml(blankParts.primaryDate)}" readonly />
+                </div>
+              `
+          }
 
           ${flowState.error ? `<div class="driver-print-classic__error">${escapeHtml(flowState.error)}</div>` : ""}
 
           <div class="driver-print-classic__actions driver-print-classic__actions--driver">
             ${renderPrintActions()}
           </div>
-          <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="court">справка Суда</button>
-          <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="ambulatory">Амб. Карта 25У</button>
+          ${
+            flowState.compactCertificateFlow
+              ? ""
+              : `
+                <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="court">справка Суда</button>
+                <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="ambulatory">Амб. Карта 25У</button>
+              `
+          }
         </div>
       `,
       "modal--driver-print",
@@ -8009,7 +7915,8 @@ async function openDriverPrintFlow(options = {}) {
 
     document.querySelectorAll("[data-driver-print-variant]").forEach((button) => {
       button.addEventListener("click", async () => {
-        await printVariant(button.dataset.driverPrintVariant || "");
+        const targetWindow = window.open("about:blank", "_blank");
+        await printVariant(button.dataset.driverPrintVariant || "", { targetWindow });
       });
     });
 
@@ -8125,7 +8032,7 @@ async function openDemoDocument(typeOrId, options = {}) {
         <p>${escapeHtml(documentItem.content || "Документ сформирован на сервере.")}</p>
       </div>
       <div class="client-create-actions">
-        ${documentItem.downloadUrl ? '<button type="button" class="primary-button" id="printDocumentPreview">Отправить в печать</button>' : ""}
+        ${documentItem.downloadUrl ? '<button type="button" class="primary-button" id="printDocumentPreview">Открыть Word</button>' : ""}
         ${documentItem.downloadUrl ? '<button type="button" class="ghost-button" id="openDocumentPreview">Открыть без печати</button>' : ""}
         <button type="button" class="primary-button" id="closeDocumentPreview">ОК</button>
       </div>
@@ -8133,14 +8040,15 @@ async function openDemoDocument(typeOrId, options = {}) {
   );
 
   document.getElementById("printDocumentPreview")?.addEventListener("click", async () => {
+    const targetWindow = window.open("about:blank", "_blank");
     try {
-      if (!(await openGeneratedDocumentForPrint(documentItem))) {
-        showToast("Документ сформирован, но тихая печать не запущена");
-      } else {
-        showToast("Документ отправлен в печать");
-      }
+      await openGeneratedDocumentDirectly(documentItem, { targetWindow });
+      showToast("Документ открыт");
     } catch (error) {
-      showToast(humanizeApiError(error, "Не удалось отправить документ в печать"));
+      if (targetWindow && !targetWindow.closed) {
+        targetWindow.close();
+      }
+      showToast(humanizeApiError(error, "Не удалось открыть документ"));
     }
   });
 
@@ -9554,7 +9462,7 @@ function bindContentEvents() {
           showToast("Браузер заблокировал окно шаблона. Разрешите всплывающие окна для демо.");
         }
       } catch (error) {
-        showToast(humanizeApiError(error, "Не удалось открыть файловый шаблон"));
+        showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
       }
     });
   });
@@ -9637,9 +9545,11 @@ function bindContentEvents() {
       const printKind = event.currentTarget?.dataset.chairmanPrint || "conclusion";
       const actionLabel = printKind === "extract" ? "выписка" : "документ";
       const currentButton = event.currentTarget;
+      const targetWindow = window.open("about:blank", "_blank");
 
       const examId = chairmanForm.dataset.examId;
       if (!examId) {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
         showToast("Не удалось подготовить печать из окна председателя");
         return;
       }
@@ -9648,6 +9558,7 @@ function bindContentEvents() {
       const values = collectChairmanModalFormValues(chairmanForm);
       const saved = await window.saveDoctorExam?.(examId, values);
       if (!saved) {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
         if (currentButton) currentButton.disabled = false;
         return;
       }
@@ -9667,20 +9578,29 @@ function bindContentEvents() {
       const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
 
       if (formInfo.printMode === "driver-flow" || numberedCertificateSeries || certificatePrintFlowOptions) {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
         window.closeDoctorExamCard?.();
         await window.openDriverPrintFlow?.({
           ...(certificatePrintFlowOptions || {}),
-          ...(numberedCertificateSeries ? { preselectedSeries: numberedCertificateSeries } : {}),
+          ...(numberedCertificateSeries
+            ? {
+                preselectedSeries: numberedCertificateSeries,
+                certificateTypes: printType ? [printType] : [],
+                selectedCertificateType: printType || "",
+                compactCertificateFlow: true,
+              }
+            : {}),
         });
         return;
       }
 
       if (formInfo.printMode !== "driver-flow" && printType) {
         try {
-          const documentItem = await printDocumentForVisit(printType, client, visit);
+          const documentItem = await printDocumentForVisit(printType, client, visit, { targetWindow });
           window.closeDoctorExamCard?.();
-          showToast(`Отправлено в печать: ${actionLabel}`);
+          showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
         } catch (error) {
+          if (targetWindow && !targetWindow.closed) targetWindow.close();
           console.error(error);
           if (currentButton) currentButton.disabled = false;
           showToast(humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));

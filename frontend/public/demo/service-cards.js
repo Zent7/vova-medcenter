@@ -581,9 +581,15 @@
           printBtn.addEventListener("click", async (event) => {
             event.preventDefault();
             event.stopPropagation();
+            const targetWindow = window.open("about:blank", "_blank");
             const saved = await saveSportCard(form);
-            if (!saved) return;
-            await window.printChairmanDocumentFromExam?.(ensureSportState().examId);
+            if (!saved) {
+              if (targetWindow && !targetWindow.closed) {
+                targetWindow.close();
+              }
+              return;
+            }
+            await window.printChairmanDocumentFromExam?.(ensureSportState().examId, { targetWindow });
           });
         }
         const pickBtn = form.querySelector("[data-sport-pick-phrase]");
