@@ -3,6 +3,7 @@ from pathlib import Path
 import secrets
 import shutil
 from threading import Lock
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
@@ -55,6 +56,29 @@ def _document_media_type(file_path: Path) -> str:
 
 def _document_disposition_type(file_path: Path, *, inline_requested: bool) -> str:
     return "inline" if inline_requested else "attachment"
+
+
+def _public_url_for(request: Request, route_name: str, **path_params: object) -> str:
+    route_url = str(request.url_for(route_name, **path_params))
+    public_origin = (settings.public_frontend_origin or "").rstrip("/")
+    if not public_origin:
+        return route_url
+
+    public_parts = urlsplit(public_origin)
+    route_parts = urlsplit(route_url)
+    request_host = request.headers.get("host", "").split(",", 1)[0].strip()
+    if not public_parts.scheme or not public_parts.netloc or request_host != public_parts.netloc:
+        return route_url
+
+    return urlunsplit(
+        (
+            public_parts.scheme,
+            public_parts.netloc,
+            route_parts.path,
+            route_parts.query,
+            route_parts.fragment,
+        )
+    )
 
 
 def _resolve_generated_file(file_name: str) -> Path | None:
@@ -299,7 +323,7 @@ def create_generated_file_print_ticket(
 
     return DocumentPrintTicketResponse(
         file_name=file_path.name,
-        file_url=str(request.url_for("download_print_ticket_file_named", token=token, file_name=file_path.name)),
+        file_url=_public_url_for(request, "download_print_ticket_file_named", token=token, file_name=file_path.name),
         expires_in_seconds=_PRINT_TICKET_TTL_SECONDS,
     )
 
