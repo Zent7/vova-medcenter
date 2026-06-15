@@ -3735,12 +3735,12 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   font: 14px/1.55 "Consolas", monospace;
 }
 
-.modal--driver-print .modal__backdrop {
+#actionModal.modal--driver-print .modal__backdrop {
   background: transparent;
 }
 
-.modal--driver-print .modal__card {
-  width: 382px;
+#actionModal.modal--driver-print .modal__card {
+  width: min(382px, calc(100% - 32px));
   top: 50%;
   margin: 0 auto;
   transform: translateY(-50%);
@@ -3751,20 +3751,20 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   overflow: hidden;
 }
 
-.modal--driver-print .modal__header {
+#actionModal.modal--driver-print .modal__header {
   min-height: 34px;
   padding: 7px 10px 5px 12px;
   border-bottom: 1px solid #b8c0c8;
   background: linear-gradient(180deg, #f8fafc 0%, #d7dde4 100%);
 }
 
-.modal--driver-print .modal__header h2 {
+#actionModal.modal--driver-print .modal__header h2 {
   margin: 0;
   color: #1f2933;
   font: 700 14px/1.2 Arial, sans-serif;
 }
 
-.modal--driver-print .icon-button {
+#actionModal.modal--driver-print .icon-button {
   width: 24px;
   height: 24px;
   border: 1px solid #aeb6bf;
@@ -3774,7 +3774,7 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   font: 700 19px/19px Arial, sans-serif;
 }
 
-.modal--driver-print .login-card {
+#actionModal.modal--driver-print .login-card {
   display: block;
   padding: 12px 14px 14px;
   background: transparent;
