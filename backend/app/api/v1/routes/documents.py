@@ -308,7 +308,7 @@ def _download_print_ticket(token: str) -> FileResponse:
     now = datetime.now(timezone.utc)
     with _print_ticket_lock:
         _cleanup_expired_print_tickets(now)
-        ticket = _print_tickets.pop(token, None)
+        ticket = _print_tickets.get(token)
 
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РЎСЃС‹Р»РєР° РґР»СЏ РїРµС‡Р°С‚Рё РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё СѓСЃС‚Р°СЂРµР»Р°")
