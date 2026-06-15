@@ -3,7 +3,7 @@ from pathlib import Path
 import secrets
 import shutil
 from threading import Lock
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
@@ -66,15 +66,16 @@ def _public_url_for(request: Request, route_name: str, **path_params: object) ->
 
     public_parts = urlsplit(public_origin)
     route_parts = urlsplit(route_url)
+    encoded_path = quote(route_parts.path, safe="/%")
     request_host = request.headers.get("host", "").split(",", 1)[0].strip()
     if not public_parts.scheme or not public_parts.netloc or request_host != public_parts.netloc:
-        return route_url
+        return urlunsplit((route_parts.scheme, route_parts.netloc, encoded_path, route_parts.query, route_parts.fragment))
 
     return urlunsplit(
         (
             public_parts.scheme,
             public_parts.netloc,
-            route_parts.path,
+            encoded_path,
             route_parts.query,
             route_parts.fragment,
         )

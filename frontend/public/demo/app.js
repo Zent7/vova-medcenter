@@ -2132,7 +2132,7 @@ function isWordDocumentFile(fileName = "") {
 }
 
 function buildWordProtocolUrl(fileUrl) {
-  return `ms-word:ofv|u|${fileUrl}`;
+  return `ms-word:ofv|u|${encodeURI(fileUrl)}`;
 }
 
 function openDocumentFileUrl(fileUrl, documentItem = null, targetWindow = null) {

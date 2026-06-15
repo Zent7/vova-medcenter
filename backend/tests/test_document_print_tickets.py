@@ -51,8 +51,9 @@ class DocumentPrintTicketTests(unittest.TestCase):
     def test_public_ticket_url_uses_configured_https_origin(self):
         original_origin = documents.settings.public_frontend_origin
         documents.settings.public_frontend_origin = "https://vova-medcenter.ravil.space"
+        file_name = "C\u043f\u0440\u0430\u0432\u043a\u0430_\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440_\u0448\u0430\u0431\u043b\u043e\u043d.docx"
         request = DummyRequest(
-            "http://vova-medcenter.ravil.space/api/v1/documents/print-ticket/token/file.docx",
+            f"http://vova-medcenter.ravil.space/api/v1/documents/print-ticket/token/{file_name}",
             "vova-medcenter.ravil.space",
         )
 
@@ -61,14 +62,16 @@ class DocumentPrintTicketTests(unittest.TestCase):
                 request,
                 "download_print_ticket_file_named",
                 token="token",
-                file_name="file.docx",
+                file_name=file_name,
             )
         finally:
             documents.settings.public_frontend_origin = original_origin
 
         self.assertEqual(
             public_url,
-            "https://vova-medcenter.ravil.space/api/v1/documents/print-ticket/token/file.docx",
+            "https://vova-medcenter.ravil.space/api/v1/documents/print-ticket/token/"
+            "C%D0%BF%D1%80%D0%B0%D0%B2%D0%BA%D0%B0_%D0%BC%D0%B5%D0%B4.%20"
+            "%D0%BE%D1%81%D0%BC%D0%BE%D1%82%D1%80_%D1%88%D0%B0%D0%B1%D0%BB%D0%BE%D0%BD.docx",
         )
 
     def test_local_ticket_url_keeps_request_origin(self):
