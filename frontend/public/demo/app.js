@@ -89,6 +89,7 @@ const data = {
   doctorExams: [],
   mkb10History: [],
   backendClients: [],
+  dashboardPinnedClientIds: new Set(),
   backendClientsLoaded: false,
   dashboardDoctorStatuses: {},
   dashboardDoctorStatusesLoading: false,
@@ -964,6 +965,43 @@ function getDoctorTemplate(doctorRoleId) {
 }
 
 let _clientPoolCache = null;
+
+function getClientIdentityKey(client) {
+  const key = client?.backendId || client?.id;
+  return key === undefined || key === null || key === "" ? "" : String(key);
+}
+
+function pinDashboardClient(client) {
+  const key = getClientIdentityKey(client);
+  if (!key) return;
+  data.dashboardPinnedClientIds.add(key);
+}
+
+function clearDashboardPinnedClients() {
+  data.dashboardPinnedClientIds.clear();
+}
+
+function getDashboardPinnedClients() {
+  if (!data.dashboardPinnedClientIds.size) return [];
+  const pinnedClients = [];
+  const seen = new Set();
+  [...(data.clients || []), ...(data.backendClients || [])].forEach((client) => {
+    const key = getClientIdentityKey(client);
+    if (!key || !data.dashboardPinnedClientIds.has(key) || seen.has(key)) return;
+    seen.add(key);
+    pinnedClients.push(client);
+  });
+  return pinnedClients;
+}
+
+function mergeDashboardPinnedClients(clients = []) {
+  const seen = new Set(clients.map(getClientIdentityKey).filter(Boolean));
+  const pinnedClients = getDashboardPinnedClients().filter((client) => {
+    const key = getClientIdentityKey(client);
+    return key && !seen.has(key);
+  });
+  return [...pinnedClients, ...clients];
+}
 
 function getClientPool() {
   if (_clientPoolCache) return _clientPoolCache;
@@ -2340,6 +2378,9 @@ function upsertClientInMemory(client) {
 function showClientInDashboardResults(client, options = {}) {
   const mappedClient = upsertClientInMemory(client);
   if (!mappedClient) return null;
+  if (options.pin !== false) {
+    pinDashboardClient(mappedClient);
+  }
 
   if (options.resetSearch) {
     appState.clientSearch = "";
@@ -3710,7 +3751,8 @@ async function loadClientsFromBackend(searchValue) {
     const clients = await response.json();
     if (requestId !== clientSearchRequestId) return;
 
-    data.backendClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
+    const mappedClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
+    data.backendClients = mergeDashboardPinnedClients(mappedClients);
     data.backendClientsLoaded = true;
     invalidateClientPool();
     data.backendSearch = search;
@@ -3735,9 +3777,10 @@ async function loadClientsFromBackend(searchValue) {
   }
 }
 
-function scheduleClientSearch(searchValue, { render = true } = {}) {
+function scheduleClientSearch(searchValue, { render = true, clearPinned = true } = {}) {
   window.clearTimeout(clientSearchTimer);
   clientSearchAbortController?.abort();
+  if (clearPinned) clearDashboardPinnedClients();
   data.backendSearchLoading = true;
   data.backendSearchError = "";
   if (render) renderApp();
