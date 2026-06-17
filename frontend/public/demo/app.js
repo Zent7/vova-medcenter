@@ -7032,6 +7032,18 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
 
   const printType = getChairmanTemplatePrintType(visit);
   const formInfo = getChairmanFormInfo(visit, client);
+  if (formInfo.printMode === "driver-flow") {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.close();
+    }
+    appState.selectedClientId = client.id;
+    appState.activeVisitId = visit.id;
+    persistDemoState();
+    window.closeSportCard?.();
+    await openDriverPrintFlow();
+    return null;
+  }
+
   const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
   const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
   if (numberedCertificateSeries || certificatePrintFlowOptions) {
@@ -9657,6 +9669,18 @@ function bindContentEvents() {
           : null;
       const printType = getChairmanTemplatePrintType(visit, printKind);
       const formInfo = getChairmanFormInfo(visit, client);
+      if (formInfo.printMode === "driver-flow") {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
+        if (client && visit) {
+          appState.selectedClientId = client.id;
+          appState.activeVisitId = visit.id;
+          persistDemoState();
+        }
+        window.closeDoctorExamCard?.();
+        await window.openDriverPrintFlow?.();
+        return;
+      }
+
       const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
       const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
 
