@@ -4734,7 +4734,6 @@ function renderEmployeePage() {
 
   return `
     <section class="card">
-      <h3>Сотрудники</h3>
       <div class="employee-grid">
         <div class="summary-card">
           <div class="summary-card__label">Текущий пользователь</div>
@@ -5210,7 +5209,6 @@ function renderDoctorsPage() {
 
   return `
     <section class="card">
-      <h3>Врачи</h3>
       <p class="muted">Карточки врачей подключены. Чтобы открыть осмотр, вернись на главную, найди клиента и нажми нужного врача.</p>
       <div class="cards-grid">
         ${roles
@@ -5487,7 +5485,6 @@ function renderTemplatesPage() {
 
   return `
     <section class="card">
-      <h3>Шаблоны</h3>
       <div class="template-page-head">
         <p class="muted">${canManageTemplates ? "Файловые шаблоны можно посмотреть, заменить новым файлом и перечитать из папки." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} Желтые ячейки с подписью “авто” заполняются системой.</p>
         ${canManageTemplates ? '<button class="primary-button" type="button" data-refresh-document-templates>Перечитать папку</button>' : ""}
@@ -8677,7 +8674,6 @@ window.addEventListener("scroll", () => {
 }, true);
 
 function getPageTitle() {
-  if (["cash", "employee", "blanks", "reports"].includes(appState.page)) return "";
   if (appState.page === "dashboard") return "Главная";
   return navItems.find((item) => item.id === appState.page)?.label || "Главная";
 }

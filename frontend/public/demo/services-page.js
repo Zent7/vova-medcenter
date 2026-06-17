@@ -44,7 +44,6 @@ function renderServicesPage() {
   if (!structuredServices.length) {
     return `
       <section class="card">
-        <h3>Услуги</h3>
         <p class="muted">Данные услуг пока не подключены.</p>
       </section>
     `;
@@ -54,7 +53,6 @@ function renderServicesPage() {
     <section class="card services-page">
       <div class="services-page__header">
         <div>
-          <h3 style="margin:0;">Услуги</h3>
           <p class="muted" style="margin:6px 0 0 0;">Справочник услуг для выбора и настройки</p>
         </div>
       </div>
