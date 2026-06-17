@@ -4735,7 +4735,6 @@ function renderEmployeePage() {
   return `
     <section class="card">
       <h3>Сотрудники</h3>
-      <p class="muted">Демо-страница для проверки аутентификации сотрудников и ролей. Председатель создает учетные записи и назначает роли, админ работает в ограниченном режиме без отчетов и без управления доступами.</p>
       <div class="employee-grid">
         <div class="summary-card">
           <div class="summary-card__label">Текущий пользователь</div>
@@ -4997,7 +4996,6 @@ function renderCashPage() {
     <section class="cash-page">
       <div class="card cash-toolbar">
         <div>
-          <h3>Касса</h3>
           <p class="muted">По умолчанию показана текущая смена за сегодня. Период можно выбрать вручную.</p>
         </div>
         <div class="cash-toolbar__filters">
@@ -5106,7 +5104,6 @@ function renderReportsPage() {
     <section class="cash-page">
       <div class="card cash-toolbar">
         <div>
-          <h3>Отчеты</h3>
           <p class="muted">Сводка по центрам за день или период: клиенты, документы, услуги и выручка.</p>
         </div>
         <div class="cash-toolbar__filters">
@@ -8680,6 +8677,7 @@ window.addEventListener("scroll", () => {
 }, true);
 
 function getPageTitle() {
+  if (["cash", "employee", "blanks", "reports"].includes(appState.page)) return "";
   if (appState.page === "dashboard") return "Главная";
   return navItems.find((item) => item.id === appState.page)?.label || "Главная";
 }
