@@ -246,7 +246,7 @@ window.servicesData = {
     },
     {
       id: 30,
-      name: "Справка 095/у о временной нетрудоспособности",
+      name: "095",
       groupId: 7,
       price: 1800,
       notes: "",
@@ -256,7 +256,7 @@ window.servicesData = {
     },
     {
       id: 5,
-      name: "Справка спорт + ЭКГ",
+      name: "спорт",
       groupId: 7,
       price: 1200,
       notes: "",
