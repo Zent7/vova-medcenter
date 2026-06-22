@@ -237,7 +237,8 @@ body[data-page="calendar"] .topbar {
 }
 
 body[data-page="dashboard"] .topbar h1 {
-  font-size: 22px;
+  font-size: 24px;
+  font-weight: 800;
 }
 
 body[data-page="dashboard"] .topbar {
@@ -2424,11 +2425,21 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
 
 .sketch-table__grid--row > .sketch-table__fio {
   align-items: center;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
   line-height: 1.12;
   color: #0f2438;
   white-space: normal;
+}
+
+body[data-page="dashboard"] .sketch-table__grid > span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+body[data-page="dashboard"] .sketch-table__grid--head > span {
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .sketch-table__grid--row:hover,
