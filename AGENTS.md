@@ -106,6 +106,20 @@ Important paths:
 
 Do not reintroduce a second React UI unless the delivery demo is first ported into that frontend shell.
 
+## Live Site Delivery
+
+When the user asks to change the site, assume the change must be reflected on the live demo site, not only in local files:
+
+- Live demo: https://vova-medcenter.ravil.space/demo/index.html
+- Deploy PR: https://github.com/ravilushqa/homelab/pull/261
+
+Default workflow for site changes:
+- Make the change in this repository, usually under `frontend/public/demo/` for UI behavior and styling.
+- Verify locally with the relevant checks for the touched files.
+- After implementation and verification, prepare the repo changes for delivery and use the existing deploy workflow/PR above so the live demo receives the update.
+- Do not stop at "changed locally" unless the user explicitly says local-only is enough.
+- Report whether the change is local-only, pushed/PR-ready, or actually visible on the live demo site.
+
 ## Utility Scripts
 
 Located in `backend/scripts/`, run directly with Python (not as package modules):

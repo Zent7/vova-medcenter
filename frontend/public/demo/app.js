@@ -2877,6 +2877,7 @@ function mapDashboardDoctorStatus(status) {
     clientId: status?.client_id,
     encounterId: status?.encounter_id || null,
     encounterStatus: status?.encounter_status || null,
+    blankNumber: status?.blank_number || "",
     services,
     completedDoctorRoleIds: Array.isArray(status?.completed_doctor_role_ids)
       ? status.completed_doctor_role_ids.slice()
@@ -2903,6 +2904,24 @@ function getDashboardDoctorStatusVisit(client) {
     }, {}),
     status: status.encounterStatus || "draft",
   };
+}
+
+function getDashboardBlankNumber(client, status = null) {
+  const statusBlankNumber = String(status?.blankNumber || "").trim();
+  if (statusBlankNumber) return statusBlankNumber;
+
+  const backendClientId = client?.backendId || client?.id;
+  const encounterId = status?.encounterId ? String(status.encounterId) : "";
+  const documents = [...(data.generatedDocuments || []), ...(data.documents || [])]
+    .filter((documentItem) => {
+      const blankNumber = String(documentItem?.blankNumber || "").trim();
+      if (!blankNumber || documentItem?.cancelledAt) return false;
+      if (encounterId && String(documentItem.encounterId || documentItem.visitId || "") === encounterId) return true;
+      return backendClientId && String(documentItem.clientId || "") === String(backendClientId);
+    })
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  return String(documents[0]?.blankNumber || "").trim();
 }
 
 function areDashboardDoctorStatusesReady(clients) {
@@ -4012,7 +4031,7 @@ function buildExcelRows(clients) {
       stamp: "",
       note: client.note || "",
       encounterDate: client.encounterDate || "",
-      cardNumber: client.cardNumber || "",
+      blankNumber: getDashboardBlankNumber(client, status),
       organization: client.organization || "",
       agent: client.agent || "",
     };
@@ -4362,7 +4381,7 @@ function renderSketchHome() {
     "Узист",
     "Председатель",
     "Примечания",
-    "Номер карты",
+    "Номер бланка",
     "Организация",
     "Агент",
   ];
@@ -4504,7 +4523,7 @@ function renderSketchHome() {
                           ${renderExcelDoctorCell(row, "uzist")}
                           ${renderExcelDoctorCell(row, "chairman")}
                           <span>${escapeHtml(row.note)}</span>
-                          <span>${escapeHtml(row.cardNumber)}</span>
+                          <span>${escapeHtml(row.blankNumber)}</span>
                           <span>${escapeHtml(row.organization)}</span>
                           <span>${escapeHtml(row.agent)}</span>
                         </button>

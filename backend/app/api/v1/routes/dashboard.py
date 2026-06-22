@@ -10,6 +10,7 @@ from app.models.client import Client
 from app.models.doctor_exam import DoctorExam
 from app.models.encounter import Encounter
 from app.models.encounter_service import EncounterService
+from app.models.generated_document import GeneratedDocument
 from app.models.recall import Recall
 from app.models.service import Service
 from app.schemas.dashboard import (
@@ -59,6 +60,7 @@ def get_client_doctor_statuses(
     encounter_ids = [encounter_id for encounter_id, _ in latest_encounter_by_client.values()]
     services_by_encounter: dict[int, list[DashboardClientDoctorStatusService]] = defaultdict(list)
     completed_roles_by_encounter: dict[int, list[str]] = defaultdict(list)
+    blank_number_by_encounter: dict[int, str] = {}
 
     if encounter_ids:
         service_rows = db.execute(
@@ -84,6 +86,23 @@ def get_client_doctor_statuses(
             if doctor_role_id not in completed_roles_by_encounter[encounter_id]:
                 completed_roles_by_encounter[encounter_id].append(doctor_role_id)
 
+        blank_rows = db.execute(
+            select(GeneratedDocument.encounter_id, GeneratedDocument.blank_number_snapshot)
+            .where(
+                GeneratedDocument.encounter_id.in_(encounter_ids),
+                GeneratedDocument.blank_number_snapshot.is_not(None),
+                GeneratedDocument.cancelled_at.is_(None),
+            )
+            .order_by(
+                GeneratedDocument.encounter_id.asc(),
+                GeneratedDocument.generated_at.desc(),
+                GeneratedDocument.id.desc(),
+            )
+        ).all()
+        for encounter_id, blank_number in blank_rows:
+            if encounter_id is not None and blank_number:
+                blank_number_by_encounter.setdefault(encounter_id, blank_number)
+
     result: list[DashboardClientDoctorStatus] = []
     for client_id in unique_client_ids:
         encounter = latest_encounter_by_client.get(client_id)
@@ -97,6 +116,7 @@ def get_client_doctor_statuses(
                 client_id=client_id,
                 encounter_id=encounter_id,
                 encounter_status=encounter_status,
+                blank_number=blank_number_by_encounter.get(encounter_id),
                 services=services_by_encounter[encounter_id],
                 completed_doctor_role_ids=completed_roles_by_encounter[encounter_id],
             )

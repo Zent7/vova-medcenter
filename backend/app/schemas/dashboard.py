@@ -17,5 +17,6 @@ class DashboardClientDoctorStatus(BaseModel):
     client_id: int
     encounter_id: int | None = None
     encounter_status: str | None = None
+    blank_number: str | None = None
     services: list[DashboardClientDoctorStatusService] = Field(default_factory=list)
     completed_doctor_role_ids: list[str] = Field(default_factory=list)
