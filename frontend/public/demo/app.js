@@ -155,7 +155,7 @@ let clientSearchRequestId = 0;
 let clientSearchAbortController = null;
 let clientRowClickTimer = null;
 const DASHBOARD_PAGE_SIZE = 50;
-const CLIENTS_LOAD_BATCH_SIZE = 100;
+const DASHBOARD_CLIENT_LOAD_LIMIT = 100;
 const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
 
 const DEMO_STORAGE_KEY = "vova-medcenter-demo-state-v2";
@@ -3762,36 +3762,17 @@ async function loadClientsFromBackend(searchValue) {
   setTimeout(renderApp, 0);
 
   try {
-    const mappedClients = [];
-    const seenClientIds = new Set();
-    let offset = 0;
-    while (true) {
-      const params = new URLSearchParams({
-        limit: String(CLIENTS_LOAD_BATCH_SIZE),
-        offset: String(offset),
-      });
-      if (search) params.set("search", search);
-      if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
-      if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
-      const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
-      const response = await fetch(url, { signal: abortController.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const clients = await response.json();
-      if (requestId !== clientSearchRequestId) return;
+    const params = new URLSearchParams({ limit: String(DASHBOARD_CLIENT_LOAD_LIMIT) });
+    if (search) params.set("search", search);
+    if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
+    if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
+    const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
+    const response = await fetch(url, { signal: abortController.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const clients = await response.json();
+    if (requestId !== clientSearchRequestId) return;
 
-      const batch = Array.isArray(clients) ? clients : [];
-      let addedClients = 0;
-      batch.forEach((client) => {
-        const clientKey = client?.id == null ? "" : String(client.id);
-        if (clientKey && seenClientIds.has(clientKey)) return;
-        if (clientKey) seenClientIds.add(clientKey);
-        mappedClients.push(mapApiClient(client));
-        addedClients += 1;
-      });
-      if (batch.length < CLIENTS_LOAD_BATCH_SIZE || addedClients === 0) break;
-      offset += batch.length;
-    }
-
+    const mappedClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
     data.backendClients = mergeDashboardPinnedClients(mappedClients);
     data.backendClientsLoaded = true;
     invalidateClientPool();
