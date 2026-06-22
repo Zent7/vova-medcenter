@@ -1721,18 +1721,19 @@ function buildDoctorMark(roleCode, requiredDoctors, completedDoctors) {
       ? 1
       : 0;
   if (completedDoctors.has(roleCode)) {
-    return { value: "✓", title: "Врач пройден в текущем обращении" };
+    return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
   }
   if (requiredCount > 0) {
     const requiredTitle = requiredCount > 1
       ? `Требуется в текущем обращении: ${requiredCount}`
       : "Требуется в текущем обращении";
     return {
-      value: "×",
+      value: "✓",
       title: requiredTitle,
+      state: "required",
     };
   }
-  return { value: "", title: "" };
+  return { value: "", title: "", state: "empty" };
 }
 
 function mapApiService(service) {
@@ -4045,16 +4046,37 @@ function renderDoctorButton(label, selectedClient) {
     ? getDoctorExamStatus(selectedClient.id, doctorRoleId)
     : "empty";
   const title = getDoctorExamStatusTitle(status);
+  const activeVisit = selectedClient ? getCurrentVisitForClient(selectedClient.id) : null;
+  const currentExam = selectedClient && activeVisit && doctorRoleId
+    ? getDoctorExam(selectedClient.id, activeVisit.id, doctorRoleId)
+    : null;
+  const deleteButton = currentExam
+    ? `
+      <button
+        type="button"
+        class="doctor-pill-delete"
+        title="Удалить врача"
+        aria-label="Удалить врача ${escapeHtml(label)}"
+        data-doctor-delete-role-id="${escapeHtml(doctorRoleId)}"
+        data-doctor-delete-exam-id="${escapeHtml(currentExam.id)}"
+      >
+        Удалить
+      </button>
+    `
+    : "";
 
   return `
-    <button
-      class="doctor-pill doctor-pill--${status}"
-      title="${escapeHtml(title)}"
-      data-doctor-label="${escapeHtml(label)}"
-      data-doctor-role-id="${escapeHtml(doctorRoleId || "")}"
-    >
-      ${label}
-    </button>
+    <span class="doctor-pill-wrap${currentExam ? " doctor-pill-wrap--has-delete" : ""}">
+      <button
+        class="doctor-pill doctor-pill--${status}"
+        title="${escapeHtml(title)}"
+        data-doctor-label="${escapeHtml(label)}"
+        data-doctor-role-id="${escapeHtml(doctorRoleId || "")}"
+      >
+        ${label}
+      </button>
+      ${deleteButton}
+    </span>
   `;
 }
 
@@ -4063,7 +4085,8 @@ function renderExcelDoctorCell(row, key) {
   const mark = row[key];
   const value = typeof mark === "object" && mark !== null ? mark.value || "" : mark || "";
   const title = typeof mark === "object" && mark !== null ? mark.title || "" : "";
-  const modifier = value === "✓" ? "done" : value === "×" ? "required" : "empty";
+  const markState = typeof mark === "object" && mark !== null ? mark.state || "" : "";
+  const modifier = markState || (value === "✓" ? "done" : "empty");
   return `<span class="excel-doctor-mark excel-doctor-mark--${modifier}" title="${escapeHtml(title)}" data-row-doctor-role-id="${escapeHtml(doctorRoleId)}">${escapeHtml(value)}</span>`;
 }
 
@@ -9794,6 +9817,35 @@ function bindContentEvents() {
         visitId: activeVisit.id,
         doctorRoleId,
       });
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-doctor-delete-role-id]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const selectedClient = getSelectedClient();
+      const doctorRoleId = button.dataset.doctorDeleteRoleId || "";
+      const examId = button.dataset.doctorDeleteExamId || "";
+      const activeVisit = selectedClient ? getCurrentVisitForClient(selectedClient.id) : null;
+      const currentExam = getDoctorExamById(examId)
+        || (selectedClient && activeVisit && doctorRoleId
+          ? getDoctorExam(selectedClient.id, activeVisit.id, doctorRoleId)
+          : null);
+
+      if (!currentExam) {
+        showToast("Карточка врача уже удалена");
+        renderApp();
+        return;
+      }
+
+      const doctorName = getDoctorDisplayName(currentExam.doctorRoleId || doctorRoleId);
+      const removed = await deleteDoctorExam(currentExam.id);
+      if (removed) {
+        showToast(`Карточка врача "${doctorName}" удалена`);
+        renderApp();
+      }
     });
   });
 

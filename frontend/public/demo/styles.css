@@ -2691,6 +2691,36 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   flex: 0 0 auto;
 }
 
+.doctor-pill-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.doctor-pill-wrap--has-delete .doctor-pill {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.doctor-pill-delete {
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid rgba(189, 61, 61, 0.38);
+  border-radius: 6px 999px 999px 6px;
+  background: #fff3f3;
+  color: #8c2020;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.doctor-pill-delete:hover {
+  background: #ffe3e3;
+  border-color: rgba(189, 61, 61, 0.58);
+}
+
 .doctor-pill--completed {
   border-color: rgba(25, 135, 84, 0.35);
   background: #eaf6ef;
