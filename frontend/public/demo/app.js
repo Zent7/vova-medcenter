@@ -7160,6 +7160,7 @@ function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
     lmk_certificate: "lmk",
     prof_conclusion: "prof",
     ambulatory_card: "prof_ambulatory",
+    prof_ambulatory: "prof_ambulatory",
   };
   if (fixedPrintTypes[printKind]) return fixedPrintTypes[printKind];
   if (config.type === "prof" && printKind === "extract") return "prof_extract";
@@ -9993,28 +9994,53 @@ function bindContentEvents() {
       const client = exam
         ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
         : getSelectedClient();
+      const visit = exam
+        ? data.visits.find((item) => String(item.id) === String(exam.visitId))
+        : client
+          ? getCurrentVisitForClient(client.id)
+          : formVisit;
+      const existingBlankNumber =
+        (visit ? getDocumentsForVisit(visit.id).find((item) => String(item.blankNumber || "").trim())?.blankNumber : "") ||
+        client?.referenceNumber ||
+        client?.rawApiClient?.reference_number ||
+        "";
       openActionModal(
         "Печать результатов:",
         `
           <div class="driver-print-classic chairman-print-results">
             <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
-            <div class="driver-print-classic__actions driver-print-classic__actions--driver">
-              ${formPrintActions
-                .map(
-                  (action) => `
-                    <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="${escapeHtml(action.kind)}">
-                      ${escapeHtml(action.label)}
-                    </button>
-                  `,
-                )
-                .join("")}
+
+            <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
+            <div class="driver-print-classic__lookup">
+              <input class="driver-print-classic__input driver-print-classic__input--series" value="ЛМК" readonly />
+              <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(existingBlankNumber)}" readonly />
+              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="chairmanPrintFindBlank">Найти номер</button>
             </div>
+
+            <div class="chairman-print-results__row chairman-print-results__row--top">
+              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_certificate">Печать справки</button>
+              <button type="button" class="driver-print-classic__button" disabled>Печать дубликата</button>
+            </div>
+            <div class="chairman-print-results__row">
+              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Прикрепить ЛМК</button>
+              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
+            </div>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_conclusion">Проф. осмотр</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory">Выписка из амбулаторной карты</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory">Амб. Карта 25У</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__wide--right" disabled>Результат ЗЭП</button>
           </div>
         `,
         "modal--driver-print",
       );
 
-      document.querySelectorAll("[data-chairman-print-menu-kind]").forEach((button) => {
+      document.getElementById("chairmanPrintFindBlank")?.addEventListener("click", () => {
+        const input = document.getElementById("chairmanPrintBlankNumber");
+        if (input && !input.value) input.value = existingBlankNumber;
+        showToast(existingBlankNumber ? "Номер бланка подставлен" : "Свободный номер ЛМК не найден");
+      });
+
+      actionModalContent?.querySelectorAll("[data-chairman-print-menu-kind]").forEach((button) => {
         button.addEventListener("click", async (event) => {
           event.preventDefault();
           event.stopPropagation();

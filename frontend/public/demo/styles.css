@@ -3986,6 +3986,33 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   margin: 0 auto 9px;
 }
 
+.chairman-print-results .driver-print-classic__fio {
+  margin-bottom: 12px;
+}
+
+.chairman-print-results__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.28fr);
+  gap: 9px;
+  margin-bottom: 10px;
+}
+
+.chairman-print-results__row--top {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.chairman-print-results__wide {
+  display: block;
+  width: 100%;
+  min-height: 39px;
+  margin-bottom: 9px;
+}
+
+.chairman-print-results__wide--right {
+  text-align: right;
+  padding-right: 14px;
+}
+
 .driver-print-classic__error {
   margin: 0 0 9px;
   padding: 6px 8px;
