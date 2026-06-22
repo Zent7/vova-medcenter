@@ -359,6 +359,7 @@ def search_clients(
     encounter_date_from: date | None = Query(default=None),
     encounter_date_to: date | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[ClientSearchRead]:
     value = search.strip() if search else ""
@@ -368,7 +369,7 @@ def search_clients(
         encounter_date,
         encounter_date_from,
         encounter_date_to,
-    ).limit(limit)
+    ).offset(offset).limit(limit)
     rows = db.execute(query).mappings().all()
     services_by_client = latest_services_by_client_ids(db, [row["id"] for row in rows])
     result: list[ClientSearchRead] = []
@@ -386,6 +387,7 @@ def list_clients(
     encounter_date_from: date | None = Query(default=None),
     encounter_date_to: date | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[ClientRead]:
     value = search.strip() if search else ""
@@ -395,7 +397,7 @@ def list_clients(
         encounter_date,
         encounter_date_from,
         encounter_date_to,
-    ).limit(limit)
+    ).offset(offset).limit(limit)
     clients = db.execute(query).scalars().all()
     return serialize_clients(db, clients)
 

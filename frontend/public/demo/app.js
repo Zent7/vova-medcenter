@@ -155,6 +155,7 @@ let clientSearchRequestId = 0;
 let clientSearchAbortController = null;
 let clientRowClickTimer = null;
 const DASHBOARD_PAGE_SIZE = 50;
+const CLIENTS_LOAD_BATCH_SIZE = 100;
 const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
 
 const DEMO_STORAGE_KEY = "vova-medcenter-demo-state-v2";
@@ -3762,17 +3763,36 @@ async function loadClientsFromBackend(searchValue) {
   setTimeout(renderApp, 0);
 
   try {
-    const params = new URLSearchParams({ limit: String(DASHBOARD_PAGE_SIZE) });
-    if (search) params.set("search", search);
-    if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
-    if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
-    const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
-    const response = await fetch(url, { signal: abortController.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const clients = await response.json();
-    if (requestId !== clientSearchRequestId) return;
+    const mappedClients = [];
+    const seenClientIds = new Set();
+    let offset = 0;
+    while (true) {
+      const params = new URLSearchParams({
+        limit: String(CLIENTS_LOAD_BATCH_SIZE),
+        offset: String(offset),
+      });
+      if (search) params.set("search", search);
+      if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
+      if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
+      const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
+      const response = await fetch(url, { signal: abortController.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const clients = await response.json();
+      if (requestId !== clientSearchRequestId) return;
 
-    const mappedClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
+      const batch = Array.isArray(clients) ? clients : [];
+      let addedClients = 0;
+      batch.forEach((client) => {
+        const clientKey = client?.id == null ? "" : String(client.id);
+        if (clientKey && seenClientIds.has(clientKey)) return;
+        if (clientKey) seenClientIds.add(clientKey);
+        mappedClients.push(mapApiClient(client));
+        addedClients += 1;
+      });
+      if (batch.length < CLIENTS_LOAD_BATCH_SIZE || addedClients === 0) break;
+      offset += batch.length;
+    }
+
     data.backendClients = mergeDashboardPinnedClients(mappedClients);
     data.backendClientsLoaded = true;
     invalidateClientPool();
@@ -9955,6 +9975,8 @@ function bindContentEvents() {
     const formVisit = formExam
       ? data.visits.find((item) => String(item.id) === String(formExam.visitId))
       : getCurrentVisitForClient(appState.selectedClientId);
+    const formPrintActions = getChairmanPrintActionsForVisit(formVisit);
+    const opensPrintMenu = formPrintActions.length > 1;
     const createPrintButton = (label, kind) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -9963,18 +9985,49 @@ function bindContentEvents() {
       button.textContent = label;
       return button;
     };
-    const printButtons = getChairmanPrintActionsForVisit(formVisit).map((action) => createPrintButton(action.label, action.kind));
-    printButtons
-      .slice()
-      .reverse()
-      .forEach((button) => chairmanActions.prepend(button));
+    const printButton = createPrintButton("Печать", opensPrintMenu ? "menu" : formPrintActions[0]?.kind || "conclusion");
+    chairmanActions.prepend(printButton);
 
-    const handleChairmanPrint = async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const printKind = event.currentTarget?.dataset.chairmanPrint || "conclusion";
-      const actionLabel = event.currentTarget?.textContent?.trim() || (printKind === "extract" ? "выписка" : "документ");
-      const currentButton = event.currentTarget;
+    const openChairmanPrintMenu = () => {
+      const exam = data.doctorExams.find((item) => String(item.id) === String(chairmanForm.dataset.examId || ""));
+      const client = exam
+        ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
+        : getSelectedClient();
+      openActionModal(
+        "Печать результатов:",
+        `
+          <div class="driver-print-classic chairman-print-results">
+            <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
+            <div class="driver-print-classic__actions driver-print-classic__actions--driver">
+              ${formPrintActions
+                .map(
+                  (action) => `
+                    <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="${escapeHtml(action.kind)}">
+                      ${escapeHtml(action.label)}
+                    </button>
+                  `,
+                )
+                .join("")}
+            </div>
+          </div>
+        `,
+        "modal--driver-print",
+      );
+
+      document.querySelectorAll("[data-chairman-print-menu-kind]").forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await runChairmanPrint(
+            button.dataset.chairmanPrintMenuKind || "conclusion",
+            button.textContent?.trim() || "документ",
+            button,
+          );
+        });
+      });
+    };
+
+    const runChairmanPrint = async (printKind, actionLabel, currentButton) => {
       const targetWindow = null;
 
       const examId = chairmanForm.dataset.examId;
@@ -10040,6 +10093,7 @@ function bindContentEvents() {
         try {
           const directPrintType = printType === "driver" ? "medical" : printType;
           const documentItem = await printDocumentForVisit(directPrintType, client, visit, { targetWindow });
+          actionModal?.classList.add("hidden");
           window.closeDoctorExamCard?.();
           showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
         } catch (error) {
@@ -10055,7 +10109,15 @@ function bindContentEvents() {
       await window.openDriverPrintFlow?.();
     };
 
-    printButtons.forEach((button) => button.addEventListener("click", handleChairmanPrint));
+    printButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (opensPrintMenu) {
+        openChairmanPrintMenu();
+        return;
+      }
+      await runChairmanPrint(printButton.dataset.chairmanPrint || "conclusion", printButton.textContent?.trim() || "документ", printButton);
+    });
   }
 
   window.bindBlanksHandlers?.();
