@@ -2432,17 +2432,17 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
 }
 
 body[data-page="dashboard"] .sketch-table__grid > span {
-  padding-top: 4px;
-  padding-bottom: 4px;
+  padding-top: 1px;
+  padding-bottom: 1px;
   font-size: 13px;
-  line-height: 1.08;
+  line-height: 1;
   font-weight: 600;
 }
 
 body[data-page="dashboard"] .sketch-table__grid--row > .sketch-table__fio {
   font-size: 19px;
   font-weight: 800;
-  line-height: 1.05;
+  line-height: 1;
 }
 
 body[data-page="dashboard"] .sketch-table__grid--head > span {
