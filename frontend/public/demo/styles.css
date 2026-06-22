@@ -237,8 +237,7 @@ body[data-page="calendar"] .topbar {
 }
 
 body[data-page="dashboard"] .topbar h1 {
-  font-size: 24px;
-  font-weight: 800;
+  font-size: 22px;
 }
 
 body[data-page="dashboard"] .topbar {
@@ -2006,7 +2005,7 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   z-index: 40;
   min-width: 0;
   max-width: 100%;
-  margin: -14px -14px 8px;
+  margin: -14px -14px 0;
   padding: 8px 10px 8px;
   border-bottom: 1px solid rgba(14, 31, 53, 0.1);
   border-radius: 18px 18px 0 0;
@@ -2425,15 +2424,18 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
 
 .sketch-table__grid--row > .sketch-table__fio {
   align-items: center;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 800;
-  line-height: 1.12;
+  line-height: 1.05;
   color: #0f2438;
   white-space: normal;
 }
 
 body[data-page="dashboard"] .sketch-table__grid > span {
+  padding-top: 4px;
+  padding-bottom: 4px;
   font-size: 13px;
+  line-height: 1.08;
   font-weight: 600;
 }
 
@@ -5496,7 +5498,7 @@ body[data-page="dashboard"] .topbar-actions .primary-button {
 }
 
 body[data-page="dashboard"] .dashboard-sticky-controls {
-  margin: -14px -14px 8px;
+  margin: -14px -14px 0;
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   border-radius: 18px 18px 0 0;
