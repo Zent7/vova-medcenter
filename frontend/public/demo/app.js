@@ -4869,12 +4869,12 @@ function formatPaymentTypeLabel(value) {
   const normalized = String(value || "").trim().toLowerCase();
   const map = {
     cash: "нал",
-    card: "карта",
+    card: "безнал",
     invoice: "безнал",
     "наличные": "нал",
-    "карта": "карта",
+    "карта": "безнал",
     "безнал": "безнал",
-    "организация": "организация",
+    "организация": "безнал",
   };
   return map[normalized] || value || "не указано";
 }
@@ -4982,14 +4982,237 @@ function getCashVisitRows() {
     });
 }
 
+function getCashReportPeriod() {
+  let dateFrom = normalizeCashFilterDate(appState.cashDateFrom) || getLocalDateInputValue();
+  let dateTo = normalizeCashFilterDate(appState.cashDateTo) || dateFrom;
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    [dateFrom, dateTo] = [dateTo, dateFrom];
+  }
+  return { dateFrom, dateTo };
+}
+
+function formatCashReportDate(value) {
+  return value ? formatApiDate(value) : "";
+}
+
+function formatCashReportMoney(value) {
+  return `${Number(value || 0).toLocaleString("ru-RU")} ₽`;
+}
+
+function renderCashReportPrintHtml(rows) {
+  const { dateFrom, dateTo } = getCashReportPeriod();
+  const total = rows.reduce((sum, row) => sum + row.amount, 0);
+  const discountTotal = rows.reduce((sum, row) => sum + row.discount, 0);
+  const cashTotal = rows.reduce((sum, row) => sum + row.cashAmount, 0);
+  const nonCashTotal = rows.reduce((sum, row) => sum + row.nonCashAmount, 0);
+  const periodLabel = dateFrom === dateTo
+    ? formatCashReportDate(dateFrom)
+    : `${formatCashReportDate(dateFrom)} - ${formatCashReportDate(dateTo)}`;
+  const printedAt = formatDateTime(new Date());
+  const reportRows = rows.length
+    ? rows
+        .map((row, index) => {
+          const visit = row.visit;
+          const client = row.client;
+          const services = row.services.length
+            ? row.services.map((service) => service.name).join(", ")
+            : "Услуги не выбраны";
+          return `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${escapeHtml(visit.visitDate || formatDateTime(visit.createdAt))}</td>
+              <td>${escapeHtml(client?.fullName || "Клиент не найден")}</td>
+              <td>${escapeHtml(services)}</td>
+              <td>${escapeHtml(row.paymentLabel)}</td>
+              <td class="number">${formatCashReportMoney(row.cashAmount)}</td>
+              <td class="number">${formatCashReportMoney(row.nonCashAmount)}</td>
+              <td class="number">${formatCashReportMoney(row.discount)}</td>
+              <td class="number">${formatCashReportMoney(row.amount)}</td>
+            </tr>
+          `;
+        })
+        .join("")
+    : `
+        <tr>
+          <td colspan="9" class="empty">Оплат за выбранный период нет</td>
+        </tr>
+      `;
+
+  return `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Отчет кассы за ${escapeHtml(periodLabel)}</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 28px;
+      color: #111827;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+    }
+
+    .meta {
+      margin-bottom: 18px;
+      color: #4b5563;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    .summary div {
+      min-height: 58px;
+      padding: 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+    }
+
+    .summary span {
+      display: block;
+      margin-bottom: 6px;
+      color: #4b5563;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .summary strong {
+      font-size: 15px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 7px 6px;
+      border: 1px solid #d1d5db;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #f3f4f6;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .number {
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .empty {
+      padding: 18px;
+      color: #6b7280;
+      text-align: center;
+    }
+
+    .signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-top: 34px;
+    }
+
+    .signature-line {
+      padding-top: 24px;
+      border-top: 1px solid #111827;
+      color: #4b5563;
+    }
+
+    @page {
+      size: A4 landscape;
+      margin: 12mm;
+    }
+
+    @media print {
+      body {
+        padding: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Отчет кассы</h1>
+  <div class="meta">Период: ${escapeHtml(periodLabel)} · Сформировано: ${escapeHtml(printedAt)}</div>
+
+  <section class="summary">
+    <div><span>Обращений</span><strong>${rows.length.toLocaleString("ru-RU")}</strong></div>
+    <div><span>Итого</span><strong>${formatCashReportMoney(total)}</strong></div>
+    <div><span>Наличные</span><strong>${formatCashReportMoney(cashTotal)}</strong></div>
+    <div><span>Безнал</span><strong>${formatCashReportMoney(nonCashTotal)}</strong></div>
+    <div><span>Скидки</span><strong>${formatCashReportMoney(discountTotal)}</strong></div>
+  </section>
+
+  <table>
+    <thead>
+      <tr>
+        <th>№</th>
+        <th>Дата</th>
+        <th>Клиент</th>
+        <th>Услуги</th>
+        <th>Оплата</th>
+        <th>Нал</th>
+        <th>Безнал</th>
+        <th>Скидка</th>
+        <th>Итого</th>
+      </tr>
+    </thead>
+    <tbody>${reportRows}</tbody>
+  </table>
+
+  <section class="signatures">
+    <div class="signature-line">Кассир</div>
+    <div class="signature-line">Ответственный</div>
+  </section>
+</body>
+</html>`;
+}
+
+function printCashReport() {
+  const rows = getCashVisitRows();
+  const printWindow = window.open("about:blank", "_blank");
+  if (!printWindow) {
+    showToast("Браузер заблокировал окно печати");
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(renderCashReportPrintHtml(rows));
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => {
+    try {
+      printWindow.print();
+    } catch (error) {
+      console.warn("Не удалось открыть печать отчета кассы", error);
+    }
+  }, 250);
+}
+
 function renderCashPage() {
   const rows = getCashVisitRows();
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
   const discountTotal = rows.reduce((sum, row) => sum + row.discount, 0);
   const cashTotal = rows.reduce((sum, row) => sum + row.cashAmount, 0);
   const nonCashTotal = rows.reduce((sum, row) => sum + row.nonCashAmount, 0);
-  const dateFrom = normalizeCashFilterDate(appState.cashDateFrom) || getLocalDateInputValue();
-  const dateTo = normalizeCashFilterDate(appState.cashDateTo) || dateFrom;
+  const { dateFrom, dateTo } = getCashReportPeriod();
 
   return `
     <section class="cash-page">
@@ -5007,6 +5230,7 @@ function renderCashPage() {
             <input id="cashDateTo" type="date" value="${escapeHtml(dateTo)}" />
           </label>
           <button type="button" class="ghost-button" id="cashPeriodTodayButton">Сегодня</button>
+          <button type="button" class="primary-button" id="cashPrintReportButton">Печать отчета</button>
         </div>
       </div>
       <div class="cash-summary">
@@ -5021,7 +5245,7 @@ function renderCashPage() {
           <div class="summary-card__meta">по выбранному типу оплаты</div>
         </article>
         <article class="summary-card">
-          <div class="summary-card__label">Карта / безнал</div>
+          <div class="summary-card__label">Безнал</div>
           <div class="summary-card__value">${nonCashTotal.toLocaleString("ru-RU")} ₽</div>
           <div class="summary-card__meta">все кроме наличных</div>
         </article>
@@ -5354,6 +5578,8 @@ function renderVisitServicePicker(activeVisit) {
 }
 
 function renderOperatorVisitForm(selectedClient, activeVisit) {
+  const activePaymentType = formatPaymentTypeLabel(activeVisit.paymentType || "Наличные") === "нал" ? "Наличные" : "Безнал";
+
   return `
     <form class="operator-visit-form" id="operatorVisitForm" data-visit-id="${escapeHtml(activeVisit.id)}">
       <div class="operator-visit-form__title">
@@ -5373,8 +5599,8 @@ function renderOperatorVisitForm(selectedClient, activeVisit) {
         <label>
           <span>Оплата</span>
           <select name="paymentType">
-            ${["Наличные", "Карта", "Безнал", "Организация"]
-              .map((item) => `<option ${item === activeVisit.paymentType ? "selected" : ""}>${item}</option>`)
+            ${["Наличные", "Безнал"]
+              .map((item) => `<option ${item === activePaymentType ? "selected" : ""}>${item}</option>`)
               .join("")}
           </select>
         </label>
@@ -6649,8 +6875,10 @@ function getDocumentTitle(type) {
   if (type === "contract") return "Договор на оказание платных медицинских услуг";
   if (type === "driver") return "Водительская справка";
   if (type === "xml") return "XML-файл по обращению";
+  if (type === "lmk_title") return "ЛМК титульная";
   if (type === "prof") return "Заключение 29Н";
   if (type === "prof_extract") return "Выписка профосмотра";
+  if (type === "prof_ambulatory") return "Амбулаторная карта";
   return "Медицинская справка";
 }
 
@@ -6795,6 +7023,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (normalizedType === "sport") return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
+  if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
   if (normalizedType === "lmk") return findDocxSafely(["лмк_шаблон"], ["лмк"], []);
   if (normalizedType === "gims") return findDocxSafely(["гимс"], ["гимс"], []);
   if (normalizedType === "chod" || normalizedType === "guard") {
@@ -6802,6 +7031,13 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   }
   if (normalizedType === "prof_extract") {
     return findDocxSafely(["профосмотрвыписка_шаблон", "профосмотр выписка шаблон"], ["профосмотрвыписка", "выписка"], []);
+  }
+  if (normalizedType === "prof_ambulatory") {
+    return findDocxSafely(
+      ["амб_карты_профосмотр_шаблон", "амб карты профосмотр шаблон", "мед карта профосмотр"],
+      ["амб", "мед.карта", "медицинская карта"],
+      [],
+    );
   }
   if (normalizedType === "prof") return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр", "29н"], []);
   if (normalizedType === "drug") return findDocxSafely(["драг тест морская шаблон"], ["драг"], []);
@@ -6856,8 +7092,28 @@ function pickDocumentTemplate(type, visit = null, client = null) {
 
 function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   const config = getChairmanFormConfigForVisit(visit);
+  const fixedPrintTypes = {
+    lmk_title: "lmk_title",
+    lmk_certificate: "lmk",
+    prof_conclusion: "prof",
+    ambulatory_card: "prof_ambulatory",
+  };
+  if (fixedPrintTypes[printKind]) return fixedPrintTypes[printKind];
   if (config.type === "prof" && printKind === "extract") return "prof_extract";
   return config.printTemplateType || config.templateType;
+}
+
+function getChairmanPrintActionsForVisit(visit) {
+  const formType = getChairmanFormConfigForVisit(visit).type;
+  if (formType === "lmk" || formType === "prof") {
+    return [
+      { label: "ЛМК титульная", kind: "lmk_title" },
+      { label: "ЛМК справка", kind: "lmk_certificate" },
+      { label: "ПРОФ заключение", kind: "prof_conclusion" },
+      { label: "Амб. Карта", kind: "ambulatory_card" },
+    ];
+  }
+  return [{ label: "Печать", kind: "conclusion" }];
 }
 
 const CHAIRMAN_NUMBERED_CERTIFICATE_SERIES = new Map([
@@ -8924,6 +9180,11 @@ function bindContentEvents() {
     });
   }
 
+  const cashPrintReportButton = document.getElementById("cashPrintReportButton");
+  if (cashPrintReportButton) {
+    cashPrintReportButton.addEventListener("click", printCashReport);
+  }
+
   const reportDateFromInput = document.getElementById("reportDateFrom");
   if (reportDateFromInput) {
     reportDateFromInput.addEventListener("input", (event) => {
@@ -9614,6 +9875,10 @@ function bindContentEvents() {
   const chairmanForm = contentRoot.querySelector('.chairman-form[data-doctor-role-id="chairman"]');
   const chairmanActions = chairmanForm?.querySelector(".chairman-actions");
   if (chairmanForm && chairmanActions && !chairmanActions.querySelector("[data-chairman-print]")) {
+    const formExam = data.doctorExams.find((item) => String(item.id) === String(chairmanForm.dataset.examId || ""));
+    const formVisit = formExam
+      ? data.visits.find((item) => String(item.id) === String(formExam.visitId))
+      : getCurrentVisitForClient(appState.selectedClientId);
     const createPrintButton = (label, kind) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -9622,7 +9887,7 @@ function bindContentEvents() {
       button.textContent = label;
       return button;
     };
-    const printButtons = [createPrintButton("Печать", "conclusion")];
+    const printButtons = getChairmanPrintActionsForVisit(formVisit).map((action) => createPrintButton(action.label, action.kind));
     printButtons
       .slice()
       .reverse()
@@ -9632,7 +9897,7 @@ function bindContentEvents() {
       event.preventDefault();
       event.stopPropagation();
       const printKind = event.currentTarget?.dataset.chairmanPrint || "conclusion";
-      const actionLabel = printKind === "extract" ? "выписка" : "документ";
+      const actionLabel = event.currentTarget?.textContent?.trim() || (printKind === "extract" ? "выписка" : "документ");
       const currentButton = event.currentTarget;
       const targetWindow = null;
 

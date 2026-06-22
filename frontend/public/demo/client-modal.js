@@ -660,8 +660,7 @@ function renderClientPaymentRows(selectedServices = []) {
           <span>Оплата</span>
           <select name="clientServicePaymentType">
             <option value="cash" ${detail.paymentType === "cash" ? "selected" : ""}>нал</option>
-            <option value="card" ${detail.paymentType === "card" ? "selected" : ""}>карта</option>
-            <option value="invoice" ${detail.paymentType === "invoice" ? "selected" : ""}>безнал</option>
+            <option value="invoice" ${detail.paymentType === "invoice" || detail.paymentType === "card" ? "selected" : ""}>безнал</option>
           </select>
         </label>
         <label class="field client-payment-row__comment">
