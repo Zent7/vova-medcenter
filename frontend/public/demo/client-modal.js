@@ -1418,6 +1418,7 @@ function openClientModal(clientId = null, options = {}) {
             serviceNames: selectedServiceValues,
             serviceIds: selectedServiceIds,
             serviceDetails,
+            clientSex: formSex,
             amount: visitAmount,
             paymentType: paymentSummary.paymentType,
             comment: paymentSummary.comment,
@@ -1428,7 +1429,8 @@ function openClientModal(clientId = null, options = {}) {
       const visitPatch = {
         serviceNames: selectedServiceValues,
         serviceIds: selectedServiceIds,
-        serviceDetails,
+        serviceDetails,
+        clientSex: formSex,
         amount: visitAmount ?? currentVisit.amount,
         paymentType: paymentSummary.paymentType,
         comment: paymentSummary.comment,

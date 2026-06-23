@@ -1556,9 +1556,15 @@ function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   return new Set(roleCodes);
 }
 
+function getVisitClientForDoctorRules(visit, clientOverride = null) {
+  const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
+  if (getClientSexKey(client) || !visit?.clientSex) return client;
+  return { ...(client || {}), sex: visit.clientSex, gender: visit.clientSex };
+}
+
 function getRequiredDoctorRoleCountsForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
-  const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
+  const client = getVisitClientForDoctorRules(visit, clientOverride);
   const counts = new Map();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
@@ -1590,7 +1596,7 @@ function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
 
 function getRequiredDoctorRoleCodesForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
-  const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
+  const client = getVisitClientForDoctorRules(visit, clientOverride);
   const result = new Set();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
@@ -2735,6 +2741,7 @@ function createVisitForClient(clientId, options = {}) {
     serviceNames,
     serviceIds: Array.isArray(options.serviceIds) ? options.serviceIds.map((id) => String(id)) : [],
     serviceDetails: options.serviceDetails || {},
+    clientSex: options.clientSex || getClientSexKey(client) || "",
     center: client.center || "Медцентр 1",
     paymentType: options.paymentType || "Наличные",
     amount: Number(options.amount ?? calculateVisitAmount(serviceNames)),
@@ -4099,7 +4106,8 @@ function buildExcelRows(clients) {
       .filter(Boolean)
       .map((service) => getServiceToken(service))
       .filter(Boolean);
-    const currentVisit = getDashboardDoctorStatusVisit(client) || (
+    const localVisit = getCurrentVisitForClient(client.id);
+    const currentVisit = localVisit || getDashboardDoctorStatusVisit(client) || (
       fallbackServiceIds.length
         ? {
             id: `dashboard-client-services-${client.id}`,
