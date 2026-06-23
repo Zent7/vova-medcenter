@@ -693,6 +693,64 @@ function resolveAdmissionCategoryValue(categoryValue, services) {
   return serviceNames.join(", ");
 }
 
+function getVisitServiceNamesForDisplay(visit) {
+  if (!visit) return [];
+
+  const namesById = getSelectedVisitServiceIds(visit)
+    .map((serviceId) => getServiceById(serviceId)?.name)
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  if (namesById.length) return namesById;
+
+  return Array.isArray(visit.serviceNames)
+    ? visit.serviceNames.map((name) => String(name || "").trim()).filter(Boolean)
+    : [];
+}
+
+function resolveDashboardAdmissionCategory(client, visit = null) {
+  if (!visit) return resolveAdmissionCategoryValue(client?.category, client?.services);
+
+  const services = getServicesForVisit(visit);
+  const serviceNames = getVisitServiceNamesForDisplay(visit);
+  const hasDriverService = services.some(isDriverService);
+  if (hasDriverService) {
+    const driverDetail = getDriverDetailFromVisit(visit);
+    const driverCategories = normalizeDriverCategories(
+      driverDetail.categories || visit.admissionCategory || client?.admissionCategory || client?.category,
+    );
+    return resolveAdmissionCategoryValue(driverCategories.join(", "), serviceNames);
+  }
+
+  return resolveAdmissionCategoryValue("", serviceNames) || resolveAdmissionCategoryValue(client?.category, client?.services);
+}
+
+function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
+  const completed = new Set();
+  const addFromStatus = () => {
+    (status?.completedDoctorRoleIds || []).forEach((roleId) => completed.add(roleId));
+  };
+
+  if (!visit) {
+    addFromStatus();
+    return completed;
+  }
+
+  (Array.isArray(data.doctorExams) ? data.doctorExams : [])
+    .filter(
+      (exam) =>
+        String(exam?.clientId) === String(client?.id) &&
+        String(exam?.visitId) === String(visit.id) &&
+        exam?.isCompleted,
+    )
+    .forEach((exam) => completed.add(exam.doctorRoleId));
+
+  if (visit.backendId && String(status?.encounterId || "") === String(visit.backendId)) {
+    addFromStatus();
+  }
+
+  return completed;
+}
+
 const _repairDemoTextMap = {
     "Р вЂњР В»Р В°Р Р†Р Р…Р В°РЎРЏ": "Главная",
     "Р вЂ™РЎР‚Р В°РЎвЂЎР С‘": "Врачи",
@@ -4119,7 +4177,7 @@ function buildExcelRows(clients) {
         : null
     );
     const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : new Map();
-    const completedDoctors = new Set(status?.completedDoctorRoleIds || []);
+    const completedDoctors = getCompletedDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
     const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors);
 
     return {
@@ -4128,7 +4186,7 @@ function buildExcelRows(clients) {
       fullName: client.fullName,
       birthDate: client.birthDate,
       registration: client.registration || client.document || "",
-      category: resolveAdmissionCategoryValue(client.category, client.services),
+      category: resolveDashboardAdmissionCategory(client, currentVisit),
       referenceNumber: client.referenceNumber || "",
       gynecologist: markDoctor("gynecologist"),
       stomatologist: markDoctor("dentist"),
