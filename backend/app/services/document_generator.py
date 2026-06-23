@@ -1322,6 +1322,14 @@ def _fill_journal_344_sheet(
     )
 
 
+def _find_prof_amb_sheet_index(source_book) -> int | None:
+    for index, sheet_name in enumerate(source_book.sheet_names()):
+        normalized = str(sheet_name or "").strip().lower().replace("!", "").strip()
+        if normalized in {"амб", "àìá"}:
+            return index
+    return None
+
+
 def _generate_prof_amb_xls(
     template_path: Path,
     output_path: Path,
@@ -1332,7 +1340,9 @@ def _generate_prof_amb_xls(
     print_variant: str | None = None,
 ) -> None:
     source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
-    amb_index = source_book.sheet_names().index("Амб")
+    amb_index = _find_prof_amb_sheet_index(source_book)
+    if amb_index is None:
+        raise ValueError("В шаблоне не найден лист амбулаторной карты")
     source_sheet = source_book.sheet_by_index(amb_index)
     target_book = copy_xls_workbook(source_book)
     target_sheet = target_book.get_sheet(amb_index)
@@ -1531,7 +1541,7 @@ def _generate_xls(
     exams: list[DoctorExam],
 ) -> None:
     source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
-    if "Амб" in source_book.sheet_names():
+    if _find_prof_amb_sheet_index(source_book) is not None:
         _generate_prof_amb_xls(template_path, output_path, context, client, encounter, exams)
         return
     shutil.copy2(template_path, output_path)
@@ -1548,7 +1558,7 @@ def _generate_runtime_xls(
 ) -> None:
     source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
     exams = list(runtime_values.get("exams", []))
-    if "Àìá" in source_book.sheet_names():
+    if _find_prof_amb_sheet_index(source_book) is not None:
         _generate_prof_amb_xls(template_path, output_path, context, client, encounter, exams, print_variant=print_variant)
         return
 

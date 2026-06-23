@@ -396,7 +396,7 @@ const TRACTOR_SERVICE_LEGACY_IDS = new Set([7]);
 const GIMS_SERVICE_LEGACY_IDS = new Set([37]);
 const LMK_SERVICE_LEGACY_IDS = new Set([18, 19]);
 const PROF_SERVICE_LEGACY_IDS = new Set([16]);
-const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 39]);
+const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 39, 40, 41]);
 const SPORT_SERVICE_LEGACY_IDS = new Set([4, 5]);
 const EKG_SERVICE_LEGACY_IDS = new Set([6, 20, 21, 27]);
 const POOL_SERVICE_LEGACY_IDS = new Set([3]);
@@ -541,6 +541,20 @@ const CHAIRMAN_FORM_CONFIGS = {
     templateType: "guard",
     printMode: "document",
     note: "Подтягивается шаблон справки для охраны.",
+  },
+  psych342: {
+    type: "psych342",
+    label: "Председатель: справка 342н",
+    templateType: "psych342",
+    printMode: "document",
+    note: "Подтягивается шаблон психиатрического освидетельствования 342н.",
+  },
+  ambulatoryExtract: {
+    type: "ambulatoryExtract",
+    label: "Председатель: выписка из амбулаторной карты",
+    templateType: "ambulatory_extract",
+    printMode: "document",
+    note: "Подтягивается XLS-шаблон выписки из амбулаторной карты.",
   },
   certificate: {
     type: "certificate",
@@ -1355,6 +1369,8 @@ function getChairmanFormTypeForVisit(visit) {
   if (serviceText.includes("095")) return "certificate095";
   if (serviceText.includes("001") || serviceText.includes("гсу") || serviceText.includes("госслуж")) return "gsu";
   if (serviceText.includes("989") || serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return "gostaina";
+  if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return "psych342";
+  if (serviceText.includes("выпис") && (serviceText.includes("амб") || serviceText.includes("амбулатор"))) return "ambulatoryExtract";
   if (serviceText.includes("чод") || serviceText.includes("охран")) return "guard";
   if (services.some(isCertificateService)) return "certificate";
   return "default";
@@ -7202,8 +7218,20 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     }
     return findDocxSafely(["086у.муж_шаблон", "086у.жен_шаблон"], ["086"], []);
   };
+  const isAmbulatoryExtractService = () =>
+    serviceText.includes("выпис") && (serviceText.includes("амб") || serviceText.includes("амбулатор"));
+  const findAmbulatoryExtractTemplate = () =>
+    findTemplateSafely(
+      xlsTemplates,
+      ["выписка из амб карты профа", "выписка из амб карты", "амб карты профа"],
+      ["выписка", "амб"],
+      [],
+    );
 
   if (normalizedType === "medical") {
+    if (isAmbulatoryExtractService()) {
+      return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]) || null;
+    }
     return findDocxSafely(
       [
         "C\u043f\u0440\u0430\u0432\u043a\u0430_\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440_\u0448\u0430\u0431\u043b\u043e\u043d",
@@ -7233,6 +7261,8 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "095") return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
   if (normalizedType === "gsu") return findDocxSafely(["гсу001_шаблон"], ["гсу001", "001"], []);
   if (normalizedType === "gostaina") return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гостайн", "гос.тайн", "989"], []);
+  if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);
+  if (normalizedType === "ambulatory_extract") return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]);
   if (normalizedType === "gto") return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (normalizedType === "sport") return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
@@ -7278,6 +7308,8 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("гто")) return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
   if (serviceText.includes("гимс")) return findDocxSafely(["гимс"], ["гимс"], []);
   if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гос.тайна"], []);
+  if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
+  if (isAmbulatoryExtractService()) return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]);
   if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findDocxSafely(["гсу001_шаблон"], ["гсу001"], []);
   if (serviceText.includes("охран") || serviceText.includes("чод")) return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   if (serviceText.includes("трактор")) return findDocx(["трактроная", "трактор"]) || null;
@@ -7581,6 +7613,7 @@ const CERTIFICATE_PRINT_SERIES_OPTIONS = [
   "095У",
   "001 ГСУ",
   "989Н",
+  "342Н",
   "ГТО",
   "БАСС",
   "СПОРТ",
@@ -7616,6 +7649,10 @@ const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["989н", "gostaina"],
   ["гостайна", "gostaina"],
   ["гос.тайна", "gostaina"],
+  ["342", "psych342"],
+  ["342н", "psych342"],
+  ["псих освид", "psych342"],
+  ["псих. освид", "psych342"],
   ["гто", "gto"],
   ["1144", "gto"],
   ["басс", "pool"],
@@ -7648,6 +7685,7 @@ const CERTIFICATE_PRINT_TYPE_LABELS = {
   "095": "Справка 095У",
   gsu: "Справка 001 ГСУ",
   gostaina: "Справка гостайна",
+  psych342: "Справка 342н",
   gto: "Справка ГТО",
   pool: "Справка в бассейн",
   sport: "Справка Спорт",
@@ -7678,6 +7716,7 @@ const SERVICE_SERIES_OVERRIDES = new Map([
   ["справка для выезжающих за границу 082у", "082У"],
   ["справка гостайна, форма 989н", "989Н"],
   ["справка для работы с гостайной формы 989н", "989Н"],
+  ["справка 342н (псих. освид.)", "342Н"],
   ["справка гто 1144", "ГТО"],
   ["справка для поступления 086у", "086У"],
   ["справка формы 086у", "086У"],
@@ -7733,6 +7772,7 @@ function getDriverPrintCertificateType(series) {
   if (/^0?95у?$/.test(normalized)) return "095";
   if (normalized.includes("гсу") || normalized.includes("001")) return "gsu";
   if (normalized.includes("гостайн") || normalized.includes("гос.тайн") || normalized.includes("989")) return "gostaina";
+  if (normalized.includes("342") || normalized.includes("псих освид") || normalized.includes("псих. освид")) return "psych342";
   if (normalized.includes("гто") || normalized.includes("1144")) return "gto";
   if (normalized.includes("басс")) return "pool";
   if (normalized.includes("спорт")) return "sport";

@@ -304,6 +304,26 @@ window.servicesData = {
       sortOrder: 140,
       doctorRoleIds: [1, 13]
     },
+    {
+      id: 40,
+      name: "Справка 342н (псих. освид.)",
+      groupId: 7,
+      price: 1800,
+      notes: "",
+      isActive: true,
+      sortOrder: 150,
+      doctorRoleIds: [2, 13]
+    },
+    {
+      id: 41,
+      name: "Выписка из амб. карты (профа)",
+      groupId: 7,
+      price: 0,
+      notes: "",
+      isActive: true,
+      sortOrder: 160,
+      doctorRoleIds: [1, 13]
+    },
 
     {
       id: 13,
