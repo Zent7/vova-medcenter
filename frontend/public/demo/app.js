@@ -5115,7 +5115,7 @@ function renderCashReportPrintHtml(rows) {
       margin: 0;
       padding: 28px;
       color: #111827;
-      font-family: Arial, sans-serif;
+      font-family: "Arial Cyr", Arial, sans-serif;
       font-size: 12px;
       line-height: 1.35;
     }

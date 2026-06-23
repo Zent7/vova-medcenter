@@ -44,7 +44,7 @@
   --excel-col-serviceNote: 320px;
   --excel-col-serviceDoctors: 330px;
   --excel-col-serviceStatus: 130px;
-  font-family: "Segoe UI", sans-serif;
+  font-family: "Arial Cyr", Arial, sans-serif;
   color: var(--text);
 }
 
@@ -3032,7 +3032,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   background: #eef3f6;
   box-shadow: 8px 8px 18px rgba(0, 0, 0, 0.24);
   color: #111827;
-  font: 14px Arial, sans-serif;
+  font: 14px "Arial Cyr", Arial, sans-serif;
 }
 
 .medical-requirements-picker__head {
@@ -3833,7 +3833,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 #actionModal.modal--driver-print .modal__header h2 {
   margin: 0;
   color: #1f2933;
-  font: 700 14px/1.2 Arial, sans-serif;
+  font: 700 14px/1.2 "Arial Cyr", Arial, sans-serif;
 }
 
 #actionModal.modal--driver-print .icon-button {
@@ -3843,7 +3843,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border-radius: 5px;
   background: linear-gradient(180deg, #ffffff 0%, #d9dee4 100%);
   color: #2f3a45;
-  font: 700 19px/19px Arial, sans-serif;
+  font: 700 19px/19px "Arial Cyr", Arial, sans-serif;
 }
 
 #actionModal.modal--driver-print .login-card {
@@ -3854,7 +3854,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 
 .driver-print-classic {
   color: #1f2933;
-  font: 700 13px/1.2 Arial, sans-serif;
+  font: 700 13px/1.2 "Arial Cyr", Arial, sans-serif;
 }
 
 .driver-print-classic__fio,
@@ -3864,7 +3864,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border-radius: 4px;
   background: linear-gradient(180deg, #ffffff 0%, #eef1f4 100%);
   color: #17202a;
-  font: 700 16px/1 Arial, sans-serif;
+  font: 700 16px/1 "Arial Cyr", Arial, sans-serif;
   padding: 4px 8px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08) inset;
 }
@@ -3928,7 +3928,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border-radius: 5px;
   background: linear-gradient(180deg, #ffffff 0%, #d8dde3 100%);
   color: #202a35;
-  font: 700 12px/1.05 Arial, sans-serif;
+  font: 700 12px/1.05 "Arial Cyr", Arial, sans-serif;
   cursor: pointer;
   padding: 4px 8px;
   box-shadow: 0 1px 0 #ffffff inset, 0 1px 2px rgba(15, 23, 42, 0.16);
@@ -4043,7 +4043,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   background: #eef3f6;
   box-shadow: 3px 4px 0 rgba(15, 23, 42, 0.16), 0 20px 42px rgba(15, 23, 42, 0.22);
   color: #1f2933;
-  font: 700 13px/1.2 Arial, sans-serif;
+  font: 700 13px/1.2 "Arial Cyr", Arial, sans-serif;
   padding: 12px;
 }
 
@@ -4062,7 +4062,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border-radius: 4px;
   background: linear-gradient(180deg, #ffffff 0%, #d9dee4 100%);
   color: #1f2933;
-  font: 700 18px/1 Arial, sans-serif;
+  font: 700 18px/1 "Arial Cyr", Arial, sans-serif;
   cursor: pointer;
 }
 
@@ -4079,7 +4079,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border: 2px inset #f4f7fa;
   background: #f4f8fa;
   color: #1f2933;
-  font: 700 14px/1 Arial, sans-serif;
+  font: 700 14px/1 "Arial Cyr", Arial, sans-serif;
   padding: 10px;
 }
 
@@ -4089,7 +4089,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border-radius: 3px;
   background: linear-gradient(180deg, #ffffff 0%, #d8dde3 100%);
   color: #202a35;
-  font: 700 13px/1 Arial, sans-serif;
+  font: 700 13px/1 "Arial Cyr", Arial, sans-serif;
   cursor: pointer;
 }
 
@@ -4107,7 +4107,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border: 0;
   background: transparent;
   color: #1f2933;
-  font: 700 13px/1.1 Arial, sans-serif;
+  font: 700 13px/1.1 "Arial Cyr", Arial, sans-serif;
   text-align: left;
   cursor: pointer;
   padding: 4px 8px;
@@ -4122,7 +4122,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   min-height: 24px;
   margin-top: 8px;
   color: #2b3845;
-  font: 700 13px/1.2 Arial, sans-serif;
+  font: 700 13px/1.2 "Arial Cyr", Arial, sans-serif;
 }
 
 .modal--print-instruction .modal__backdrop {
@@ -4150,7 +4150,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 .modal--print-instruction .modal__header h2 {
   margin: 0;
   color: #2a2a2a;
-  font: 400 14px/1.2 Arial, sans-serif;
+  font: 400 14px/1.2 "Arial Cyr", Arial, sans-serif;
 }
 
 .modal--print-instruction .icon-button {
@@ -4160,7 +4160,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border-radius: 0;
   background: transparent;
   color: #4a4a4a;
-  font: 400 22px/20px Arial, sans-serif;
+  font: 400 22px/20px "Arial Cyr", Arial, sans-serif;
 }
 
 .modal--print-instruction .login-card {
@@ -4171,7 +4171,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 
 .driver-print-instruction {
   color: #202020;
-  font: 13px/1.25 Arial, sans-serif;
+  font: 13px/1.25 "Arial Cyr", Arial, sans-serif;
 }
 
 .driver-print-instruction__intro {
@@ -4218,7 +4218,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border: 2px outset #2f5399;
   background: #002b8f;
   color: #ffffff;
-  font: 700 24px/1 Arial, sans-serif;
+  font: 700 24px/1 "Arial Cyr", Arial, sans-serif;
   box-shadow: 1px 1px 0 #001850;
 }
 
@@ -4234,7 +4234,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border: 2px outset #f0f0f0;
   background: #e2e2e2;
   color: #1f1f1f;
-  font: 400 13px/1 Arial, sans-serif;
+  font: 400 13px/1 "Arial Cyr", Arial, sans-serif;
   cursor: pointer;
 }
 
@@ -4390,7 +4390,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 .modal--front-print-check .modal__header h2 {
   margin: 0;
   color: #2a2a2a;
-  font: 400 14px/1.2 Arial, sans-serif;
+  font: 400 14px/1.2 "Arial Cyr", Arial, sans-serif;
 }
 
 .modal--front-print-check .icon-button {
@@ -4400,7 +4400,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border-radius: 0;
   background: transparent;
   color: #6a6a6a;
-  font: 400 22px/20px Arial, sans-serif;
+  font: 400 22px/20px "Arial Cyr", Arial, sans-serif;
 }
 
 .modal--front-print-check .login-card {
@@ -4414,7 +4414,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   grid-template-columns: 48px minmax(0, 1fr);
   column-gap: 12px;
   color: #202020;
-  font: 12px/1.25 Arial, sans-serif;
+  font: 12px/1.25 "Arial Cyr", Arial, sans-serif;
 }
 
 .driver-front-check__icon {
@@ -4428,7 +4428,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   box-shadow: 1px 2px 0 rgba(0, 0, 0, 0.28);
   color: #ffffff;
   text-align: center;
-  font: 700 31px/38px Arial, sans-serif;
+  font: 700 31px/38px "Arial Cyr", Arial, sans-serif;
 }
 
 .driver-front-check__text p {
@@ -4450,7 +4450,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   border: 2px outset #f0f0f0;
   background: #e2e2e2;
   color: #1f1f1f;
-  font: 400 13px/1 Arial, sans-serif;
+  font: 400 13px/1 "Arial Cyr", Arial, sans-serif;
   cursor: pointer;
 }
 
