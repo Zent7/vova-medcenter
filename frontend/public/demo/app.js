@@ -1494,9 +1494,9 @@ function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   return new Set(roleCodes);
 }
 
-function getRequiredDoctorRoleCountsForVisit(visit) {
+function getRequiredDoctorRoleCountsForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
-  const client = getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
+  const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
   const counts = new Map();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
@@ -1510,13 +1510,13 @@ function getRequiredDoctorRoleCountsForVisit(visit) {
 }
 
 function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
-  const counts = new Map(currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit) : []);
+  const counts = new Map(currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : []);
   if (!client) return counts;
 
   getVisitsForClient(client.id).forEach((visit) => {
     if (currentVisit && String(visit.id) === String(currentVisit.id)) return;
     if (visit.status === "closed") return;
-    const visitCounts = getRequiredDoctorRoleCountsForVisit(visit);
+    const visitCounts = getRequiredDoctorRoleCountsForVisit(visit, client);
     const chairmanCount = Number(visitCounts.get("chairman") || 0);
     if (chairmanCount > 0) {
       counts.set("chairman", Number(counts.get("chairman") || 0) + chairmanCount);
@@ -1526,9 +1526,9 @@ function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
   return counts;
 }
 
-function getRequiredDoctorRoleCodesForVisit(visit) {
+function getRequiredDoctorRoleCodesForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
-  const client = getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
+  const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
   const result = new Set();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
@@ -3153,7 +3153,7 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
 
 async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend = false } = {}) {
   if (!client || !visit) return [];
-  const requiredRoleCodes = getRequiredDoctorRoleCodesForVisit(visit);
+  const requiredRoleCodes = getRequiredDoctorRoleCodesForVisit(visit, client);
   const createdOrExisting = [];
 
   requiredRoleCodes.forEach((doctorRoleId) => {
@@ -3709,10 +3709,11 @@ function getDoctorExamStatus(clientId, doctorRoleId) {
 
   const visit = getCurrentVisitForClient(clientId);
   if (!visit) return "empty";
+  const client = getClientPool().find((item) => String(item.id) === String(clientId)) || null;
   const exam = getDoctorExam(clientId, visit.id, doctorRoleId);
 
   if (!exam) {
-    const isRequired = getRequiredDoctorRoleCodesForVisit(visit).includes(doctorRoleId);
+    const isRequired = getRequiredDoctorRoleCodesForVisit(visit, client).includes(doctorRoleId);
     const hasHistory = hasCompletedDoctorExamHistory(clientId, doctorRoleId, visit.id);
     if (isRequired && hasHistory) return "draft-history";
     if (isRequired) return "draft";
@@ -4043,7 +4044,7 @@ function buildExcelRows(clients) {
           }
         : null
     );
-    const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit) : new Map();
+    const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : new Map();
     const completedDoctors = new Set(status?.completedDoctorRoleIds || []);
     const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors);
 
