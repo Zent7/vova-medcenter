@@ -2942,6 +2942,10 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   resize: vertical;
 }
 
+.doctor-classic-textarea--mid {
+  min-height: 92px;
+}
+
 .chairman-requirements-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;
