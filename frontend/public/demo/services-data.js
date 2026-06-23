@@ -78,7 +78,7 @@ window.servicesData = {
       notes: "ГИМС",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: []
+      doctorRoleIds: [1, 13]
     },
 
     {
@@ -192,7 +192,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 30,
-      doctorRoleIds: [1, 2, 3]
+      doctorRoleIds: [4, 2, 1, 13]
     },
     {
       id: 9,
@@ -232,7 +232,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 70,
-      doctorRoleIds: [1, 2, 3, 4]
+      doctorRoleIds: [4, 2, 1, 13]
     },
     {
       id: 4,
@@ -252,7 +252,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 90,
-      doctorRoleIds: [1]
+      doctorRoleIds: [6, 1, 10, 4, 7, 5, 13]
     },
     {
       id: 30,
@@ -302,7 +302,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 140,
-      doctorRoleIds: []
+      doctorRoleIds: [1, 13]
     },
 
     {

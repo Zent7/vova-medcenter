@@ -338,7 +338,6 @@ const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 3
 const SPORT_SERVICE_LEGACY_IDS = new Set([4, 5]);
 const EKG_SERVICE_LEGACY_IDS = new Set([6, 20, 21, 27]);
 const POOL_SERVICE_LEGACY_IDS = new Set([3]);
-const CHAIRMAN_MARKED_SERVICE_LEGACY_IDS = new Set([16, 18, 19, 24, 31]);
 const SPORT_SERVICE_NAMES = new Set([
   "справка для участия в соревнованиях",
   "справка спорт + экг",
@@ -1174,6 +1173,10 @@ function isCertificateService(service) {
   );
 }
 
+function isCertificate086Service(service) {
+  return Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id) === 12;
+}
+
 function isSportService(service) {
   const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id);
   const normalizedName = String(service?.name || "").trim().toLowerCase();
@@ -1196,8 +1199,7 @@ function isPoolService(service) {
 }
 
 function isChairmanMarkedService(service) {
-  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
-  return CHAIRMAN_MARKED_SERVICE_LEGACY_IDS.has(legacyId);
+  return Boolean(service);
 }
 
 function getServicesForVisit(visit) {
@@ -1473,14 +1475,14 @@ function getDoctorRoleCodeById(roleId) {
 function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   if (!service) return new Set();
   if (isDriverService(service)) {
-    return new Set(getDriverRoleCodes(detail.categories || DRIVER_DEFAULT_CATEGORIES));
+    return new Set([...getDriverRoleCodes(detail.categories || DRIVER_DEFAULT_CATEGORIES), "chairman"]);
   }
 
   const roleCodes = (service.doctorRoleIds || [])
     .map((roleId) => getDoctorRoleCodeById(roleId))
     .filter(Boolean);
 
-  if (isPoolService(service) && getClientSexKey(client) === "male") {
+  if ((isPoolService(service) || isLmkService(service) || isCertificate086Service(service)) && getClientSexKey(client) === "male") {
     const gynecologistIndex = roleCodes.indexOf("gynecologist");
     if (gynecologistIndex >= 0) roleCodes.splice(gynecologistIndex, 1);
   }
@@ -1526,11 +1528,12 @@ function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
 
 function getRequiredDoctorRoleCodesForVisit(visit) {
   const serviceDetails = getVisitServiceDetails(visit);
+  const client = getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
   const result = new Set();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
-    getDoctorRoleCodeSetFromService(service, detail).forEach((code) => result.add(code));
+    getDoctorRoleCodeSetFromService(service, detail, client).forEach((code) => result.add(code));
   });
   return Array.from(result);
 }
