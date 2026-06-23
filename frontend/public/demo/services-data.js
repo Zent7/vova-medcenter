@@ -89,7 +89,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: []
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13]
     },
     {
       id: 33,
@@ -109,7 +109,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 30,
-      doctorRoleIds: []
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13]
     },
     {
       id: 23,
@@ -161,7 +161,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13]
     },
 
     {
@@ -175,14 +175,24 @@ window.servicesData = {
       doctorRoleIds: [1, 13]
     },
     {
+      id: 31,
+      name: "Справка для получения путевки 070У",
+      groupId: 7,
+      price: 2000,
+      notes: "",
+      isActive: true,
+      sortOrder: 20,
+      doctorRoleIds: [13]
+    },
+    {
       id: 2,
       name: "Справка формы 001 ГСУ",
       groupId: 7,
       price: 1800,
       notes: "",
       isActive: true,
-      sortOrder: 20,
-      doctorRoleIds: [1, 2, 3, 13]
+      sortOrder: 30,
+      doctorRoleIds: [1, 2, 3]
     },
     {
       id: 9,
@@ -191,8 +201,8 @@ window.servicesData = {
       price: 3500,
       notes: "",
       isActive: true,
-      sortOrder: 30,
-      doctorRoleIds: [13]
+      sortOrder: 40,
+      doctorRoleIds: [1, 7]
     },
     {
       id: 3,
@@ -201,8 +211,8 @@ window.servicesData = {
       price: 1000,
       notes: "",
       isActive: true,
-      sortOrder: 40,
-      doctorRoleIds: [1, 13]
+      sortOrder: 50,
+      doctorRoleIds: [1, 6, 8]
     },
     {
       id: 10,
@@ -211,8 +221,8 @@ window.servicesData = {
       price: 2000,
       notes: "",
       isActive: true,
-      sortOrder: 50,
-      doctorRoleIds: [13]
+      sortOrder: 60,
+      doctorRoleIds: [1]
     },
     {
       id: 11,
@@ -221,8 +231,8 @@ window.servicesData = {
       price: 1800,
       notes: "",
       isActive: true,
-      sortOrder: 60,
-      doctorRoleIds: [1, 2, 3, 4, 13]
+      sortOrder: 70,
+      doctorRoleIds: [1, 2, 3, 4]
     },
     {
       id: 4,
@@ -231,8 +241,8 @@ window.servicesData = {
       price: 1500,
       notes: "",
       isActive: true,
-      sortOrder: 70,
-      doctorRoleIds: [1, 13]
+      sortOrder: 80,
+      doctorRoleIds: [1]
     },
     {
       id: 12,
@@ -241,8 +251,8 @@ window.servicesData = {
       price: 2200,
       notes: "",
       isActive: true,
-      sortOrder: 80,
-      doctorRoleIds: [1, 13]
+      sortOrder: 90,
+      doctorRoleIds: [1]
     },
     {
       id: 30,
@@ -251,8 +261,8 @@ window.servicesData = {
       price: 1800,
       notes: "",
       isActive: true,
-      sortOrder: 90,
-      doctorRoleIds: [1, 13]
+      sortOrder: 100,
+      doctorRoleIds: [1]
     },
     {
       id: 5,
@@ -261,8 +271,38 @@ window.servicesData = {
       price: 1200,
       notes: "",
       isActive: true,
-      sortOrder: 100,
-      doctorRoleIds: [1, 13]
+      sortOrder: 110,
+      doctorRoleIds: [1, 10]
+    },
+    {
+      id: 32,
+      name: "капельница",
+      groupId: 7,
+      price: 1500,
+      notes: "",
+      isActive: true,
+      sortOrder: 120,
+      doctorRoleIds: []
+    },
+    {
+      id: 38,
+      name: "Морская медицинская комиссия",
+      groupId: 7,
+      price: 6000,
+      notes: "",
+      isActive: true,
+      sortOrder: 130,
+      doctorRoleIds: [1, 4, 5, 7]
+    },
+    {
+      id: 39,
+      name: "DRUG/ALCOHOL TEST № 96",
+      groupId: 7,
+      price: 2500,
+      notes: "",
+      isActive: true,
+      sortOrder: 140,
+      doctorRoleIds: []
     },
 
     {
@@ -296,6 +336,16 @@ window.servicesData = {
       doctorRoleIds: []
     },
 
+    {
+      id: 27,
+      name: "ЭКГ",
+      groupId: 9,
+      price: 1200,
+      notes: "",
+      isActive: true,
+      sortOrder: 5,
+      doctorRoleIds: [1]
+    },
     {
       id: 20,
       name: "ЭКГ без расшифровки",

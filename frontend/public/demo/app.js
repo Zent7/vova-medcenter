@@ -155,7 +155,7 @@ let clientSearchRequestId = 0;
 let clientSearchAbortController = null;
 let clientRowClickTimer = null;
 const DASHBOARD_PAGE_SIZE = 50;
-const CLIENTS_LOAD_BATCH_SIZE = 100;
+const DASHBOARD_CLIENT_LOAD_LIMIT = 100;
 const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
 
 const DEMO_STORAGE_KEY = "vova-medcenter-demo-state-v2";
@@ -337,6 +337,8 @@ const PROF_SERVICE_LEGACY_IDS = new Set([16]);
 const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 39]);
 const SPORT_SERVICE_LEGACY_IDS = new Set([4, 5]);
 const EKG_SERVICE_LEGACY_IDS = new Set([6, 20, 21, 27]);
+const POOL_SERVICE_LEGACY_IDS = new Set([3]);
+const CHAIRMAN_MARKED_SERVICE_LEGACY_IDS = new Set([16, 18, 19, 24, 31]);
 const SPORT_SERVICE_NAMES = new Set([
   "справка для участия в соревнованиях",
   "справка спорт + экг",
@@ -1187,6 +1189,17 @@ function isStandaloneEkgService(service) {
   );
 }
 
+function isPoolService(service) {
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
+  const normalizedName = String(service?.name || "").trim().toLowerCase();
+  return POOL_SERVICE_LEGACY_IDS.has(legacyId) || normalizedName.includes("басс");
+}
+
+function isChairmanMarkedService(service) {
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
+  return CHAIRMAN_MARKED_SERVICE_LEGACY_IDS.has(legacyId);
+}
+
 function getServicesForVisit(visit) {
   return getSelectedVisitServiceIds(visit)
     .map((serviceId) => getServiceById(serviceId))
@@ -1457,30 +1470,22 @@ function getDoctorRoleCodeById(roleId) {
   return doctorRoles.find((role) => String(role.id) === String(roleId))?.code || null;
 }
 
-function getDoctorRoleCodeSetFromService(service, detail = {}) {
+function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   if (!service) return new Set();
   if (isDriverService(service)) {
     return new Set(getDriverRoleCodes(detail.categories || DRIVER_DEFAULT_CATEGORIES));
-  }
-  if (isSportService(service)) {
-    return new Set(["chairman"]);
-  }
-  if (isStandaloneEkgService(service)) {
-    return new Set(["chairman"]);
   }
 
   const roleCodes = (service.doctorRoleIds || [])
     .map((roleId) => getDoctorRoleCodeById(roleId))
     .filter(Boolean);
 
-  if (isCertificateService(service)) {
-    roleCodes.push("chairman");
+  if (isPoolService(service) && getClientSexKey(client) === "male") {
+    const gynecologistIndex = roleCodes.indexOf("gynecologist");
+    if (gynecologistIndex >= 0) roleCodes.splice(gynecologistIndex, 1);
   }
 
-  if (
-    roleCodes.length &&
-    (isTractorService(service) || isGimsService(service) || isLmkService(service) || isProfService(service))
-  ) {
+  if (isChairmanMarkedService(service)) {
     roleCodes.push("chairman");
   }
 
@@ -1489,11 +1494,12 @@ function getDoctorRoleCodeSetFromService(service, detail = {}) {
 
 function getRequiredDoctorRoleCountsForVisit(visit) {
   const serviceDetails = getVisitServiceDetails(visit);
+  const client = getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
   const counts = new Map();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
-    getDoctorRoleCodeSetFromService(service, detail).forEach((code) => {
+    getDoctorRoleCodeSetFromService(service, detail, client).forEach((code) => {
       const current = counts.get(code) || 0;
       counts.set(code, code === "chairman" && isCertificateService(service) ? current + 1 : Math.max(current, 1));
     });
@@ -1565,6 +1571,29 @@ function formatDateTime(value = new Date()) {
   return date.toLocaleString("ru-RU", RU_DATE_TIME_FORMAT_OPTIONS);
 }
 
+function extractDisplayTime(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const isoDateTimeMatch = text.match(/^\d{4}-\d{2}-\d{2}[T\s]+(\d{1,2}):(\d{2})/);
+  if (isoDateTimeMatch) return `${isoDateTimeMatch[1].padStart(2, "0")}:${isoDateTimeMatch[2]}`;
+
+  const ruDateTimeMatch = text.match(/^\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})[,\s]+(\d{1,2}):(\d{2})/);
+  if (ruDateTimeMatch) return `${ruDateTimeMatch[1].padStart(2, "0")}:${ruDateTimeMatch[2]}`;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})$/.test(text)) return "";
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDateTimeWithFallbackTime(value, fallbackTimeValue) {
+  const formatted = formatDateTime(value);
+  if (!formatted || /,\s*\d{2}:\d{2}$/.test(formatted)) return formatted;
+
+  const fallbackTime = extractDisplayTime(fallbackTimeValue);
+  return fallbackTime ? `${formatted}, ${fallbackTime}` : formatted;
+}
+
 function formatApiDate(value) {
   if (!value) return "";
   const text = String(value).trim();
@@ -1593,6 +1622,9 @@ function joinDocument(client) {
 
 function mapApiClient(client) {
   const services = Array.isArray(client.services) ? client.services : [];
+  const encounterDateText = client.encounter_date_text || client.real_date_text || client.created_at || "";
+  const encounterTimeSource = client.latest_encounter_created_at || client.created_at || "";
+  const encounterDateTime = formatDateTimeWithFallbackTime(encounterDateText, encounterTimeSource);
   return {
     id: client.id,
     backendId: client.id,
@@ -1612,7 +1644,7 @@ function mapApiClient(client) {
     snils: client.snils || "",
     email: client.email || "",
     note: client.notes || "",
-    lastVisit: formatDateTime(client.real_date_text || client.encounter_date_text || ""),
+    lastVisit: encounterDateTime,
     services,
     registration: client.registration_text || client.address_text || "",
     admissionCategory: client.admission_category || "",
@@ -1630,7 +1662,7 @@ function mapApiClient(client) {
     infectionist: client.doctor_infectionist || "",
     phthisiatrician: client.doctor_phthisiatrician || "",
     uzist: client.doctor_uzist || "",
-    encounterDate: formatDateTime(client.encounter_date_text || client.real_date_text || ""),
+    encounterDate: encounterDateTime,
     cardNumber: client.card_number || "",
     profession: client.profession || "",
     workPlace: client.work_place || "",
@@ -1638,6 +1670,8 @@ function mapApiClient(client) {
     agent: client.agent || client.legacy_payload_json?.agent || "",
     mkb10: client.mkb10 || "",
     realDate: client.real_date_text || "",
+    createdAt: client.created_at || "",
+    latestEncounterCreatedAt: client.latest_encounter_created_at || "",
     rawApiClient: client,
   };
 }
@@ -3763,36 +3797,17 @@ async function loadClientsFromBackend(searchValue) {
   setTimeout(renderApp, 0);
 
   try {
-    const mappedClients = [];
-    const seenClientIds = new Set();
-    let offset = 0;
-    while (true) {
-      const params = new URLSearchParams({
-        limit: String(CLIENTS_LOAD_BATCH_SIZE),
-        offset: String(offset),
-      });
-      if (search) params.set("search", search);
-      if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
-      if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
-      const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
-      const response = await fetch(url, { signal: abortController.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const clients = await response.json();
-      if (requestId !== clientSearchRequestId) return;
+    const params = new URLSearchParams({ limit: String(DASHBOARD_CLIENT_LOAD_LIMIT) });
+    if (search) params.set("search", search);
+    if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
+    if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
+    const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
+    const response = await fetch(url, { signal: abortController.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const clients = await response.json();
+    if (requestId !== clientSearchRequestId) return;
 
-      const batch = Array.isArray(clients) ? clients : [];
-      let addedClients = 0;
-      batch.forEach((client) => {
-        const clientKey = client?.id == null ? "" : String(client.id);
-        if (clientKey && seenClientIds.has(clientKey)) return;
-        if (clientKey) seenClientIds.add(clientKey);
-        mappedClients.push(mapApiClient(client));
-        addedClients += 1;
-      });
-      if (batch.length < CLIENTS_LOAD_BATCH_SIZE || addedClients === 0) break;
-      offset += batch.length;
-    }
-
+    const mappedClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
     data.backendClients = mergeDashboardPinnedClients(mappedClients);
     data.backendClientsLoaded = true;
     invalidateClientPool();

@@ -160,19 +160,40 @@ def latest_services_by_client_ids(db: Session, client_ids: list[int]) -> dict[in
     }
 
 
+def latest_encounter_created_at_by_client_ids(db: Session, client_ids: list[int]) -> dict[int, datetime]:
+    if not client_ids:
+        return {}
+
+    rows = db.execute(
+        select(Encounter.client_id, Encounter.created_at)
+        .where(Encounter.deleted_at.is_(None), Encounter.client_id.in_(client_ids))
+        .order_by(Encounter.client_id.asc(), Encounter.created_at.desc(), Encounter.id.desc())
+    ).all()
+
+    result: dict[int, datetime] = {}
+    for client_id, created_at in rows:
+        result.setdefault(client_id, created_at)
+    return result
+
+
 def serialize_client(db: Session, client: Client) -> ClientRead:
     services = latest_services_by_client_ids(db, [client.id]).get(client.id, [])
+    latest_encounter_created_at = latest_encounter_created_at_by_client_ids(db, [client.id]).get(client.id)
     payload = ClientRead.model_validate(client).model_dump()
     payload["services"] = services
+    payload["latest_encounter_created_at"] = latest_encounter_created_at
     return ClientRead.model_validate(payload)
 
 
 def serialize_clients(db: Session, clients: list[Client]) -> list[ClientRead]:
-    services_by_client = latest_services_by_client_ids(db, [client.id for client in clients])
+    client_ids = [client.id for client in clients]
+    services_by_client = latest_services_by_client_ids(db, client_ids)
+    latest_encounter_created_at_by_client = latest_encounter_created_at_by_client_ids(db, client_ids)
     result: list[ClientRead] = []
     for client in clients:
         payload = ClientRead.model_validate(client).model_dump()
         payload["services"] = services_by_client.get(client.id, [])
+        payload["latest_encounter_created_at"] = latest_encounter_created_at_by_client.get(client.id)
         result.append(ClientRead.model_validate(payload))
     return result
 
@@ -234,6 +255,7 @@ CLIENT_SEARCH_FIELDS = (
 CLIENT_SEARCH_COLUMNS = (
     Client.id,
     Client.patient_number,
+    Client.created_at,
     Client.last_name,
     Client.first_name,
     Client.middle_name,
@@ -371,11 +393,14 @@ def search_clients(
         encounter_date_to,
     ).offset(offset).limit(limit)
     rows = db.execute(query).mappings().all()
-    services_by_client = latest_services_by_client_ids(db, [row["id"] for row in rows])
+    client_ids = [row["id"] for row in rows]
+    services_by_client = latest_services_by_client_ids(db, client_ids)
+    latest_encounter_created_at_by_client = latest_encounter_created_at_by_client_ids(db, client_ids)
     result: list[ClientSearchRead] = []
     for row in rows:
         payload = dict(row)
         payload["services"] = services_by_client.get(row["id"], [])
+        payload["latest_encounter_created_at"] = latest_encounter_created_at_by_client.get(row["id"])
         result.append(ClientSearchRead.model_validate(payload))
     return result
 
