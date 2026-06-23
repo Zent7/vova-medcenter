@@ -1482,7 +1482,7 @@ function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
     .map((roleId) => getDoctorRoleCodeById(roleId))
     .filter(Boolean);
 
-  if ((isPoolService(service) || isLmkService(service) || isCertificate086Service(service)) && getClientSexKey(client) === "male") {
+  if (getClientSexKey(client) === "male") {
     const gynecologistIndex = roleCodes.indexOf("gynecologist");
     if (gynecologistIndex >= 0) roleCodes.splice(gynecologistIndex, 1);
   }
