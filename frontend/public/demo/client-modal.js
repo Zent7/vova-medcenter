@@ -1263,6 +1263,7 @@ function openClientModal(clientId = null, options = {}) {
     const visitAmount = window.calculateVisitAmountByIds
       ? window.calculateVisitAmountByIds(selectedServiceIds, serviceDetails)
       : window.calculateVisitAmount?.(selectedServiceValues);
+    const formSex = String(formData.get("gender") || "").toLowerCase().startsWith("ж") ? "F" : "M";
 
     const isCreated = !editingClient;
 
@@ -1275,7 +1276,9 @@ function openClientModal(clientId = null, options = {}) {
 
     Object.assign(targetClient, {
       fullName: fullName || "Новый клиент",
-      birthDate: String(formData.get("birthDate") || "").trim(),
+      birthDate: String(formData.get("birthDate") || "").trim(),
+      sex: formSex,
+      gender: formSex,
       phone: String(formData.get("phone") || "").trim(),
       profession: String(formData.get("profession") || "").trim(),
       workPlace: String(formData.get("workPlace") || "").trim(),
@@ -1343,7 +1346,7 @@ function openClientModal(clientId = null, options = {}) {
           first_name: String(formData.get("firstName") || "").trim() || "Без имени",
           middle_name: String(formData.get("middleName") || "").trim() || null,
           birth_date: window.parseRuDateToIso?.(formData.get("birthDate")) || "1900-01-01",
-          sex: String(formData.get("gender") || "").toLowerCase().startsWith("ж") ? "F" : "M",
+          sex: formSex,
           phone: String(formData.get("phone") || "").trim() || null,
           email: String(formData.get("email") || "").trim() || null,
           document_type: String(formData.get("documentType") || "").trim() || null,
@@ -1382,6 +1385,8 @@ function openClientModal(clientId = null, options = {}) {
             profession: String(formData.get("profession") || "").trim() || savedMapped.profession || "",
             workPlace: String(formData.get("workPlace") || "").trim() || savedMapped.workPlace || "",
             organization: String(formData.get("organization") || "").trim() || savedMapped.organization || "",
+            sex: savedClient.sex || formSex,
+            gender: savedClient.sex || formSex,
             rawApiClient: savedClient,
           });
           targetClient = savedMapped;
