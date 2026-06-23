@@ -237,12 +237,74 @@ function initializeFallbackServiceCatalog() {
   }));
   structuredServices = data.serverServices.slice();
   data.serverServicesLoaded = true;
+  ensureGuardCertificateService();
   refreshServiceCatalog();
+}
+
+function isGuardCertificateServiceName(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  return normalized.includes("чод") && (normalized.includes("002") || normalized.includes("охран"));
+}
+
+function getGuardCertificateFallbackService() {
+  const fallbackService = window.servicesData?.services?.find((service) => isGuardCertificateServiceName(service?.name));
+  const certificateGroupId = serviceGroups.find((group) => String(group?.name || "").toLowerCase().includes("справ"))?.id;
+  const base = fallbackService || {
+    id: 9,
+    name: "Справка 002 ЧОД (для охраны)",
+    groupId: certificateGroupId || 7,
+    price: 3500,
+    notes: "",
+    isActive: true,
+    sortOrder: 40,
+    doctorRoleIds: [1, 7],
+  };
+  const groupId = certificateGroupId || base.groupId || 7;
+  return {
+    ...base,
+    id: base.id || 9,
+    backendId: base.backendId || base.id || 9,
+    legacySourceId: base.legacySourceId || base.legacy_source_id || base.id || 9,
+    groupId,
+    price: Number(base.price || 3500),
+    isActive: base.isActive !== false,
+    recallAfterDays: base.recallAfterDays || null,
+    sortOrder: base.sortOrder || 40,
+    doctorRoleIds: Array.isArray(base.doctorRoleIds) ? base.doctorRoleIds : [1, 7],
+  };
+}
+
+function ensureServiceInList(list, service) {
+  if (!Array.isArray(list)) return false;
+  const hasService = list.some((item) => isGuardCertificateServiceName(item?.name));
+  if (hasService) return false;
+
+  const nextService = { ...service };
+  const insertBeforeIndex = list.findIndex((item) =>
+    String(item?.groupId) === String(nextService.groupId) &&
+    String(item?.name || "").toLowerCase().includes("бассейн")
+  );
+  if (insertBeforeIndex >= 0) {
+    list.splice(insertBeforeIndex, 0, nextService);
+  } else {
+    list.push(nextService);
+  }
+  return true;
+}
+
+function ensureGuardCertificateService() {
+  const service = getGuardCertificateFallbackService();
+  const updatedServerServices = ensureServiceInList(data.serverServices, service);
+  const updatedStructuredServices = ensureServiceInList(structuredServices, service);
+  if (updatedServerServices || updatedStructuredServices) {
+    refreshServiceCatalog();
+  }
 }
 
 loadColumnWidths();
 initializeFallbackServiceCatalog();
 applyPersistedDemoState();
+ensureGuardCertificateService();
 
 const pageTitle = document.getElementById("page-title");
 const navRoot = document.getElementById("nav");
@@ -2132,6 +2194,7 @@ async function loadServicesFromBackend() {
     data.serverServices = Array.isArray(services) ? services.map(mapApiService) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
+    ensureGuardCertificateService();
     refreshServiceCatalog();
     renderApp();
   } catch (error) {
