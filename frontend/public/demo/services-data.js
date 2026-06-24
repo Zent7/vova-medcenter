@@ -312,7 +312,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 150,
-      doctorRoleIds: [2, 13]
+      doctorRoleIds: [2, 4, 1, 13]
     },
     {
       id: 41,
