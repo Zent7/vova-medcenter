@@ -10182,6 +10182,7 @@ function bindContentEvents() {
         client?.referenceNumber ||
         client?.rawApiClient?.reference_number ||
         "";
+      let selectedLmkBlank = null;
       openActionModal(
         "Печать результатов:",
         `
@@ -10212,10 +10213,33 @@ function bindContentEvents() {
         "modal--driver-print",
       );
 
-      document.getElementById("chairmanPrintFindBlank")?.addEventListener("click", () => {
+      document.getElementById("chairmanPrintFindBlank")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
         const input = document.getElementById("chairmanPrintBlankNumber");
-        if (input && !input.value) input.value = existingBlankNumber;
-        showToast(existingBlankNumber ? "Номер бланка подставлен" : "Свободный номер ЛМК не найден");
+        if (!client || !visit) {
+          showToast("Сначала выбери клиента и обращение");
+          return;
+        }
+
+        button.disabled = true;
+        try {
+          const centerId = await resolveCenterIdForVisit(visit, client);
+          const query = new URLSearchParams({
+            blank_type: "driver_medical_certificate",
+            center_id: String(centerId),
+            series: "ЛМК",
+          });
+          selectedLmkBlank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
+          const blankParts = getDriverPrintBlankParts(selectedLmkBlank, "ЛМК");
+          if (input) input.value = blankParts.fullNumber || blankParts.number || "";
+          showToast(input?.value ? "Номер ЛМК подставлен" : "Свободный номер ЛМК не найден");
+        } catch (error) {
+          selectedLmkBlank = null;
+          if (input && !input.value) input.value = existingBlankNumber;
+          showToast(humanizeApiError(error, "Свободный номер ЛМК не найден"));
+        } finally {
+          button.disabled = false;
+        }
       });
 
       actionModalContent?.querySelectorAll("[data-chairman-print-menu-kind]").forEach((button) => {
@@ -10296,7 +10320,11 @@ function bindContentEvents() {
       if (printType) {
         try {
           const directPrintType = printType === "driver" ? "medical" : printType;
-          const documentItem = await printDocumentForVisit(directPrintType, client, visit, { targetWindow });
+          const printOptions = { targetWindow };
+          if ((printKind === "lmk_certificate" || printKind === "lmk_title") && selectedLmkBlank?.id) {
+            printOptions.blankFormId = Number(selectedLmkBlank.id);
+          }
+          const documentItem = await printDocumentForVisit(directPrintType, client, visit, printOptions);
           actionModal?.classList.add("hidden");
           window.closeDoctorExamCard?.();
           showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
