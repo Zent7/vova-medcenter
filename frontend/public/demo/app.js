@@ -64,6 +64,18 @@ let serviceGroups = [];
 let doctorRoles = [];
 let structuredServices = [];
 
+const DEFAULT_DOCTOR_DIRECTORY = {
+  therapist: "Казаков И.В.",
+  psychiatrist: "Аносов И.Е.",
+  "psychiatrist-narcologist": "Аносов И.Е.",
+  neurologist: "Казаков И.В.",
+  otolaryngologist: "Барсуков А.Ф.",
+  surgeon: "Конюк М.В.",
+  ophthalmologist: "Дадалина Т.В.",
+  dermatologist: "Мехдиева Н.Ш.К.",
+  dentist: "Шадрикова Ю.А.",
+};
+
 const data = {
   serviceCatalog:
     structuredServices.length
@@ -828,9 +840,23 @@ function loadPersistedDemoState() {
   }
 }
 
+function applyDefaultDoctorDirectory() {
+  if (!data.doctorDirectory || typeof data.doctorDirectory !== "object") {
+    data.doctorDirectory = {};
+  }
+  Object.entries(DEFAULT_DOCTOR_DIRECTORY).forEach(([roleId, doctorName]) => {
+    if (!String(data.doctorDirectory[roleId] || "").trim()) {
+      data.doctorDirectory[roleId] = doctorName;
+    }
+  });
+}
+
 function applyPersistedDemoState() {
   const saved = loadPersistedDemoState();
-  if (!saved || typeof saved !== "object") return;
+  if (!saved || typeof saved !== "object") {
+    applyDefaultDoctorDirectory();
+    return;
+  }
 
   data.clientOverrides = saved.clientOverrides && typeof saved.clientOverrides === "object"
     ? saved.clientOverrides
@@ -938,6 +964,7 @@ function applyPersistedDemoState() {
     visitId: null,
     doctorRoleId: null,
   };
+  applyDefaultDoctorDirectory();
   ensureDemoAuthConsistency();
 }
 
@@ -2596,6 +2623,8 @@ function getDoctorRoleIdByLabel(label) {
     "офтальмолог": "ophthalmologist",
     "терапевт": "therapist",
     "психиатр": "psychiatrist",
+    "психиатр-нарколог": "psychiatrist-narcologist",
+    "нарколог": "psychiatrist-narcologist",
     "инфекционист": "infectionist",
     "фтизиатр": "phthisiatrist",
     "узист": "uzist",
@@ -4560,6 +4589,7 @@ function renderSketchHome() {
     "Офтальмолог",
     "Терапевт",
     "Психиатр",
+    "Психиатр-Нарколог",
     "Инфекционист",
     "Фтизиатр",
     "Узист",
@@ -5628,6 +5658,7 @@ function renderDoctorsPage() {
     ["Офтальмолог", "ophthalmologist"],
     ["Терапевт", "therapist"],
     ["Психиатр", "psychiatrist"],
+    ["Психиатр-Нарколог", "psychiatrist-narcologist"],
     ["Инфекционист", "infectionist"],
     ["Фтизиатр", "phthisiatrist"],
     ["Узист", "uzist"],

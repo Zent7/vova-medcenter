@@ -45,6 +45,22 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
 ET.register_namespace("w", W_NS)
 
+PROF_EXTRACT_DOCTOR_ROWS: tuple[tuple[str, str, int], ...] = (
+    ("therapist", "Терапевт", 32),
+    ("psychiatrist", "Психиатр", 34),
+    ("psychiatrist-narcologist", "Психиатр-Нарколог", 37),
+    ("neurologist", "Невролог", 39),
+    ("otolaryngologist", "Отоларинголог", 41),
+    ("surgeon", "Хирург", 43),
+    ("gynecologist", "Гинеколог", 45),
+    ("ophthalmologist", "Офтальмолог", 48),
+    ("dermatologist", "Дерматовенеролог", 50),
+    ("dentist", "Стоматолог", 52),
+)
+PROF_EXTRACT_DOCTOR_COL = 44
+PROF_EXTRACT_DATE_COL = 54
+PROF_EXTRACT_CONCLUSION_COL = 63
+
 
 def _is_contract_template(template: DocumentTemplate) -> bool:
     text = " ".join(
@@ -450,6 +466,53 @@ def _build_exam_export(exam: DoctorExam | None) -> dict[str, object]:
         "diagnosis": diagnosis,
         "doctor": str(exam.doctor_name or "").strip(),
     }
+
+
+def _prof_extract_exam_date(exam: DoctorExam, encounter: Encounter | None) -> object:
+    if exam.completed_at:
+        return exam.completed_at.date()
+    if encounter is not None:
+        return encounter.encounter_date
+    return ""
+
+
+def _prof_extract_exam_conclusion(exam: DoctorExam) -> str:
+    fields = exam.fields_json or {}
+    conclusion = _exam_field(fields, "conclusion", "result", "decision", "fit")
+    if not conclusion:
+        conclusion = str(exam.result_text or exam.diagnosis or "").strip()
+
+    normalized = conclusion.strip().lower()
+    if normalized == "годен":
+        return "годен"
+    if normalized == "не годен":
+        return "не годен"
+    return conclusion
+
+
+def _prof_extract_doctor_row_values(
+    exams_by_role: dict[str, DoctorExam],
+    encounter: Encounter | None,
+) -> list[tuple[int, str, object, str]]:
+    rows: list[tuple[int, str, object, str]] = []
+    for role_id, specialty, row_index in PROF_EXTRACT_DOCTOR_ROWS:
+        exam = exams_by_role.get(role_id)
+        if exam is None or not exam.is_completed:
+            rows.append((row_index, "", "", ""))
+            continue
+
+        exam_data = _build_exam_export(exam)
+        doctor_name = str(exam_data.get("doctor") or "").strip()
+        doctor_line = " ".join(part for part in [specialty, doctor_name] if part).strip()
+        rows.append(
+            (
+                row_index,
+                doctor_line,
+                _prof_extract_exam_date(exam, encounter),
+                _prof_extract_exam_conclusion(exam),
+            )
+        )
+    return rows
 
 
 def _is_rural_address(*parts: str) -> bool:
@@ -1322,6 +1385,24 @@ def _fill_journal_344_sheet(
     )
 
 
+def _fill_prof_extract_doctor_rows(
+    source_sheet,
+    target_sheet,
+    exams_by_role: dict[str, DoctorExam],
+    encounter: Encounter | None,
+) -> None:
+    pairs: list[tuple[tuple[int, int], object]] = []
+    for row_index, doctor_line, completed_date, conclusion in _prof_extract_doctor_row_values(exams_by_role, encounter):
+        pairs.extend(
+            [
+                ((row_index, PROF_EXTRACT_DOCTOR_COL), doctor_line),
+                ((row_index, PROF_EXTRACT_DATE_COL), _xls_excel_date(completed_date)),
+                ((row_index, PROF_EXTRACT_CONCLUSION_COL), conclusion),
+            ]
+        )
+    _write_xls_pairs(target_sheet, source_sheet, pairs)
+
+
 def _find_prof_amb_sheet_index(source_book) -> int | None:
     for index, sheet_name in enumerate(source_book.sheet_names()):
         normalized = str(sheet_name or "").strip().lower().replace("!", "").strip()
@@ -1490,6 +1571,10 @@ def _generate_prof_amb_xls(
         diagnosis_cell=(104, 1),
         doctor_cell=(109, 11),
     )
+
+    pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
+    if pz2_source and pz2_target:
+        _fill_prof_extract_doctor_rows(pz2_source, pz2_target, exams_by_role, encounter)
 
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
