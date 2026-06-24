@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.document_generator import (  # noqa: E402
+    PROF_EXTRACT_CLEARED_DOCTOR_ROWS,
     PROF_EXTRACT_DOCTOR_ROWS,
     _prof_extract_doctor_row_values,
 )
@@ -46,7 +47,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         gynecologist_row = rows[[role for role, _, _ in PROF_EXTRACT_DOCTOR_ROWS].index("gynecologist")]
         self.assertEqual(gynecologist_row, (45, "", "", ""))
 
-    def test_psychiatrist_narcologist_uses_separate_row(self):
+    def test_psychiatrist_narcologist_is_not_exported(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         rows = _prof_extract_doctor_row_values(
             {
@@ -57,7 +58,8 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         )
 
         self.assertEqual(rows[1], (34, "Психиатр Аносов И.Е.", date(2026, 6, 24), "годен"))
-        self.assertEqual(rows[2], (37, "Психиатр-Нарколог Аносов И.Е.", date(2026, 6, 24), "годен"))
+        self.assertNotIn(37, [row[0] for row in rows])
+        self.assertEqual(PROF_EXTRACT_CLEARED_DOCTOR_ROWS, (37,))
 
     def test_rows_keep_template_order(self):
         rows = _prof_extract_doctor_row_values({}, None)
@@ -67,7 +69,6 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             [
                 ("therapist", 32),
                 ("psychiatrist", 34),
-                ("psychiatrist-narcologist", 37),
                 ("neurologist", 39),
                 ("otolaryngologist", 41),
                 ("surgeon", 43),

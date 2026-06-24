@@ -67,7 +67,6 @@ let structuredServices = [];
 const DEFAULT_DOCTOR_DIRECTORY = {
   therapist: "Казаков И.В.",
   psychiatrist: "Аносов И.Е.",
-  "psychiatrist-narcologist": "Аносов И.Е.",
   neurologist: "Казаков И.В.",
   otolaryngologist: "Барсуков А.Ф.",
   surgeon: "Конюк М.В.",
@@ -75,6 +74,24 @@ const DEFAULT_DOCTOR_DIRECTORY = {
   dermatologist: "Мехдиева Н.Ш.К.",
   dentist: "Шадрикова Ю.А.",
 };
+
+const EXCLUDED_DOCTOR_ROLE_CODES = new Set(["psychiatrist-narcologist"]);
+const EXCLUDED_DOCTOR_ROLE_IDS = new Set([3]);
+
+function isExcludedDoctorRole(role) {
+  if (!role) return false;
+  const code = String(role.code || "").trim().toLowerCase();
+  const name = String(role.name || "").trim().toLowerCase();
+  return (
+    EXCLUDED_DOCTOR_ROLE_CODES.has(code) ||
+    EXCLUDED_DOCTOR_ROLE_IDS.has(Number(role.id)) ||
+    name.includes("нарколог")
+  );
+}
+
+function normalizeDoctorRoleIds(roleIds) {
+  return (Array.isArray(roleIds) ? roleIds : []).filter((roleId) => !EXCLUDED_DOCTOR_ROLE_IDS.has(Number(roleId)));
+}
 
 const data = {
   serviceCatalog:
@@ -90,7 +107,6 @@ const data = {
           "ЭКГ",
           "Флюорография",
           "Психиатр",
-          "Нарколог",
           "Терапевт",
           "Офтальмолог",
           "ЛОР",
@@ -204,7 +220,6 @@ function initializeFallbackServiceCatalog() {
   const fallbackRoleCodes = {
     1: "therapist",
     2: "psychiatrist",
-    3: "psychiatrist-narcologist",
     4: "neurologist",
     5: "otolaryngologist",
     6: "gynecologist",
@@ -227,7 +242,7 @@ function initializeFallbackServiceCatalog() {
     ? fallback.doctorRoles.map((role) => ({
         ...role,
         code: role.code || fallbackRoleCodes[Number(role.id)] || String(role.id),
-      }))
+      })).filter((role) => !isExcludedDoctorRole(role))
     : [];
 
   if (!doctorRoles.some((role) => String(role.id) === "13")) {
@@ -245,7 +260,7 @@ function initializeFallbackServiceCatalog() {
     backendId: service.backendId || service.id,
     legacySourceId: service.legacySourceId || service.legacy_source_id || service.id,
     recallAfterDays: service.recallAfterDays || null,
-    doctorRoleIds: Array.isArray(service.doctorRoleIds) ? service.doctorRoleIds : [],
+    doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
   }));
   structuredServices = data.serverServices.slice();
   data.serverServicesLoaded = true;
@@ -746,7 +761,9 @@ function resolveDashboardAdmissionCategory(client, visit = null) {
 function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
   const completed = new Set();
   const addFromStatus = () => {
-    (status?.completedDoctorRoleIds || []).forEach((roleId) => completed.add(roleId));
+    (status?.completedDoctorRoleIds || [])
+      .filter((roleId) => !EXCLUDED_DOCTOR_ROLE_CODES.has(String(roleId || "").trim().toLowerCase()))
+      .forEach((roleId) => completed.add(roleId));
   };
 
   if (!visit) {
@@ -761,6 +778,7 @@ function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status
         String(exam?.visitId) === String(visit.id) &&
         exam?.isCompleted,
     )
+    .filter((exam) => !EXCLUDED_DOCTOR_ROLE_CODES.has(String(exam.doctorRoleId || "").trim().toLowerCase()))
     .forEach((exam) => completed.add(exam.doctorRoleId));
 
   if (visit.backendId && String(status?.encounterId || "") === String(visit.backendId)) {
@@ -849,6 +867,9 @@ function applyDefaultDoctorDirectory() {
       data.doctorDirectory[roleId] = doctorName;
     }
   });
+  EXCLUDED_DOCTOR_ROLE_CODES.forEach((roleId) => {
+    delete data.doctorDirectory[roleId];
+  });
 }
 
 function applyPersistedDemoState() {
@@ -881,7 +902,11 @@ function applyPersistedDemoState() {
   }
 
   if (Array.isArray(saved.structuredServices) && Array.isArray(structuredServices)) {
-    structuredServices.splice(0, structuredServices.length, ...saved.structuredServices);
+    const normalizedSavedServices = saved.structuredServices.map((service) => ({
+      ...service,
+      doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
+    }));
+    structuredServices.splice(0, structuredServices.length, ...normalizedSavedServices);
     data.servicesDirty = true;
     refreshServiceCatalog();
   }
@@ -1950,7 +1975,7 @@ function mapApiService(service) {
     requiresSequence: Boolean(service.requires_sequence),
     recallAfterDays: service.recall_after_days || null,
     sortOrder: service.legacy_source_id || service.id,
-    doctorRoleIds: Array.isArray(service.doctor_role_ids) ? service.doctor_role_ids : [],
+    doctorRoleIds: normalizeDoctorRoleIds(service.doctor_role_ids),
   };
 }
 
@@ -2289,7 +2314,7 @@ async function loadServicesFromBackend() {
       apiRequest("/services"),
     ]);
     serviceGroups = Array.isArray(categories) ? categories.map(mapApiServiceCategory) : [];
-    doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole) : [];
+    doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole).filter((role) => !isExcludedDoctorRole(role)) : [];
     data.serverServices = Array.isArray(services) ? services.map(mapApiService) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
@@ -2623,8 +2648,6 @@ function getDoctorRoleIdByLabel(label) {
     "офтальмолог": "ophthalmologist",
     "терапевт": "therapist",
     "психиатр": "psychiatrist",
-    "психиатр-нарколог": "psychiatrist-narcologist",
-    "нарколог": "psychiatrist-narcologist",
     "инфекционист": "infectionist",
     "фтизиатр": "phthisiatrist",
     "узист": "uzist",
@@ -4589,7 +4612,6 @@ function renderSketchHome() {
     "Офтальмолог",
     "Терапевт",
     "Психиатр",
-    "Психиатр-Нарколог",
     "Инфекционист",
     "Фтизиатр",
     "Узист",
@@ -5658,7 +5680,6 @@ function renderDoctorsPage() {
     ["Офтальмолог", "ophthalmologist"],
     ["Терапевт", "therapist"],
     ["Психиатр", "psychiatrist"],
-    ["Психиатр-Нарколог", "psychiatrist-narcologist"],
     ["Инфекционист", "infectionist"],
     ["Фтизиатр", "phthisiatrist"],
     ["Узист", "uzist"],

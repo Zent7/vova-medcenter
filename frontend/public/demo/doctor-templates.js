@@ -704,24 +704,8 @@
   ],
 },
 {
-  id: "psychiatrist-narcologist",
-  name: "ПСИХИАТР-НАРКОЛОГ",
-  layout: "phthisiatristClassic",
-  fields: [
-    { key: "complaintsPreset", label: "Жалобы", type: "select", options: ["Норма(м)", "Норма(ж)"], defaultValue: "Норма(м)" },
-    { key: "complaints", label: "Жалобы", type: "text", defaultValue: "в момент осмотра жалоб нет" },
-    { key: "anamnesis", label: "Анамнез", type: "textarea", defaultValue: "Наркологические заболевания отрицает. На учете в НД не состоит." },
-    { key: "objective", label: "Объективно", type: "textarea", defaultValue: "Признаков употребления психоактивных веществ не выявлено." },
-    { key: "diagnosis", label: "Диагноз", type: "textarea", defaultValue: "Признаков наркологического заболевания не выявлено." },
-    { key: "conclusion", label: "Заключение", type: "radio", options: ["Годен", "Не годен"], defaultValue: "Годен" },
-    { key: "validity", label: "Срок", type: "select", options: ["6 мес", "1 год", "2 года"], defaultValue: "1 год" },
-    { key: "mkb10", label: "МКБ10", type: "text", defaultValue: "" },
-    { key: "note", label: "Примечание", type: "textarea", defaultValue: "" },
-  ],
-},
-{
   id: "psychiatrist",
-  name: "ПСИХИАТР-НАРКОЛОГ",
+  name: "ПСИХИАТР",
   layout: "psychiatristClassic",
   fields: [
     { key: "birthDate", label: "Дата рождения", type: "text", defaultValue: "" },

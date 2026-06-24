@@ -48,7 +48,6 @@ ET.register_namespace("w", W_NS)
 PROF_EXTRACT_DOCTOR_ROWS: tuple[tuple[str, str, int], ...] = (
     ("therapist", "Терапевт", 32),
     ("psychiatrist", "Психиатр", 34),
-    ("psychiatrist-narcologist", "Психиатр-Нарколог", 37),
     ("neurologist", "Невролог", 39),
     ("otolaryngologist", "Отоларинголог", 41),
     ("surgeon", "Хирург", 43),
@@ -60,6 +59,7 @@ PROF_EXTRACT_DOCTOR_ROWS: tuple[tuple[str, str, int], ...] = (
 PROF_EXTRACT_DOCTOR_COL = 44
 PROF_EXTRACT_DATE_COL = 54
 PROF_EXTRACT_CONCLUSION_COL = 63
+PROF_EXTRACT_CLEARED_DOCTOR_ROWS = (37,)
 
 
 def _is_contract_template(template: DocumentTemplate) -> bool:
@@ -627,7 +627,6 @@ def _xls_auto_marker_values(
         (("невролог",), _exam_conclusion_line(exams_by_role.get("neurologist"))),
         (("лор", "отоларинголог"), _exam_conclusion_line(exams_by_role.get("otolaryngologist"))),
         (("хирург",), _exam_conclusion_line(exams_by_role.get("surgeon"))),
-        (("психиатр нарколог", "нарколог"), _exam_conclusion_line(exams_by_role.get("psychiatrist-narcologist"))),
         (("психиатр",), _exam_conclusion_line(exams_by_role.get("psychiatrist"))),
         (("дермат",), _exam_conclusion_line(exams_by_role.get("dermatologist"))),
         (("гинеколог",), _exam_conclusion_line(exams_by_role.get("gynecologist"))),
@@ -1392,6 +1391,14 @@ def _fill_prof_extract_doctor_rows(
     encounter: Encounter | None,
 ) -> None:
     pairs: list[tuple[tuple[int, int], object]] = []
+    for row_index in PROF_EXTRACT_CLEARED_DOCTOR_ROWS:
+        pairs.extend(
+            [
+                ((row_index, PROF_EXTRACT_DOCTOR_COL), ""),
+                ((row_index, PROF_EXTRACT_DATE_COL), ""),
+                ((row_index, PROF_EXTRACT_CONCLUSION_COL), ""),
+            ]
+        )
     for row_index, doctor_line, completed_date, conclusion in _prof_extract_doctor_row_values(exams_by_role, encounter):
         pairs.extend(
             [
@@ -1486,18 +1493,7 @@ def _generate_prof_amb_xls(
         ],
     )
 
-    psychiatrist_exam = exams_by_role.get("psychiatrist")
-    narcologist_exam = exams_by_role.get("psychiatrist-narcologist")
-    psychiatrist_data = _build_exam_export(psychiatrist_exam)
-    narcologist_data = _build_exam_export(narcologist_exam)
-    if not psychiatrist_data["objective"]:
-        psychiatrist_data["objective"] = narcologist_data["objective"]
-    if narcologist_data["diagnosis"]:
-        psychiatrist_data["diagnosis"] = ", ".join(
-            part for part in [str(psychiatrist_data["diagnosis"] or ""), str(narcologist_data["diagnosis"] or "")] if part
-        )
-    if narcologist_data["doctor"] and not psychiatrist_data["doctor"]:
-        psychiatrist_data["doctor"] = narcologist_data["doctor"]
+    psychiatrist_data = _build_exam_export(exams_by_role.get("psychiatrist"))
 
     _fill_exam_block(
         target_sheet,
