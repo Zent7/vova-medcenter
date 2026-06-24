@@ -315,17 +315,6 @@ window.servicesData = {
       doctorRoleIds: [2, 4, 1, 13]
     },
     {
-      id: 41,
-      name: "Выписка из амб. карты (профа)",
-      groupId: 7,
-      price: 0,
-      notes: "",
-      isActive: true,
-      sortOrder: 160,
-      doctorRoleIds: [1, 13]
-    },
-
-    {
       id: 13,
       name: "УЗИ брюшной полости",
       groupId: 8,

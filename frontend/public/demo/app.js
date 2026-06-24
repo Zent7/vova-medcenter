@@ -396,7 +396,7 @@ const TRACTOR_SERVICE_LEGACY_IDS = new Set([7]);
 const GIMS_SERVICE_LEGACY_IDS = new Set([37]);
 const LMK_SERVICE_LEGACY_IDS = new Set([18, 19]);
 const PROF_SERVICE_LEGACY_IDS = new Set([16]);
-const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 39, 40, 41]);
+const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 39, 40]);
 const SPORT_SERVICE_LEGACY_IDS = new Set([4, 5]);
 const EKG_SERVICE_LEGACY_IDS = new Set([6, 20, 21, 27]);
 const POOL_SERVICE_LEGACY_IDS = new Set([3]);
@@ -548,13 +548,6 @@ const CHAIRMAN_FORM_CONFIGS = {
     templateType: "psych342",
     printMode: "document",
     note: "Подтягивается шаблон психиатрического освидетельствования 342н.",
-  },
-  ambulatoryExtract: {
-    type: "ambulatoryExtract",
-    label: "Председатель: выписка из амбулаторной карты",
-    templateType: "ambulatory_extract",
-    printMode: "document",
-    note: "Подтягивается XLS-шаблон выписки из амбулаторной карты.",
   },
   certificate: {
     type: "certificate",
@@ -1370,7 +1363,6 @@ function getChairmanFormTypeForVisit(visit) {
   if (serviceText.includes("001") || serviceText.includes("гсу") || serviceText.includes("госслуж")) return "gsu";
   if (serviceText.includes("989") || serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return "gostaina";
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return "psych342";
-  if (serviceText.includes("выпис") && (serviceText.includes("амб") || serviceText.includes("амбулатор"))) return "ambulatoryExtract";
   if (serviceText.includes("чод") || serviceText.includes("охран")) return "guard";
   if (services.some(isCertificateService)) return "certificate";
   return "default";
@@ -7218,8 +7210,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     }
     return findDocxSafely(["086у.муж_шаблон", "086у.жен_шаблон"], ["086"], []);
   };
-  const isAmbulatoryExtractService = () =>
-    serviceText.includes("выпис") && (serviceText.includes("амб") || serviceText.includes("амбулатор"));
   const findAmbulatoryExtractTemplate = () =>
     findTemplateSafely(
       xlsTemplates,
@@ -7229,9 +7219,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     );
 
   if (normalizedType === "medical") {
-    if (isAmbulatoryExtractService()) {
-      return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]) || null;
-    }
     return findDocxSafely(
       [
         "C\u043f\u0440\u0430\u0432\u043a\u0430_\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440_\u0448\u0430\u0431\u043b\u043e\u043d",
@@ -7309,7 +7296,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("гимс")) return findDocxSafely(["гимс"], ["гимс"], []);
   if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гос.тайна"], []);
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
-  if (isAmbulatoryExtractService()) return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]);
   if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findDocxSafely(["гсу001_шаблон"], ["гсу001"], []);
   if (serviceText.includes("охран") || serviceText.includes("чод")) return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   if (serviceText.includes("трактор")) return findDocx(["трактроная", "трактор"]) || null;
@@ -7342,6 +7328,7 @@ function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
     lmk_title: "lmk_title",
     lmk_certificate: "lmk",
     prof_conclusion: "prof",
+    prof_ambulatory_extract: "ambulatory_extract",
     ambulatory_card: "prof_ambulatory",
     prof_ambulatory: "prof_ambulatory",
   };
@@ -10217,7 +10204,7 @@ function bindContentEvents() {
               <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
             </div>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_conclusion">Проф. осмотр</button>
-            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory">Выписка из амбулаторной карты</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory_extract">Выписка из амбулаторной карты</button>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory">Амб. Карта 25У</button>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__wide--right" disabled>Результат ЗЭП</button>
           </div>

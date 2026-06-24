@@ -159,7 +159,6 @@ SERVICE_CATALOG = [
     (38, 7, "Морская медицинская комиссия", "6000.00"),
     (39, 7, "DRUG/ALCOHOL TEST \u2116 96", "2500.00"),
     (40, 7, "Справка 342н (псих. освид.)", "1800.00"),
-    (41, 7, "Выписка из амб. карты (профа)", "0.00"),
     (13, 8, "УЗИ брюшной полости", "2000.00"),
     (14, 8, "УЗИ молочных желез", "1500.00"),
     (15, 8, "УЗИ предстательной железы", "1500.00"),
@@ -210,7 +209,6 @@ SERVICE_DOCTOR_ROLE_IDS = {
     31: [13],
     39: [1, 13],
     40: [2, 4, 1, 13],
-    41: [1, 13],
 }
 
 SERVICE_RECALL_AFTER_DAYS = {
@@ -234,11 +232,20 @@ SERVICE_RECALL_AFTER_DAYS = {
     27: 365,
     30: 365,
     40: 365,
-    41: 365,
 }
 
-SERVICE_CATALOG = [item for item in SERVICE_CATALOG if item[0] != 36]
-SERVICE_DOCTOR_ROLE_IDS = {service_id: role_ids for service_id, role_ids in SERVICE_DOCTOR_ROLE_IDS.items() if service_id != 36}
+DEPRECATED_SERVICE_LEGACY_IDS = {36, 41}
+SERVICE_CATALOG = [item for item in SERVICE_CATALOG if item[0] not in DEPRECATED_SERVICE_LEGACY_IDS]
+SERVICE_DOCTOR_ROLE_IDS = {
+    service_id: role_ids
+    for service_id, role_ids in SERVICE_DOCTOR_ROLE_IDS.items()
+    if service_id not in DEPRECATED_SERVICE_LEGACY_IDS
+}
+SERVICE_RECALL_AFTER_DAYS = {
+    service_id: days
+    for service_id, days in SERVICE_RECALL_AFTER_DAYS.items()
+    if service_id not in DEPRECATED_SERVICE_LEGACY_IDS
+}
 CERTIFICATE_SERVICE_LEGACY_IDS = {legacy_id for legacy_id, group_id, _, _ in SERVICE_CATALOG if group_id == 7}
 
 SERVICE_GROUP_SORT_OVERRIDES = {
@@ -276,7 +283,7 @@ VISIT_TYPE_SERVICE_LEGACY_IDS = {
     "prof": [16],
     "sport": [4, 5],
     "guard": [9, 11],
-    "other": [2, 3, 10, 24, 27, 30, 31, 32, 38, 39, 40, 41],
+    "other": [2, 3, 10, 24, 27, 30, 31, 32, 38, 39, 40],
 }
 
 TEMPLATE_PHRASES = [
@@ -656,6 +663,15 @@ def _ensure_service_catalog(db: Session) -> None:
         old_service = db.execute(select(Service).where(Service.code == old_code)).scalar_one_or_none()
         if old_service is not None:
             old_service.is_active = False
+
+    for old_legacy_id in DEPRECATED_SERVICE_LEGACY_IDS:
+        old_service = db.execute(select(Service).where(Service.legacy_source_id == old_legacy_id)).scalar_one_or_none()
+        if old_service is not None:
+            old_service.is_active = False
+            old_service.recall_after_days = None
+            db.execute(
+                ServiceDoctorRole.__table__.delete().where(ServiceDoctorRole.service_id == old_service.id)
+            )
 
     db.commit()
 
