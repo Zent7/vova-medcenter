@@ -2699,53 +2699,6 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   flex: 0 0 auto;
 }
 
-.doctor-pill-wrap--has-delete .doctor-pill {
-  border-top-right-radius: 6px;
-  border-bottom-right-radius: 6px;
-}
-
-.doctor-pill-delete {
-  min-height: 28px;
-  padding: 5px 8px;
-  border: 1px solid rgba(189, 61, 61, 0.38);
-  border-radius: 6px 999px 999px 6px;
-  background: #fff3f3;
-  color: #8c2020;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.doctor-pill-delete:hover {
-  background: #ffe3e3;
-  border-color: rgba(189, 61, 61, 0.58);
-}
-
-.doctor-pill--completed {
-  border-color: rgba(25, 135, 84, 0.35);
-  background: #eaf6ef;
-  color: #11623a;
-}
-
-.doctor-pill--draft {
-  border-color: rgba(194, 123, 0, 0.38);
-  background: #fff7e6;
-  color: #7a4b00;
-}
-
-.doctor-pill--draft-history {
-  border-color: rgba(151, 111, 43, 0.42);
-  background: linear-gradient(90deg, #fff7e6 0%, #eef4fb 100%);
-  color: #5f481e;
-}
-
-.doctor-pill--history {
-  border-color: rgba(74, 111, 165, 0.32);
-  background: #eef4fb;
-  color: #31527d;
-}
-
 .doctor-pill--wide {
   text-align: left;
 }
@@ -3018,6 +2971,18 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   font-weight: 700;
 }
 
+.doctor-classic-sidebtn--danger {
+  border: 3px solid #b83a31;
+  background: #fffdf7;
+  color: #b83a31;
+  font-size: 16px;
+  text-transform: none;
+}
+
+.doctor-classic-sidebtn--danger:hover {
+  background: #fff3ef;
+}
+
 .medical-requirements-picker {
   position: fixed;
   inset: 0;
@@ -3114,10 +3079,6 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 .medical-requirements-picker__empty {
   padding: 10px;
   color: #52616d;
-}
-
-[data-doctor-exam-delete] {
-  display: none !important;
 }
 
 .doctor-classic-actions,

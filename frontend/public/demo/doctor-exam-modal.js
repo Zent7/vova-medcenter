@@ -401,7 +401,7 @@
               <div class="doctor-classic-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">ОК</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
               </div>
             </div>
           </form>
@@ -605,7 +605,7 @@
               <div class="doctor-classic-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">ОК</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
               </div>
             </div>
           </form>
@@ -741,7 +741,7 @@
               <div class="doctor-classic-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">ОК</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
               </div>
             </div>
           </form>
@@ -1391,7 +1391,7 @@
               <div class="psy-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">Сохранить</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
 
                 <div class="psy-sidebar-meta">
                   <div class="psy-sidebar-meta__row">
@@ -1606,25 +1606,12 @@
     });
 
     modal.querySelectorAll("[data-doctor-exam-delete]").forEach((button) => {
-      const currentForm = modal.querySelector("[data-doctor-exam-form]");
-      const currentExam = window.getDoctorExamById?.(currentForm?.dataset.examId);
-      if (currentExam?.isCompleted) {
-        button.textContent = "Снять отметку";
-      }
+      button.textContent = "удалить врача";
 
       button.addEventListener("click", async () => {
         const form = modal.querySelector("[data-doctor-exam-form]");
         const examId = form?.dataset.examId;
         if (!examId) return;
-        const exam = window.getDoctorExamById?.(examId);
-        if (exam?.isCompleted) {
-          if (!window.confirm("Снять отметку врача? Карточка осмотра останется черновиком.")) return;
-          const removed = await window.uncompleteDoctorExam?.(examId);
-          if (removed) {
-            window.closeDoctorExamCard();
-          }
-          return;
-        }
         if (!window.confirm("Удалить карточку врача?")) return;
         const deleted = await window.deleteDoctorExam?.(examId);
         if (deleted) {

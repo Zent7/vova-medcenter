@@ -4225,36 +4225,17 @@ function renderDoctorButton(label, selectedClient) {
     ? getDoctorExamStatus(selectedClient.id, doctorRoleId)
     : "empty";
   const title = getDoctorExamStatusTitle(status);
-  const activeVisit = selectedClient ? getCurrentVisitForClient(selectedClient.id) : null;
-  const currentExam = selectedClient && activeVisit && doctorRoleId
-    ? getDoctorExam(selectedClient.id, activeVisit.id, doctorRoleId)
-    : null;
-  const deleteButton = currentExam
-    ? `
-      <button
-        type="button"
-        class="doctor-pill-delete"
-        title="Удалить врача"
-        aria-label="Удалить врача ${escapeHtml(label)}"
-        data-doctor-delete-role-id="${escapeHtml(doctorRoleId)}"
-        data-doctor-delete-exam-id="${escapeHtml(currentExam.id)}"
-      >
-        Удалить
-      </button>
-    `
-    : "";
 
   return `
-    <span class="doctor-pill-wrap${currentExam ? " doctor-pill-wrap--has-delete" : ""}">
+    <span class="doctor-pill-wrap">
       <button
-        class="doctor-pill doctor-pill--${status}"
+        class="doctor-pill"
         title="${escapeHtml(title)}"
         data-doctor-label="${escapeHtml(label)}"
         data-doctor-role-id="${escapeHtml(doctorRoleId || "")}"
       >
         ${label}
       </button>
-      ${deleteButton}
     </span>
   `;
 }
@@ -10016,35 +9997,6 @@ function bindContentEvents() {
         visitId: activeVisit.id,
         doctorRoleId,
       });
-    });
-  });
-
-  contentRoot.querySelectorAll("[data-doctor-delete-role-id]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      const selectedClient = getSelectedClient();
-      const doctorRoleId = button.dataset.doctorDeleteRoleId || "";
-      const examId = button.dataset.doctorDeleteExamId || "";
-      const activeVisit = selectedClient ? getCurrentVisitForClient(selectedClient.id) : null;
-      const currentExam = getDoctorExamById(examId)
-        || (selectedClient && activeVisit && doctorRoleId
-          ? getDoctorExam(selectedClient.id, activeVisit.id, doctorRoleId)
-          : null);
-
-      if (!currentExam) {
-        showToast("Карточка врача уже удалена");
-        renderApp();
-        return;
-      }
-
-      const doctorName = getDoctorDisplayName(currentExam.doctorRoleId || doctorRoleId);
-      const removed = await deleteDoctorExam(currentExam.id);
-      if (removed) {
-        showToast(`Карточка врача "${doctorName}" удалена`);
-        renderApp();
-      }
     });
   });
 
