@@ -2,7 +2,10 @@ from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import tempfile
 import unittest
+
+import xlrd
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -11,6 +14,7 @@ from app.services.document_generator import (  # noqa: E402
     PROF_AMB_EXAM_BLOCKS,
     PROF_EXTRACT_CLEARED_DOCTOR_ROWS,
     PROF_EXTRACT_DOCTOR_ROWS,
+    _generate_prof_amb_xls,
     _prof_amb_exam_block_values,
     _prof_extract_doctor_row_values,
 )
@@ -103,6 +107,77 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
 
     def test_amb_template_has_room_for_every_prof_extract_role(self):
         self.assertGreaterEqual(len(PROF_AMB_EXAM_BLOCKS), len(PROF_EXTRACT_DOCTOR_ROWS))
+
+    def test_generated_amb_sheet_writes_every_selected_doctor_block(self):
+        template_path = next(
+            path
+            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
+            if path.name.startswith("Выписка")
+        )
+        output_path = Path(tempfile.gettempdir()) / "prof_extract_doctor_rows_test.xls"
+        roles = [
+            ("therapist", "Казаков И.В."),
+            ("psychiatrist", "Аносов И.Е."),
+            ("neurologist", "Сибирцев В.А."),
+            ("otolaryngologist", "Изория С.Г."),
+            ("surgeon", "Конюк М.В."),
+            ("gynecologist", "Барсуков А.Ф."),
+            ("ophthalmologist", "Дадалина Т.В."),
+            ("dermatologist", "Мехдиева Н.Ш.К."),
+            ("dentist", "Шадрикова Ю.А."),
+        ]
+        exams = [
+            exam(role_id, doctor_name, completed_at=datetime(2026, 6, 24, 9, 30))
+            for role_id, doctor_name in roles
+        ]
+        client = SimpleNamespace(
+            birth_date=date(1990, 1, 2),
+            document_type="Паспорт РФ",
+            admission_category="",
+            legacy_payload_json={},
+        )
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        context = {
+            "ReferenceNumber": "123",
+            "ClientCalc": "Тестов Тест Тестович",
+            "SexCalc": "мужской",
+            "SubjectCalc": "Санкт-Петербург",
+            "DistrictCalc": "",
+            "CityCalc": "Санкт-Петербург",
+            "StreetCalc": "Невский 1",
+            "AddressCalc": "Санкт-Петербург, Невский 1",
+            "Phone": "",
+            "SNILS": "",
+            "DocumentSeries": "1234",
+            "DocumentNumber": "567890",
+            "CompanyName": "ООО Тест",
+            "Post": "Пекарь",
+            "Conclusion": "Годен",
+            "BirthDateCalc_DAY": "02",
+            "BirthDateCalc_DATEMONTH": "января",
+            "BirthDateCalc_YEAR": "1990",
+            "VisitDate_DATEMONTH": "июня",
+        }
+
+        _generate_prof_amb_xls(template_path, output_path, context, client, encounter, exams)
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        amb_sheet = book.sheet_by_index(1)
+        title_cells = [block["title_cell"] for block in PROF_AMB_EXAM_BLOCKS[: len(roles)]]
+        self.assertEqual(
+            [amb_sheet.cell_value(row_index, col_index) for row_index, col_index in title_cells],
+            [
+                "Врач терапевт",
+                "Врач психиатр",
+                "Врач невролог",
+                "Врач отоларинголог",
+                "Врач хирург",
+                "Врач гинеколог",
+                "Врач офтальмолог",
+                "Врач дерматовенеролог",
+                "Врач стоматолог",
+            ],
+        )
 
 
 if __name__ == "__main__":
