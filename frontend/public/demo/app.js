@@ -10012,11 +10012,6 @@ function bindContentEvents() {
           return;
         }
         await loadDoctorExamsForClient(selectedClient, activeVisit);
-        const currentExam = getDoctorExam(selectedClient.id, activeVisit.id, doctorRoleId);
-        if (currentExam?.isCompleted) {
-          openCompletedDoctorExamActions({ selectedClient, activeVisit, doctorRoleId, currentExam });
-          return;
-        }
         openDoctorExamCard({
           clientId: selectedClient.id,
           visitId: activeVisit.id,
