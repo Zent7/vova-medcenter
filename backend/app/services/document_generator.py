@@ -60,6 +60,98 @@ PROF_EXTRACT_DOCTOR_COL = 44
 PROF_EXTRACT_DATE_COL = 54
 PROF_EXTRACT_CONCLUSION_COL = 63
 PROF_EXTRACT_CLEARED_DOCTOR_ROWS = (37,)
+PROF_AMB_EXAM_BLOCKS: tuple[dict[str, tuple[int, int]], ...] = (
+    {
+        "date_cell": (1, 24),
+        "title_cell": (2, 10),
+        "complaints_cell": (3, 10),
+        "anamnesis_cell": (4, 13),
+        "objective_cell": (6, 1),
+        "diagnosis_cell": (9, 1),
+        "doctor_cell": (14, 11),
+    },
+    {
+        "date_cell": (15, 24),
+        "title_cell": (16, 10),
+        "complaints_cell": (17, 10),
+        "anamnesis_cell": (18, 13),
+        "objective_cell": (20, 1),
+        "diagnosis_cell": (23, 1),
+        "doctor_cell": (28, 11),
+    },
+    {
+        "date_cell": (51, 24),
+        "title_cell": (52, 10),
+        "complaints_cell": (53, 10),
+        "anamnesis_cell": (54, 13),
+        "objective_cell": (56, 1),
+        "diagnosis_cell": (59, 1),
+        "doctor_cell": (64, 11),
+    },
+    {
+        "date_cell": (51, 55),
+        "title_cell": (52, 41),
+        "complaints_cell": (53, 41),
+        "anamnesis_cell": (54, 44),
+        "objective_cell": (56, 32),
+        "diagnosis_cell": (59, 32),
+        "doctor_cell": (64, 42),
+    },
+    {
+        "date_cell": (66, 24),
+        "title_cell": (67, 10),
+        "complaints_cell": (68, 10),
+        "anamnesis_cell": (69, 13),
+        "objective_cell": (71, 1),
+        "diagnosis_cell": (74, 1),
+        "doctor_cell": (79, 11),
+    },
+    {
+        "date_cell": (66, 55),
+        "title_cell": (67, 41),
+        "complaints_cell": (68, 41),
+        "anamnesis_cell": (69, 44),
+        "objective_cell": (71, 32),
+        "diagnosis_cell": (74, 32),
+        "doctor_cell": (79, 42),
+    },
+    {
+        "date_cell": (81, 24),
+        "title_cell": (82, 10),
+        "complaints_cell": (83, 10),
+        "anamnesis_cell": (84, 13),
+        "objective_cell": (86, 1),
+        "diagnosis_cell": (89, 1),
+        "doctor_cell": (94, 11),
+    },
+    {
+        "date_cell": (81, 55),
+        "title_cell": (82, 41),
+        "complaints_cell": (83, 41),
+        "anamnesis_cell": (84, 44),
+        "objective_cell": (86, 32),
+        "diagnosis_cell": (89, 32),
+        "doctor_cell": (94, 42),
+    },
+    {
+        "date_cell": (96, 24),
+        "title_cell": (97, 10),
+        "complaints_cell": (98, 10),
+        "anamnesis_cell": (99, 13),
+        "objective_cell": (101, 1),
+        "diagnosis_cell": (104, 1),
+        "doctor_cell": (109, 11),
+    },
+    {
+        "date_cell": (96, 55),
+        "title_cell": (97, 41),
+        "complaints_cell": (98, 41),
+        "anamnesis_cell": (99, 44),
+        "objective_cell": (101, 32),
+        "diagnosis_cell": (104, 32),
+        "doctor_cell": (109, 42),
+    },
+)
 
 
 def _is_contract_template(template: DocumentTemplate) -> bool:
@@ -513,6 +605,25 @@ def _prof_extract_doctor_row_values(
             )
         )
     return rows
+
+
+def _prof_amb_exam_block_values(
+    exams_by_role: dict[str, DoctorExam],
+    encounter: Encounter | None,
+) -> list[tuple[str, dict[str, object]]]:
+    blocks: list[tuple[str, dict[str, object]]] = []
+    for role_id, specialty, _ in PROF_EXTRACT_DOCTOR_ROWS:
+        exam = exams_by_role.get(role_id)
+        if exam is None or not exam.is_completed:
+            continue
+
+        data = _build_exam_export(exam)
+        if not data.get("date"):
+            data["date"] = _prof_extract_exam_date(exam, encounter)
+        if not str(data.get("title") or "").strip():
+            data["title"] = f"Врач {specialty.lower()}"
+        blocks.append((role_id, data))
+    return blocks
 
 
 def _is_rural_address(*parts: str) -> bool:
@@ -1493,80 +1604,19 @@ def _generate_prof_amb_xls(
         ],
     )
 
-    psychiatrist_data = _build_exam_export(exams_by_role.get("psychiatrist"))
-
-    _fill_exam_block(
-        target_sheet,
-        source_sheet,
-        _build_exam_export(exams_by_role.get("therapist")),
-        date_cell=(51, 24),
-        title_cell=(52, 10),
-        complaints_cell=(53, 10),
-        anamnesis_cell=(54, 13),
-        objective_cell=(56, 1),
-        diagnosis_cell=(59, 1),
-        doctor_cell=(64, 11),
-    )
-    _fill_exam_block(
-        target_sheet,
-        source_sheet,
-        _build_exam_export(exams_by_role.get("dermatologist")),
-        date_cell=(51, 55),
-        title_cell=(52, 41),
-        complaints_cell=(53, 41),
-        anamnesis_cell=(54, 44),
-        objective_cell=(56, 32),
-        diagnosis_cell=(59, 32),
-        doctor_cell=(64, 42),
-    )
-    _fill_exam_block(
-        target_sheet,
-        source_sheet,
-        _build_exam_export(exams_by_role.get("otolaryngologist")),
-        date_cell=(66, 24),
-        title_cell=(67, 10),
-        complaints_cell=(68, 10),
-        anamnesis_cell=(69, 13),
-        objective_cell=(71, 1),
-        diagnosis_cell=(74, 1),
-        doctor_cell=(79, 11),
-    )
-    _fill_exam_block(
-        target_sheet,
-        source_sheet,
-        psychiatrist_data,
-        date_cell=(66, 55),
-        title_cell=(67, 41),
-        complaints_cell=(68, 41),
-        anamnesis_cell=(69, 44),
-        objective_cell=(71, 32),
-        diagnosis_cell=(74, 32),
-        doctor_cell=(79, 42),
-    )
-    _fill_exam_block(
-        target_sheet,
-        source_sheet,
-        _build_exam_export(exams_by_role.get("neurologist")),
-        date_cell=(81, 24),
-        title_cell=(82, 10),
-        complaints_cell=(83, 10),
-        anamnesis_cell=(84, 13),
-        objective_cell=(86, 1),
-        diagnosis_cell=(89, 1),
-        doctor_cell=(94, 11),
-    )
-    _fill_exam_block(
-        target_sheet,
-        source_sheet,
-        _build_exam_export(exams_by_role.get("gynecologist")),
-        date_cell=(96, 24),
-        title_cell=(97, 10),
-        complaints_cell=(98, 10),
-        anamnesis_cell=(99, 13),
-        objective_cell=(101, 1),
-        diagnosis_cell=(104, 1),
-        doctor_cell=(109, 11),
-    )
+    empty_exam_block = {
+        "date": "",
+        "title": "",
+        "complaints": "",
+        "anamnesis": "",
+        "objective": "",
+        "diagnosis": "",
+        "doctor": "",
+    }
+    for block in PROF_AMB_EXAM_BLOCKS:
+        _fill_exam_block(target_sheet, source_sheet, empty_exam_block, **block)
+    for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, _prof_amb_exam_block_values(exams_by_role, encounter)):
+        _fill_exam_block(target_sheet, source_sheet, exam_data, **block)
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:

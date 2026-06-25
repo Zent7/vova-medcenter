@@ -8,8 +8,10 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.document_generator import (  # noqa: E402
+    PROF_AMB_EXAM_BLOCKS,
     PROF_EXTRACT_CLEARED_DOCTOR_ROWS,
     PROF_EXTRACT_DOCTOR_ROWS,
+    _prof_amb_exam_block_values,
     _prof_extract_doctor_row_values,
 )
 
@@ -79,6 +81,28 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             ],
         )
         self.assertEqual([row[0] for row in rows], [row_index for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS])
+
+    def test_amb_blocks_include_only_completed_selected_doctors_without_gaps(self):
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        blocks = _prof_amb_exam_block_values(
+            {
+                "therapist": exam("therapist", "Казаков И.В.", completed_at=datetime(2026, 6, 23, 9, 30)),
+                "surgeon": exam("surgeon", "Конюк М.В."),
+                "dentist": exam("dentist", "Шадрикова Ю.А."),
+                "gynecologist": exam("gynecologist", "Барсуков А.Ф.", is_completed=False),
+            },
+            encounter,
+        )
+
+        self.assertEqual([role_id for role_id, _ in blocks], ["therapist", "surgeon", "dentist"])
+        self.assertEqual(blocks[0][1]["title"], "Врач терапевт")
+        self.assertEqual(blocks[0][1]["date"], date(2026, 6, 23))
+        self.assertEqual(blocks[1][1]["title"], "Врач хирург")
+        self.assertEqual(blocks[1][1]["date"], date(2026, 6, 24))
+        self.assertEqual(blocks[2][1]["doctor"], "Шадрикова Ю.А.")
+
+    def test_amb_template_has_room_for_every_prof_extract_role(self):
+        self.assertGreaterEqual(len(PROF_AMB_EXAM_BLOCKS), len(PROF_EXTRACT_DOCTOR_ROWS))
 
 
 if __name__ == "__main__":
