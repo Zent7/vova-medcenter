@@ -10243,11 +10243,6 @@ function bindContentEvents() {
               <input id="chairmanPrintBlankNumberLmk" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber("ЛМК"))}" readonly />
               <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank="ЛМК">Найти номер</button>
             </div>
-            <div class="driver-print-classic__lookup">
-              <input class="driver-print-classic__input driver-print-classic__input--series" value="29Н" readonly />
-              <input id="chairmanPrintBlankNumberProf" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber("29Н"))}" readonly />
-              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank="29Н">Найти номер</button>
-            </div>
 
             <div class="chairman-print-results__row chairman-print-results__row--top">
               <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_certificate">Печать справки</button>
@@ -10268,7 +10263,6 @@ function bindContentEvents() {
 
       const blankInputBySeries = new Map([
         ["ЛМК", document.getElementById("chairmanPrintBlankNumberLmk")],
-        ["29Н", document.getElementById("chairmanPrintBlankNumberProf")],
       ]);
 
       const findChairmanBlank = async (series, button = null) => {
@@ -10299,8 +10293,9 @@ function bindContentEvents() {
           }
           selectedPrintBlanks.set(normalizedSeries, blank);
           const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
-          if (input) input.value = blankParts.number || blankParts.fullNumber || "";
-          showToast(input?.value ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
+          const resolvedBlankNumber = blankParts.number || blankParts.fullNumber || "";
+          if (input) input.value = resolvedBlankNumber;
+          showToast(resolvedBlankNumber ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
           return blank;
         } catch (error) {
           selectedPrintBlanks.delete(normalizedSeries);
