@@ -18,6 +18,7 @@ from app.schemas.dashboard import (
     DashboardClientDoctorStatusService,
     DashboardStats,
 )
+from app.services.doctor_rules import should_include_doctor_role_for_client_sex
 
 router = APIRouter()
 
@@ -58,6 +59,9 @@ def get_client_doctor_statuses(
         latest_encounter_by_client.setdefault(client_id, (encounter_id, encounter_status))
 
     encounter_ids = [encounter_id for encounter_id, _ in latest_encounter_by_client.values()]
+    client_sex_by_id = dict(
+        db.execute(select(Client.id, Client.sex).where(Client.id.in_(unique_client_ids))).all()
+    )
     services_by_encounter: dict[int, list[DashboardClientDoctorStatusService]] = defaultdict(list)
     completed_roles_by_encounter: dict[int, list[str]] = defaultdict(list)
     blank_number_by_encounter: dict[int, str] = {}
@@ -111,6 +115,11 @@ def get_client_doctor_statuses(
             continue
 
         encounter_id, encounter_status = encounter
+        completed_doctor_role_ids = [
+            doctor_role_id
+            for doctor_role_id in completed_roles_by_encounter[encounter_id]
+            if should_include_doctor_role_for_client_sex(doctor_role_id, client_sex_by_id.get(client_id))
+        ]
         result.append(
             DashboardClientDoctorStatus(
                 client_id=client_id,
@@ -118,7 +127,7 @@ def get_client_doctor_statuses(
                 encounter_status=encounter_status,
                 blank_number=blank_number_by_encounter.get(encounter_id),
                 services=services_by_encounter[encounter_id],
-                completed_doctor_role_ids=completed_roles_by_encounter[encounter_id],
+                completed_doctor_role_ids=completed_doctor_role_ids,
             )
         )
     return result
