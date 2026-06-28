@@ -2039,6 +2039,16 @@ def _medical_record_context_overrides(medical_record: MedicalRecord | None) -> d
     return overrides
 
 
+def _apply_context_overrides(context: dict[str, str], overrides: dict[str, object] | None) -> None:
+    context.update(
+        {
+            key: str(value).strip()
+            for key, value in (overrides or {}).items()
+            if value is not None
+        }
+    )
+
+
 def _load_encounter_document_values(db: Session, client: Client, encounter: Encounter | None) -> dict[str, object]:
     if encounter is None:
         fallback_services = client.legacy_payload_json.get("services", []) if isinstance(client.legacy_payload_json, dict) else []
@@ -2417,13 +2427,7 @@ def generate_document(
             diagnosis=runtime_values["diagnosis"],
             mkb10=runtime_values["mkb10"],
         )
-        context.update(
-            {
-                key: str(value).strip()
-                for key, value in (runtime_values.get("context_overrides") or {}).items()
-                if value not in (None, "")
-            }
-        )
+        _apply_context_overrides(context, runtime_values.get("context_overrides"))
         document_exams = list(runtime_values.get("exams", []))
         context.update(_driver_document_context_overrides(client, document_exams))
         context.update(

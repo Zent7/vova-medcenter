@@ -17,6 +17,7 @@ from app.services.document_generator import (  # noqa: E402
     PROF_EXTRACT_DOCTOR_COL,
     PROF_EXTRACT_DOCTOR_ROWS,
     PROF_EXTRACT_SEQUENCE_COL,
+    _apply_context_overrides,
     _generate_prof_amb_xls,
     _medical_record_context_overrides,
     _prof_amb_exam_block_values,
@@ -227,6 +228,15 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(overrides["BloodType"], "2")
         self.assertEqual(overrides["qdfMain.BloodType"], "2")
         self.assertEqual(overrides["gdfMain.BloodType"], "2")
+
+    def test_context_overrides_keep_empty_strings_to_clear_tokens(self):
+        context = {"qdfMain.BloodType": "[qdfMain.BloodType]", "Keep": "old"}
+
+        _apply_context_overrides(context, {"qdfMain.BloodType": "", "Skip": None})
+
+        self.assertEqual(context["qdfMain.BloodType"], "")
+        self.assertEqual(context["Keep"], "old")
+        self.assertNotIn("Skip", context)
 
     def test_amb_template_has_room_for_every_prof_extract_role(self):
         self.assertGreaterEqual(len(PROF_AMB_EXAM_BLOCKS), len(PROF_EXTRACT_DOCTOR_ROWS))
