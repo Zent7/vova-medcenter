@@ -398,6 +398,32 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         pz2_doctor_xf = book.xf_list[pz2_sheet.cell_xf_index(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL)]
         self.assertEqual(pz2_doctor_xf.alignment.shrink_to_fit, 1)
 
+    def test_ambulatory_extract_print_variant_keeps_only_pz2_sheet(self):
+        output_path = Path(tempfile.gettempdir()) / "prof_extract_print_variant_test.xls"
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        exams = [
+            exam("therapist", "Казаков И.В.", completed_at=datetime(2026, 6, 24, 9, 30)),
+        ]
+
+        _generate_prof_amb_xls(
+            self._prof_template_path(),
+            output_path,
+            self._context(),
+            self._client(),
+            encounter,
+            exams,
+            print_variant="ambulatory_extract",
+        )
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["ПЗ2"])
+        pz2_sheet = book.sheet_by_index(0)
+        self.assertEqual(pz2_sheet.cell_value(PROF_EXTRACT_DOCTOR_ROWS[0][2], PROF_EXTRACT_SEQUENCE_COL), 1.0)
+        self.assertEqual(
+            pz2_sheet.cell_value(PROF_EXTRACT_DOCTOR_ROWS[0][2], PROF_EXTRACT_DOCTOR_COL),
+            "Терапевт Казаков И.В.",
+        )
+
     def test_generated_amb_sheet_hides_unused_blocks_and_compacts_pz2_rows(self):
         output_path = Path(tempfile.gettempdir()) / "prof_extract_doctor_rows_compact_test.xls"
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))

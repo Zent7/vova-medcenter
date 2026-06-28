@@ -7577,7 +7577,12 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
 }
 
 async function printDocumentForVisit(type, client, visit, options = {}) {
-  const documentItem = await createDocumentForVisit(type, client, visit, { ...options, print: true });
+  const normalizedType = String(type || "").toLowerCase();
+  const printOptions = { ...options };
+  if (normalizedType === "ambulatory_extract" && !printOptions.printVariant) {
+    printOptions.printVariant = "ambulatory_extract";
+  }
+  const documentItem = await createDocumentForVisit(type, client, visit, { ...printOptions, print: true });
   await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
   return documentItem;
 }

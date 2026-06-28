@@ -1878,6 +1878,9 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
         "driver_back": DRIVER_XLS_BACK_SHEET_NAMES,
         "tractor_front": ("Тракторная Лицевая",),
         "tractor_back": ("Тракторная оборотная",),
+        "ambulatory_extract": ("ПЗ2",),
+        "prof_ambulatory_extract": ("ПЗ2",),
+        "prof_ambulatory": ("Амб !",),
     }
     target_sheet_names = sheets_by_variant.get(variant)
     if not target_sheet_names:
