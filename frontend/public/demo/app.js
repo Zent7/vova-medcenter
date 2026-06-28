@@ -1944,9 +1944,6 @@ function buildDoctorMark(roleCode, requiredDoctors, completedDoctors) {
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
-  if (requiredCount <= 0) {
-    return { value: "", title: "", state: "empty" };
-  }
   if (completedDoctors.has(roleCode)) {
     return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
   }
