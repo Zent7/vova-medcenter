@@ -490,14 +490,25 @@ def _write_xls_cell(target_sheet, source_sheet, row_index: int, col_index: int, 
         return
 
 
-def _xls_shrink_to_fit_style(source_book, source_sheet, row_index: int, col_index: int):
+def _xls_cell_style(
+    source_book,
+    source_sheet,
+    row_index: int,
+    col_index: int,
+    *,
+    shrink_to_fit: bool | None = None,
+    num_format_str: str | None = None,
+):
     xf = source_book.xf_list[source_sheet.cell_xf_index(row_index, col_index)]
     style = xlwt.XFStyle()
 
-    try:
-        style.num_format_str = source_book.format_map[xf.format_key].format_str
-    except KeyError:
-        pass
+    if num_format_str is not None:
+        style.num_format_str = num_format_str
+    else:
+        try:
+            style.num_format_str = source_book.format_map[xf.format_key].format_str
+        except KeyError:
+            pass
 
     source_font = source_book.font_list[xf.font_index]
     font = xlwt.Font()
@@ -523,7 +534,8 @@ def _xls_shrink_to_fit_style(source_book, source_sheet, row_index: int, col_inde
     alignment.dire = source_alignment.text_direction
     alignment.rota = source_alignment.rotation
     alignment.wrap = source_alignment.text_wrapped
-    alignment.shri = xlwt.Alignment.SHRINK_TO_FIT
+    should_shrink = source_alignment.shrink_to_fit if shrink_to_fit is None else shrink_to_fit
+    alignment.shri = xlwt.Alignment.SHRINK_TO_FIT if should_shrink else 0
     alignment.inde = source_alignment.indent_level
     style.alignment = alignment
 
@@ -559,6 +571,10 @@ def _xls_shrink_to_fit_style(source_book, source_sheet, row_index: int, col_inde
     return style
 
 
+def _xls_shrink_to_fit_style(source_book, source_sheet, row_index: int, col_index: int):
+    return _xls_cell_style(source_book, source_sheet, row_index, col_index, shrink_to_fit=True)
+
+
 def _copy_xls_target_cell_style(target_sheet, target_row: int, target_col: int, source_row: int, source_col: int) -> None:
     target_row_obj = target_sheet._Worksheet__rows.get(target_row)
     if target_row_obj is None:
@@ -590,6 +606,16 @@ def _xls_excel_date(value: date | datetime | str | None) -> float | str:
     if value < date(1900, 3, 1):
         return value.strftime("%d.%m.%y")
     return xldate.xldate_from_date_tuple((value.year, value.month, value.day), 0)
+
+
+def _prof_xls_display_date(value: date | datetime | str | None) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%y")
+    return str(value)
 
 
 def _exam_field(fields: dict, *keys: str) -> str:
@@ -757,6 +783,12 @@ def _clear_xls_cells(target_sheet, source_sheet, coordinates: list[tuple[int, in
         _write_xls_cell(target_sheet, source_sheet, row_index, col_index, "")
 
 
+def _prof_amb_doctor_name_range(doctor_cell: tuple[int, int]) -> tuple[int, int, int]:
+    row_index, col_index = doctor_cell
+    end_col = 62 if col_index >= 32 else 31
+    return row_index, col_index, end_col
+
+
 def _fill_exam_block(
     target_sheet,
     source_sheet,
@@ -771,18 +803,34 @@ def _fill_exam_block(
     diagnosis_cell: tuple[int, int],
     doctor_cell: tuple[int, int],
 ) -> None:
-    _write_xls_cell(target_sheet, source_sheet, *date_cell, _xls_excel_date(data.get("date")))
+    date_style = (
+        _xls_cell_style(source_book, source_sheet, *date_cell, shrink_to_fit=False, num_format_str="@")
+        if source_book is not None
+        else None
+    )
+    _write_xls_cell(target_sheet, source_sheet, *date_cell, _prof_xls_display_date(data.get("date")), date_style)
     _write_xls_cell(target_sheet, source_sheet, *title_cell, str(data.get("title") or ""))
     _write_xls_cell(target_sheet, source_sheet, *complaints_cell, str(data.get("complaints") or ""))
     _write_xls_cell(target_sheet, source_sheet, *anamnesis_cell, str(data.get("anamnesis") or ""))
     _write_xls_cell(target_sheet, source_sheet, *objective_cell, str(data.get("objective") or ""))
     _write_xls_cell(target_sheet, source_sheet, *diagnosis_cell, str(data.get("diagnosis") or ""))
+    doctor_value = str(data.get("doctor") or "").strip()
+    doctor_row, doctor_start_col, doctor_end_col = _prof_amb_doctor_name_range(doctor_cell)
     doctor_style = (
-        _xls_shrink_to_fit_style(source_book, source_sheet, *doctor_cell)
+        _xls_cell_style(source_book, source_sheet, *doctor_cell, shrink_to_fit=False)
         if source_book is not None
         else None
     )
-    _write_xls_cell(target_sheet, source_sheet, *doctor_cell, str(data.get("doctor") or ""), doctor_style)
+    if doctor_value and source_book is not None and doctor_end_col > doctor_start_col:
+        target_sheet.write_merge(doctor_row, doctor_row, doctor_start_col, doctor_end_col, doctor_value, doctor_style)
+    elif doctor_value:
+        _write_xls_cell(target_sheet, source_sheet, *doctor_cell, doctor_value, doctor_style)
+    else:
+        _clear_xls_cells(
+            target_sheet,
+            source_sheet,
+            [(doctor_row, col_index) for col_index in range(doctor_start_col, doctor_end_col + 1)],
+        )
 
 
 def _clear_prof_amb_exam_block(target_sheet, source_sheet, block: dict[str, tuple[int, int]]) -> None:
@@ -792,6 +840,8 @@ def _clear_prof_amb_exam_block(target_sheet, source_sheet, block: dict[str, tupl
     label_col = max(0, title_cell[1] - 9)
     end_col = min(source_sheet.ncols, label_col + 31)
     coordinates: set[tuple[int, int]] = set(block.values())
+    doctor_row, doctor_start_col, doctor_end_col = _prof_amb_doctor_name_range(doctor_cell)
+    coordinates.update((doctor_row, col_index) for col_index in range(doctor_start_col, doctor_end_col + 1))
     for row_index in range(date_cell[0], doctor_cell[0] + 1):
         for col_index in range(label_col, end_col):
             if source_sheet.cell_value(row_index, col_index) not in ("", None):
@@ -1642,7 +1692,7 @@ def _fill_prof_extract_doctor_rows(
         pairs.extend(
             [
                 ((row_index, PROF_EXTRACT_SEQUENCE_COL), sequence_number),
-                ((row_index, PROF_EXTRACT_DATE_COL), _xls_excel_date(completed_date)),
+                ((row_index, PROF_EXTRACT_DATE_COL), _prof_xls_display_date(completed_date)),
                 ((row_index, PROF_EXTRACT_CONCLUSION_COL), conclusion),
             ]
         )

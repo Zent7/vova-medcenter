@@ -8670,10 +8670,11 @@ function renderDocumentsPage() {
 }
 
 async function openDemoDocument(typeOrId, options = {}) {
-  const { autoOpenFile = false } = options;
-  const existingDocument =
-    data.documents?.find((documentItem) => String(documentItem.id) === String(typeOrId)) ||
-    data.generatedDocuments?.find((documentItem) => String(documentItem.id) === String(typeOrId));
+  const { autoOpenFile = false, forceGenerate = false } = options;
+  const existingDocument = forceGenerate
+    ? null
+    : data.documents?.find((documentItem) => String(documentItem.id) === String(typeOrId)) ||
+      data.generatedDocuments?.find((documentItem) => String(documentItem.id) === String(typeOrId));
   let documentItem = existingDocument;
 
   try {
@@ -9957,7 +9958,7 @@ function bindContentEvents() {
         openDriverPrintFlow();
         return;
       }
-      openDemoDocument(documentType);
+      openDemoDocument(documentType, { forceGenerate: true });
     });
   });
 

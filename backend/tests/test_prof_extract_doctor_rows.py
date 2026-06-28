@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.services.document_generator import (  # noqa: E402
     PROF_AMB_EXAM_BLOCKS,
     PROF_EXTRACT_CLEARED_DOCTOR_ROWS,
+    PROF_EXTRACT_DATE_COL,
     PROF_EXTRACT_DOCTOR_COL,
     PROF_EXTRACT_DOCTOR_ROWS,
     PROF_EXTRACT_SEQUENCE_COL,
@@ -258,13 +259,17 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         doctor_row, doctor_col = PROF_AMB_EXAM_BLOCKS[dermatologist_index]["doctor_cell"]
         self.assertEqual(amb_sheet.cell_value(doctor_row, doctor_col), "Сит Мехдиева Н.Ш.К.")
         doctor_xf = book.xf_list[amb_sheet.cell_xf_index(doctor_row, doctor_col)]
-        self.assertEqual(doctor_xf.alignment.shrink_to_fit, 1)
+        self.assertEqual(doctor_xf.alignment.shrink_to_fit, 0)
+        self.assertIn((doctor_row, doctor_row + 1, doctor_col, 32), amb_sheet.merged_cells)
+        date_row, date_col = PROF_AMB_EXAM_BLOCKS[dermatologist_index]["date_cell"]
+        self.assertEqual(amb_sheet.cell_value(date_row, date_col), "24.06.26")
         pz2_sheet = book.sheet_by_name("ПЗ2")
         pz2_doctor_row = PROF_EXTRACT_DOCTOR_ROWS[dermatologist_index][2]
         self.assertEqual(
             pz2_sheet.cell_value(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL),
             "Дерматовенеролог Сит Мехдиева Н.Ш.К.",
         )
+        self.assertEqual(pz2_sheet.cell_value(pz2_doctor_row, PROF_EXTRACT_DATE_COL), "24.06.26")
         pz2_doctor_xf = book.xf_list[pz2_sheet.cell_xf_index(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL)]
         self.assertEqual(pz2_doctor_xf.alignment.shrink_to_fit, 1)
 
