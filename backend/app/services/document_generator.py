@@ -62,6 +62,18 @@ PROF_EXTRACT_DATE_COL = 54
 PROF_EXTRACT_CONCLUSION_COL = 63
 PROF_EXTRACT_SEQUENCE_COL = 42
 PROF_EXTRACT_CLEARED_DOCTOR_ROWS: tuple[int, ...] = ()
+PROF_EXTRACT_CLIENT_DOCTOR_FIELDS = {
+    "therapist": "doctor_therapist",
+    "psychiatrist": "doctor_psychiatrist",
+    "psychiatrist-narcologist": "doctor_psychiatrist",
+    "neurologist": "doctor_neurologist",
+    "otolaryngologist": "doctor_otolaryngologist",
+    "surgeon": "doctor_surgeon",
+    "gynecologist": "doctor_gynecologist",
+    "ophthalmologist": "doctor_ophthalmologist",
+    "dermatologist": "doctor_dermatologist",
+    "dentist": "doctor_stomatologist",
+}
 PROF_AMB_EXAM_BLOCKS: tuple[dict[str, tuple[int, int]], ...] = (
     {
         "date_cell": (1, 24),
@@ -657,9 +669,19 @@ def _prof_extract_exam_conclusion(exam: DoctorExam) -> str:
     return conclusion
 
 
+def _prof_extract_doctor_name(client: Client | None, role_id: str, exam_data: dict[str, object]) -> str:
+    client_field = PROF_EXTRACT_CLIENT_DOCTOR_FIELDS.get(role_id)
+    if client is not None and client_field:
+        client_value = str(getattr(client, client_field, "") or "").strip()
+        if client_value:
+            return client_value
+    return str(exam_data.get("doctor") or "").strip()
+
+
 def _prof_extract_doctor_row_values(
     exams_by_role: dict[str, DoctorExam],
     encounter: Encounter | None,
+    client: Client | None = None,
 ) -> list[tuple[int, str, object, str]]:
     rows: list[tuple[int, str, object, str]] = []
     row_indices = [row_index for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS]
@@ -669,7 +691,7 @@ def _prof_extract_doctor_row_values(
             continue
 
         exam_data = _build_exam_export(exam)
-        doctor_name = str(exam_data.get("doctor") or "").strip()
+        doctor_name = _prof_extract_doctor_name(client, role_id, exam_data)
         doctor_line = " ".join(part for part in [specialty, doctor_name] if part).strip()
         target_row_index = row_indices[len(rows)]
         rows.append(
@@ -686,6 +708,7 @@ def _prof_extract_doctor_row_values(
 def _prof_amb_exam_block_values(
     exams_by_role: dict[str, DoctorExam],
     encounter: Encounter | None,
+    client: Client | None = None,
 ) -> list[tuple[str, dict[str, object]]]:
     blocks: list[tuple[str, dict[str, object]]] = []
     for role_id, specialty, _ in PROF_EXTRACT_DOCTOR_ROWS:
@@ -694,6 +717,7 @@ def _prof_amb_exam_block_values(
             continue
 
         data = _build_exam_export(exam)
+        data["doctor"] = _prof_extract_doctor_name(client, role_id, data)
         if not data.get("date"):
             data["date"] = _prof_extract_exam_date(exam, encounter)
         if not str(data.get("title") or "").strip():
@@ -1597,6 +1621,7 @@ def _fill_prof_extract_doctor_rows(
     target_sheet,
     exams_by_role: dict[str, DoctorExam],
     encounter: Encounter | None,
+    client: Client | None,
 ) -> None:
     pairs: list[tuple[tuple[int, int], object]] = []
     for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS:
@@ -1608,7 +1633,7 @@ def _fill_prof_extract_doctor_rows(
                 ((row_index, PROF_EXTRACT_CONCLUSION_COL), ""),
             ]
         )
-    row_values = _prof_extract_doctor_row_values(exams_by_role, encounter)
+    row_values = _prof_extract_doctor_row_values(exams_by_role, encounter, client)
     doctor_style_by_row = {
         row_index: _xls_shrink_to_fit_style(source_book, source_sheet, row_index, PROF_EXTRACT_DOCTOR_COL)
         for row_index in {row_index for row_index, _, _, _ in row_values}
@@ -1727,7 +1752,7 @@ def _generate_prof_amb_xls(
     }
     for block in PROF_AMB_EXAM_BLOCKS:
         _fill_exam_block(target_sheet, source_sheet, empty_exam_block, source_book=source_book, **block)
-    exam_block_values = _prof_amb_exam_block_values(exams_by_role, encounter)
+    exam_block_values = _prof_amb_exam_block_values(exams_by_role, encounter, client)
     for block in PROF_AMB_EXAM_BLOCKS[len(exam_block_values) :]:
         _clear_prof_amb_exam_block(target_sheet, source_sheet, block)
     for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, exam_block_values):
@@ -1735,7 +1760,7 @@ def _generate_prof_amb_xls(
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
-        _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter)
+        _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
 
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)

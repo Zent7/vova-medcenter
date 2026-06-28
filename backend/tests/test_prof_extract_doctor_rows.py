@@ -144,6 +144,41 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(blocks[1][1]["date"], date(2026, 6, 24))
         self.assertEqual(blocks[2][1]["doctor"], "Шадрикова Ю.А.")
 
+    def test_client_doctor_names_override_generic_exam_doctor_names(self):
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        client = SimpleNamespace(
+            doctor_therapist="Казаков И.В.",
+            doctor_psychiatrist="Аносов И.Е.",
+            doctor_neurologist="Сибирцев В.А.",
+            doctor_otolaryngologist="Изория С.Г.",
+            doctor_surgeon="Конюк М.В.",
+            doctor_gynecologist="Барсуков А.Ф.",
+            doctor_ophthalmologist="Дадалина Т.В.",
+            doctor_dermatologist="Мехдиева Н.Ш.К.",
+            doctor_stomatologist="Шадрикова Ю.А.",
+        )
+        rows = _prof_extract_doctor_row_values(
+            {
+                "psychiatrist-narcologist": exam("psychiatrist-narcologist", "Сибирцев В.А."),
+                "neurologist": exam("neurologist", "Сибирцев В.А."),
+            },
+            encounter,
+            client,
+        )
+        blocks = _prof_amb_exam_block_values(
+            {
+                "psychiatrist-narcologist": exam("psychiatrist-narcologist", "Сибирцев В.А."),
+                "neurologist": exam("neurologist", "Сибирцев В.А."),
+            },
+            encounter,
+            client,
+        )
+
+        self.assertEqual(rows[0][1], "Психиатр-нарколог Аносов И.Е.")
+        self.assertEqual(rows[1][1], "Невролог Сибирцев В.А.")
+        self.assertEqual(blocks[0][1]["doctor"], "Аносов И.Е.")
+        self.assertEqual(blocks[1][1]["doctor"], "Сибирцев В.А.")
+
     def test_amb_template_has_room_for_every_prof_extract_role(self):
         self.assertGreaterEqual(len(PROF_AMB_EXAM_BLOCKS), len(PROF_EXTRACT_DOCTOR_ROWS))
 
