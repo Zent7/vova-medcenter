@@ -2012,10 +2012,15 @@ def _get_journal_info(template: DocumentTemplate) -> tuple[str, str] | None:
 
 
 def _medical_record_context_overrides(medical_record: MedicalRecord | None) -> dict[str, str]:
+    overrides: dict[str, str] = {
+        "HealthGroup": "",
+        "BloodType": "",
+        "qdfMain.BloodType": "",
+        "gdfMain.BloodType": "",
+    }
     if medical_record is None:
-        return {}
+        return overrides
 
-    overrides: dict[str, str] = {}
     if medical_record.marital_status:
         overrides["MaritalStatus"] = medical_record.marital_status
     if medical_record.work_place:
@@ -2030,6 +2035,7 @@ def _medical_record_context_overrides(medical_record: MedicalRecord | None) -> d
         overrides["HealthGroup"] = medical_record.health_group
         overrides["BloodType"] = medical_record.health_group
         overrides["qdfMain.BloodType"] = medical_record.health_group
+        overrides["gdfMain.BloodType"] = medical_record.health_group
     return overrides
 
 

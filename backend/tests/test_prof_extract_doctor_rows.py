@@ -18,6 +18,7 @@ from app.services.document_generator import (  # noqa: E402
     PROF_EXTRACT_DOCTOR_ROWS,
     PROF_EXTRACT_SEQUENCE_COL,
     _generate_prof_amb_xls,
+    _medical_record_context_overrides,
     _prof_amb_exam_block_values,
     _prof_extract_doctor_row_values,
     _xls_auto_marker_values,
@@ -209,6 +210,23 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertIn("Невролог Н.Н.", marker_values["невролог"])
         self.assertNotIn("Сибирцев В.А.", marker_values["психиатр"])
         self.assertNotIn("Сибирцев В.А.", marker_values["психиатр нарколог"])
+
+    def test_medical_record_overrides_always_clear_blood_type_tokens(self):
+        self.assertEqual(
+            _medical_record_context_overrides(None),
+            {
+                "HealthGroup": "",
+                "BloodType": "",
+                "qdfMain.BloodType": "",
+                "gdfMain.BloodType": "",
+            },
+        )
+
+        overrides = _medical_record_context_overrides(SimpleNamespace(health_group="2", marital_status="", work_place="", position=""))
+
+        self.assertEqual(overrides["BloodType"], "2")
+        self.assertEqual(overrides["qdfMain.BloodType"], "2")
+        self.assertEqual(overrides["gdfMain.BloodType"], "2")
 
     def test_amb_template_has_room_for_every_prof_extract_role(self):
         self.assertGreaterEqual(len(PROF_AMB_EXAM_BLOCKS), len(PROF_EXTRACT_DOCTOR_ROWS))
