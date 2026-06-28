@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import sys
 import tempfile
 import unittest
+import re
+import zipfile
 
 import xlrd
 
@@ -18,8 +20,10 @@ from app.services.document_generator import (  # noqa: E402
     PROF_EXTRACT_DOCTOR_ROWS,
     PROF_EXTRACT_SEQUENCE_COL,
     _apply_context_overrides,
+    _generate_docx,
     _generate_prof_amb_xls,
     _medical_record_context_overrides,
+    _prof_29n_doctor_context_overrides,
     _prof_amb_exam_block_values,
     _prof_extract_doctor_row_values,
     _xls_auto_marker_values,
@@ -237,6 +241,69 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(context["qdfMain.BloodType"], "")
         self.assertEqual(context["Keep"], "old")
         self.assertNotIn("Skip", context)
+
+    def test_prof_29n_docx_replaces_hardcoded_static_doctor_names(self):
+        template_path = next(
+            path
+            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.docx")
+            if "29" in path.name
+        )
+        output_path = Path(tempfile.gettempdir()) / "prof_29n_static_doctors_test.docx"
+        context = {
+            "ReferenceNumber": "123",
+            "ClientCalc": "Тест Тест",
+            "SexCalc": "муж",
+            "BirthDateCalc": "01.01.00",
+            "CompanyName": "Тест",
+            "Harmfulness": "не указано",
+            "VisitDate": "28.06.26",
+            "qdfMain.Post": "Врач-косметолог",
+            "qdfMain.BloodType": "",
+            "Prof29ChairmanDoctor": "Казаков И.В.",
+            "Prof29PathologistDoctor": "Казаков И.В.",
+            "Prof29PsychiatristNarcologistDoctor": "Аносов И.Е.",
+            "Prof29PsychiatristDoctor": "Аносов И.Е.",
+        }
+
+        _generate_docx(template_path, output_path, context)
+
+        with zipfile.ZipFile(output_path) as docx:
+            text = ""
+            for name in docx.namelist():
+                if name.startswith("word/") and name.endswith(".xml"):
+                    text += re.sub(r"<[^>]+>", "", docx.read(name).decode("utf-8", "ignore"))
+
+        self.assertNotIn("Сибирцев", text)
+        self.assertIn("Казаков И.В.", text)
+        self.assertGreaterEqual(text.count("Аносов И.Е."), 2)
+        self.assertNotIn("[qdfMain.BloodType]", text)
+
+    def test_prof_29n_doctor_context_uses_exam_role_doctors(self):
+        client = SimpleNamespace(
+            doctor_therapist="",
+            doctor_psychiatrist="",
+            doctor_neurologist="",
+            doctor_otolaryngologist="",
+            doctor_surgeon="",
+            doctor_gynecologist="",
+            doctor_ophthalmologist="",
+            doctor_dermatologist="",
+            doctor_stomatologist="",
+        )
+
+        overrides = _prof_29n_doctor_context_overrides(
+            client,
+            [
+                exam("therapist", "Казаков И.В."),
+                exam("psychiatrist", "Аносов И.Е."),
+                exam("psychiatrist-narcologist", "Аносов И.Е."),
+            ],
+        )
+
+        self.assertEqual(overrides["Prof29ChairmanDoctor"], "Казаков И.В.")
+        self.assertEqual(overrides["Prof29PathologistDoctor"], "Казаков И.В.")
+        self.assertEqual(overrides["Prof29PsychiatristDoctor"], "Аносов И.Е.")
+        self.assertEqual(overrides["Prof29PsychiatristNarcologistDoctor"], "Аносов И.Е.")
 
     def test_amb_template_has_room_for_every_prof_extract_role(self):
         self.assertGreaterEqual(len(PROF_AMB_EXAM_BLOCKS), len(PROF_EXTRACT_DOCTOR_ROWS))

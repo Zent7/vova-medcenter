@@ -6,6 +6,7 @@ import re
 import shutil
 import xml.etree.ElementTree as ET
 import zipfile
+from xml.sax.saxutils import escape as escape_xml_text
 from xml.etree.ElementTree import ParseError
 
 import xlrd
@@ -187,6 +188,32 @@ def _cleanup_contract_xml(xml_text: str) -> str:
     ]
     for pattern in cleanup_patterns:
         xml_text = re.sub(pattern, "", xml_text, flags=re.IGNORECASE)
+    return xml_text
+
+
+def _prof_29n_static_doctor_replacements(context: dict[str, str]) -> list[str]:
+    return [
+        _first_non_empty(context.get("Prof29ChairmanDoctor"), context.get("Doctor")),
+        _first_non_empty(context.get("Prof29PathologistDoctor"), context.get("Prof29ChairmanDoctor"), context.get("Doctor")),
+        context.get("Prof29PsychiatristNarcologistDoctor", ""),
+        context.get("Prof29PsychiatristDoctor", ""),
+    ]
+
+
+def _replace_prof_29n_static_doctor_names(xml_text: str, context: dict[str, str]) -> str:
+    if "Председатель врачебной комиссии" not in xml_text or "Психиат" not in xml_text:
+        return xml_text
+
+    for replacement in _prof_29n_static_doctor_replacements(context):
+        replacement = str(replacement or "").strip()
+        if not replacement:
+            continue
+        xml_text = re.sub(
+            r"Сибирцев\s+В\.А",
+            escape_xml_text(replacement),
+            xml_text,
+            count=1,
+        )
     return xml_text
 
 
@@ -424,6 +451,7 @@ def _generate_docx(
                 if item.filename == "word/document.xml":
                     xml_text = file_bytes.decode("utf-8")
                     xml_text = _replace_text_tokens(xml_text, context)
+                    xml_text = _replace_prof_29n_static_doctor_names(xml_text, context)
                     if cleanup_xml:
                         xml_text = _cleanup_contract_xml(xml_text)
                     needs_tree_pass = (
@@ -2049,6 +2077,30 @@ def _apply_context_overrides(context: dict[str, str], overrides: dict[str, objec
     )
 
 
+def _prof_29n_doctor_context_overrides(client: Client, exams: list[DoctorExam]) -> dict[str, str]:
+    exams_by_role = _exam_map(exams)
+    therapist = _exam_export_with_client_doctor(exams_by_role.get("therapist"), client, "therapist")
+    chairman = _build_exam_export(exams_by_role.get("chairman"))
+    psychiatrist = _exam_export_with_client_doctor(exams_by_role.get("psychiatrist"), client, "psychiatrist")
+    psychiatrist_narcologist = _exam_export_with_client_doctor(
+        exams_by_role.get("psychiatrist-narcologist"),
+        client,
+        "psychiatrist-narcologist",
+    )
+    commission_doctor = _first_non_empty(
+        therapist.get("doctor"),
+        psychiatrist.get("doctor"),
+        psychiatrist_narcologist.get("doctor"),
+        chairman.get("doctor"),
+    )
+    return {
+        "Prof29ChairmanDoctor": commission_doctor,
+        "Prof29PathologistDoctor": commission_doctor,
+        "Prof29PsychiatristDoctor": str(psychiatrist.get("doctor") or "").strip(),
+        "Prof29PsychiatristNarcologistDoctor": str(psychiatrist_narcologist.get("doctor") or "").strip(),
+    }
+
+
 def _load_encounter_document_values(db: Session, client: Client, encounter: Encounter | None) -> dict[str, object]:
     if encounter is None:
         fallback_services = client.legacy_payload_json.get("services", []) if isinstance(client.legacy_payload_json, dict) else []
@@ -2070,6 +2122,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
             .order_by(MedicalRecord.updated_at.desc(), MedicalRecord.id.desc())
         ).scalars().first()
         context_overrides = _medical_record_context_overrides(medical_record)
+        context_overrides.update(_prof_29n_doctor_context_overrides(client, []))
         return {
             "service_names": service_names,
             "service_rows": service_rows,
@@ -2182,6 +2235,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
             if value not in (None, "")
         }
     )
+    context_overrides.update(_prof_29n_doctor_context_overrides(client, exams))
 
     return {
         "service_names": service_names,
