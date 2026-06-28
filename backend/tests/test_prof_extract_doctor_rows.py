@@ -20,6 +20,7 @@ from app.services.document_generator import (  # noqa: E402
     _generate_prof_amb_xls,
     _prof_amb_exam_block_values,
     _prof_extract_doctor_row_values,
+    _xls_auto_marker_values,
 )
 
 
@@ -179,6 +180,35 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(rows[1][1], "Невролог Сибирцев В.А.")
         self.assertEqual(blocks[0][1]["doctor"], "Аносов И.Е.")
         self.assertEqual(blocks[1][1]["doctor"], "Сибирцев В.А.")
+
+    def test_auto_marker_values_use_client_doctor_names_by_role(self):
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        client = SimpleNamespace(
+            birth_date=date(1990, 1, 2),
+            doctor_therapist="Казаков И.В.",
+            doctor_psychiatrist="Аносов И.Е.",
+            doctor_neurologist="Невролог Н.Н.",
+            doctor_otolaryngologist="ЛОР Л.Л.",
+            doctor_surgeon="Хирург Х.Х.",
+            doctor_gynecologist="Гинеколог Г.Г.",
+            doctor_ophthalmologist="Офтальмолог О.О.",
+            doctor_dermatologist="Дерматолог Д.Д.",
+            doctor_stomatologist="Стоматолог С.С.",
+        )
+        exams_by_role = {
+            "psychiatrist": exam("psychiatrist", "Сибирцев В.А."),
+            "psychiatrist-narcologist": exam("psychiatrist-narcologist", "Сибирцев В.А."),
+            "neurologist": exam("neurologist", "Сибирцев В.А."),
+        }
+
+        values = _xls_auto_marker_values(self._context(), client, encounter, exams_by_role)
+        marker_values = {aliases[0]: value for aliases, value in values}
+
+        self.assertIn("Аносов И.Е.", marker_values["психиатр"])
+        self.assertIn("Аносов И.Е.", marker_values["психиатр нарколог"])
+        self.assertIn("Невролог Н.Н.", marker_values["невролог"])
+        self.assertNotIn("Сибирцев В.А.", marker_values["психиатр"])
+        self.assertNotIn("Сибирцев В.А.", marker_values["психиатр нарколог"])
 
     def test_amb_template_has_room_for_every_prof_extract_role(self):
         self.assertGreaterEqual(len(PROF_AMB_EXAM_BLOCKS), len(PROF_EXTRACT_DOCTOR_ROWS))

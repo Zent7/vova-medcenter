@@ -704,6 +704,28 @@ def _prof_extract_doctor_name(client: Client | None, role_id: str, exam_data: di
     return str(exam_data.get("doctor") or "").strip()
 
 
+def _exam_export_with_client_doctor(
+    exam: DoctorExam | None,
+    client: Client | None,
+    role_id: str,
+) -> dict[str, object]:
+    data = _build_exam_export(exam)
+    data["doctor"] = _prof_extract_doctor_name(client, role_id, data)
+    return data
+
+
+def _exam_conclusion_line_for_role(
+    exam: DoctorExam | None,
+    client: Client | None,
+    role_id: str,
+    fallback: str = "Противопоказания отсутствуют",
+) -> str:
+    data = _exam_export_with_client_doctor(exam, client, role_id)
+    doctor = str(data.get("doctor") or "").strip()
+    conclusion = _first_non_empty(data.get("diagnosis"), data.get("objective"), data.get("title"), fallback)
+    return " ".join(part for part in [doctor, conclusion] if part).strip()
+
+
 def _prof_extract_doctor_row_values(
     exams_by_role: dict[str, DoctorExam],
     encounter: Encounter | None,
@@ -900,17 +922,18 @@ def _xls_auto_marker_values(
     exams_by_role: dict[str, DoctorExam],
 ) -> list[tuple[tuple[str, ...], object]]:
     issue_date = encounter.encounter_date if encounter else date.today()
-    therapist = _build_exam_export(exams_by_role.get("therapist"))
+    therapist = _exam_export_with_client_doctor(exams_by_role.get("therapist"), client, "therapist")
     chairman = _build_exam_export(exams_by_role.get("chairman"))
     return [
-        (("терапевт",), _exam_conclusion_line(exams_by_role.get("therapist"))),
-        (("офтальмолог", "окулист"), _exam_conclusion_line(exams_by_role.get("ophthalmologist"))),
-        (("невролог",), _exam_conclusion_line(exams_by_role.get("neurologist"))),
-        (("лор", "отоларинголог"), _exam_conclusion_line(exams_by_role.get("otolaryngologist"))),
-        (("хирург",), _exam_conclusion_line(exams_by_role.get("surgeon"))),
-        (("психиатр",), _exam_conclusion_line(exams_by_role.get("psychiatrist"))),
-        (("дермат",), _exam_conclusion_line(exams_by_role.get("dermatologist"))),
-        (("гинеколог",), _exam_conclusion_line(exams_by_role.get("gynecologist"))),
+        (("терапевт",), _exam_conclusion_line_for_role(exams_by_role.get("therapist"), client, "therapist")),
+        (("офтальмолог", "окулист"), _exam_conclusion_line_for_role(exams_by_role.get("ophthalmologist"), client, "ophthalmologist")),
+        (("невролог",), _exam_conclusion_line_for_role(exams_by_role.get("neurologist"), client, "neurologist")),
+        (("лор", "отоларинголог"), _exam_conclusion_line_for_role(exams_by_role.get("otolaryngologist"), client, "otolaryngologist")),
+        (("хирург",), _exam_conclusion_line_for_role(exams_by_role.get("surgeon"), client, "surgeon")),
+        (("психиатр нарколог", "психиатр-нарколог", "нарколог"), _exam_conclusion_line_for_role(exams_by_role.get("psychiatrist-narcologist"), client, "psychiatrist-narcologist")),
+        (("психиатр",), _exam_conclusion_line_for_role(exams_by_role.get("psychiatrist"), client, "psychiatrist")),
+        (("дермат",), _exam_conclusion_line_for_role(exams_by_role.get("dermatologist"), client, "dermatologist")),
+        (("гинеколог",), _exam_conclusion_line_for_role(exams_by_role.get("gynecologist"), client, "gynecologist")),
         (("председатель", "глав врач", "главный врач", "подписант"), _first_non_empty(chairman.get("doctor"), therapist.get("doctor"), context.get("Doctor"))),
         (("врач",), _first_non_empty(therapist.get("doctor"), context.get("Doctor"))),
         (("фио", "пациент"), context.get("ClientCalc", "")),
@@ -1633,10 +1656,10 @@ def _fill_amb_opo_xls_sheet(
             ((26, 56), context.get("DocumentSeries", "")),
             ((26, 59), context.get("DocumentNumber", "")),
             ((38, 44), work_place),
-            ((72, 11), _build_exam_export(exams_by_role.get("therapist")).get("doctor", "")),
-            ((72, 42), _build_exam_export(exams_by_role.get("psychiatrist")).get("doctor", "")),
-            ((94, 11), _build_exam_export(exams_by_role.get("neurologist")).get("doctor", "")),
-            ((94, 42), _build_exam_export(exams_by_role.get("otolaryngologist")).get("doctor", "")),
+            ((72, 11), _exam_export_with_client_doctor(exams_by_role.get("therapist"), client, "therapist").get("doctor", "")),
+            ((72, 42), _exam_export_with_client_doctor(exams_by_role.get("psychiatrist"), client, "psychiatrist").get("doctor", "")),
+            ((94, 11), _exam_export_with_client_doctor(exams_by_role.get("neurologist"), client, "neurologist").get("doctor", "")),
+            ((94, 42), _exam_export_with_client_doctor(exams_by_role.get("otolaryngologist"), client, "otolaryngologist").get("doctor", "")),
         ],
     )
 
