@@ -8,8 +8,6 @@ from app.schemas.service import ServiceRead, ServiceUpdate
 
 router = APIRouter()
 
-EXCLUDED_DOCTOR_ROLE_IDS = {3}
-
 OPERATOR_SERVICE_PRIORITY = (
     8,   # Медицинская комиссия
     29,  # Медицинская комиссия, базовые категории
@@ -54,8 +52,6 @@ def list_services(db: Session = Depends(get_db)) -> list[ServiceRead]:
     ).all() if service_ids else []
     roles_by_service: dict[int, list[int]] = {}
     for service_id, doctor_role_id in role_rows:
-        if doctor_role_id in EXCLUDED_DOCTOR_ROLE_IDS:
-            continue
         roles_by_service.setdefault(service_id, []).append(doctor_role_id)
 
     result = []
@@ -79,7 +75,6 @@ def update_service(service_id: int, payload: ServiceUpdate, db: Session = Depend
         setattr(service, field, value)
 
     if doctor_role_ids is not None:
-        doctor_role_ids = [role_id for role_id in doctor_role_ids if role_id not in EXCLUDED_DOCTOR_ROLE_IDS]
         db.execute(ServiceDoctorRole.__table__.delete().where(ServiceDoctorRole.service_id == service.id))
         for doctor_role_id in doctor_role_ids:
             db.add(ServiceDoctorRole(service_id=service.id, doctor_role_id=doctor_role_id))
@@ -93,6 +88,5 @@ def update_service(service_id: int, payload: ServiceUpdate, db: Session = Depend
         for row in db.execute(
             select(ServiceDoctorRole.doctor_role_id).where(ServiceDoctorRole.service_id == service.id)
         ).all()
-        if row[0] not in EXCLUDED_DOCTOR_ROLE_IDS
     ]
     return result

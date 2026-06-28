@@ -13,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.services.document_generator import (  # noqa: E402
     PROF_AMB_EXAM_BLOCKS,
     PROF_EXTRACT_CLEARED_DOCTOR_ROWS,
+    PROF_EXTRACT_DOCTOR_COL,
     PROF_EXTRACT_DOCTOR_ROWS,
+    PROF_EXTRACT_SEQUENCE_COL,
     _generate_prof_amb_xls,
     _prof_amb_exam_block_values,
     _prof_extract_doctor_row_values,
@@ -33,6 +35,44 @@ def exam(role_id, doctor_name, *, is_completed=True, completed_at=None, conclusi
 
 
 class ProfExtractDoctorRowsTests(unittest.TestCase):
+    def _prof_template_path(self) -> Path:
+        return next(
+            path
+            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
+            if path.name.startswith("Выписка")
+        )
+
+    def _client(self):
+        return SimpleNamespace(
+            birth_date=date(1990, 1, 2),
+            document_type="Паспорт РФ",
+            admission_category="",
+            legacy_payload_json={},
+        )
+
+    def _context(self) -> dict[str, str]:
+        return {
+            "ReferenceNumber": "123",
+            "ClientCalc": "Тестов Тест Тестович",
+            "SexCalc": "мужской",
+            "SubjectCalc": "Санкт-Петербург",
+            "DistrictCalc": "",
+            "CityCalc": "Санкт-Петербург",
+            "StreetCalc": "Невский 1",
+            "AddressCalc": "Санкт-Петербург, Невский 1",
+            "Phone": "",
+            "SNILS": "",
+            "DocumentSeries": "1234",
+            "DocumentNumber": "567890",
+            "CompanyName": "ООО Тест",
+            "Post": "Пекарь",
+            "Conclusion": "Годен",
+            "BirthDateCalc_DAY": "02",
+            "BirthDateCalc_DATEMONTH": "января",
+            "BirthDateCalc_YEAR": "1990",
+            "VisitDate_DATEMONTH": "июня",
+        }
+
     def test_completed_therapist_fills_therapist_row(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         rows = _prof_extract_doctor_row_values(
@@ -42,18 +82,16 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
 
         self.assertEqual(rows[0], (32, "Терапевт Казаков И.В.", date(2026, 6, 23), "годен"))
 
-    def test_uncompleted_or_missing_roles_are_empty(self):
+    def test_uncompleted_or_missing_roles_are_skipped(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         rows = _prof_extract_doctor_row_values(
             {"therapist": exam("therapist", "Казаков И.В.", is_completed=False)},
             encounter,
         )
 
-        self.assertEqual(rows[0], (32, "", "", ""))
-        gynecologist_row = rows[[role for role, _, _ in PROF_EXTRACT_DOCTOR_ROWS].index("gynecologist")]
-        self.assertEqual(gynecologist_row, (45, "", "", ""))
+        self.assertEqual(rows, [])
 
-    def test_psychiatrist_narcologist_is_not_exported(self):
+    def test_psychiatrist_narcologist_is_exported_as_separate_row(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         rows = _prof_extract_doctor_row_values(
             {
@@ -63,9 +101,9 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             encounter,
         )
 
-        self.assertEqual(rows[1], (34, "Психиатр Аносов И.Е.", date(2026, 6, 24), "годен"))
-        self.assertNotIn(37, [row[0] for row in rows])
-        self.assertEqual(PROF_EXTRACT_CLEARED_DOCTOR_ROWS, (37,))
+        self.assertEqual(rows[0], (32, "Психиатр Аносов И.Е.", date(2026, 6, 24), "годен"))
+        self.assertEqual(rows[1], (34, "Психиатр-нарколог Аносов И.Е.", date(2026, 6, 24), "годен"))
+        self.assertEqual(PROF_EXTRACT_CLEARED_DOCTOR_ROWS, ())
 
     def test_rows_keep_template_order(self):
         rows = _prof_extract_doctor_row_values({}, None)
@@ -75,6 +113,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             [
                 ("therapist", 32),
                 ("psychiatrist", 34),
+                ("psychiatrist-narcologist", 37),
                 ("neurologist", 39),
                 ("otolaryngologist", 41),
                 ("surgeon", 43),
@@ -84,7 +123,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
                 ("dentist", 52),
             ],
         )
-        self.assertEqual([row[0] for row in rows], [row_index for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS])
+        self.assertEqual(rows, [])
 
     def test_amb_blocks_include_only_completed_selected_doctors_without_gaps(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
@@ -118,12 +157,13 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         roles = [
             ("therapist", "Казаков И.В."),
             ("psychiatrist", "Аносов И.Е."),
+            ("psychiatrist-narcologist", "Аносов И.Е."),
             ("neurologist", "Сибирцев В.А."),
             ("otolaryngologist", "Изория С.Г."),
             ("surgeon", "Конюк М.В."),
             ("gynecologist", "Барсуков А.Ф."),
             ("ophthalmologist", "Дадалина Т.В."),
-            ("dermatologist", "Мехдиева Н.Ш.К."),
+            ("dermatologist", "Сит Мехдиева Н.Ш.К."),
             ("dentist", "Шадрикова Ю.А."),
         ]
         exams = [
@@ -169,6 +209,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             [
                 "Врач терапевт",
                 "Врач психиатр",
+                "Врач психиатр-нарколог",
                 "Врач невролог",
                 "Врач отоларинголог",
                 "Врач хирург",
@@ -178,6 +219,57 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
                 "Врач стоматолог",
             ],
         )
+        dermatologist_index = [role_id for role_id, _ in roles].index("dermatologist")
+        doctor_row, doctor_col = PROF_AMB_EXAM_BLOCKS[dermatologist_index]["doctor_cell"]
+        self.assertEqual(amb_sheet.cell_value(doctor_row, doctor_col), "Сит Мехдиева Н.Ш.К.")
+        doctor_xf = book.xf_list[amb_sheet.cell_xf_index(doctor_row, doctor_col)]
+        self.assertEqual(doctor_xf.alignment.shrink_to_fit, 1)
+        pz2_sheet = book.sheet_by_name("ПЗ2")
+        pz2_doctor_row = PROF_EXTRACT_DOCTOR_ROWS[dermatologist_index][2]
+        self.assertEqual(
+            pz2_sheet.cell_value(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL),
+            "Дерматовенеролог Сит Мехдиева Н.Ш.К.",
+        )
+        pz2_doctor_xf = book.xf_list[pz2_sheet.cell_xf_index(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL)]
+        self.assertEqual(pz2_doctor_xf.alignment.shrink_to_fit, 1)
+
+    def test_generated_amb_sheet_hides_unused_blocks_and_compacts_pz2_rows(self):
+        output_path = Path(tempfile.gettempdir()) / "prof_extract_doctor_rows_compact_test.xls"
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        exams = [
+            exam("therapist", "Казаков И.В.", completed_at=datetime(2026, 6, 24, 9, 30)),
+            exam("surgeon", "Конюк М.В.", completed_at=datetime(2026, 6, 24, 9, 30)),
+            exam("dentist", "Шадрикова Ю.А.", completed_at=datetime(2026, 6, 24, 9, 30)),
+            exam("gynecologist", "Барсуков А.Ф.", is_completed=False),
+        ]
+
+        _generate_prof_amb_xls(self._prof_template_path(), output_path, self._context(), self._client(), encounter, exams)
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        amb_sheet = book.sheet_by_index(1)
+        self.assertEqual(
+            [amb_sheet.cell_value(*PROF_AMB_EXAM_BLOCKS[index]["title_cell"]) for index in range(3)],
+            ["Врач терапевт", "Врач хирург", "Врач стоматолог"],
+        )
+        first_unused_block = PROF_AMB_EXAM_BLOCKS[3]
+        unused_label_col = first_unused_block["title_cell"][1] - 9
+        self.assertEqual(amb_sheet.cell_value(first_unused_block["date_cell"][0], unused_label_col), "")
+        self.assertEqual(amb_sheet.cell_value(*first_unused_block["title_cell"]), "")
+
+        pz2_sheet = book.sheet_by_name("ПЗ2")
+        expected_doctors = [
+            "Терапевт Казаков И.В.",
+            "Хирург Конюк М.В.",
+            "Стоматолог Шадрикова Ю.А.",
+        ]
+        for index, expected_doctor in enumerate(expected_doctors):
+            row_index = PROF_EXTRACT_DOCTOR_ROWS[index][2]
+            self.assertEqual(pz2_sheet.cell_value(row_index, PROF_EXTRACT_SEQUENCE_COL), float(index + 1))
+            self.assertEqual(pz2_sheet.cell_value(row_index, PROF_EXTRACT_DOCTOR_COL), expected_doctor)
+
+        first_unused_row = PROF_EXTRACT_DOCTOR_ROWS[len(expected_doctors)][2]
+        self.assertEqual(pz2_sheet.cell_value(first_unused_row, PROF_EXTRACT_SEQUENCE_COL), "")
+        self.assertEqual(pz2_sheet.cell_value(first_unused_row, PROF_EXTRACT_DOCTOR_COL), "")
 
 
 if __name__ == "__main__":

@@ -873,3 +873,17 @@
   ],
 }
 ];
+
+{
+  const psychiatristTemplate = window.doctorTemplates.find((template) => template.id === "psychiatrist");
+  const alreadyHasNarcologist = window.doctorTemplates.some((template) => template.id === "psychiatrist-narcologist");
+  if (psychiatristTemplate && !alreadyHasNarcologist) {
+    const psychiatristIndex = window.doctorTemplates.indexOf(psychiatristTemplate);
+    window.doctorTemplates.splice(psychiatristIndex + 1, 0, {
+      ...psychiatristTemplate,
+      id: "psychiatrist-narcologist",
+      name: "ПСИХИАТР-НАРКОЛОГ",
+      fields: psychiatristTemplate.fields.map((field) => ({ ...field })),
+    });
+  }
+}

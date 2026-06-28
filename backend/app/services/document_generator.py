@@ -48,6 +48,7 @@ ET.register_namespace("w", W_NS)
 PROF_EXTRACT_DOCTOR_ROWS: tuple[tuple[str, str, int], ...] = (
     ("therapist", "Терапевт", 32),
     ("psychiatrist", "Психиатр", 34),
+    ("psychiatrist-narcologist", "Психиатр-нарколог", 37),
     ("neurologist", "Невролог", 39),
     ("otolaryngologist", "Отоларинголог", 41),
     ("surgeon", "Хирург", 43),
@@ -59,7 +60,8 @@ PROF_EXTRACT_DOCTOR_ROWS: tuple[tuple[str, str, int], ...] = (
 PROF_EXTRACT_DOCTOR_COL = 44
 PROF_EXTRACT_DATE_COL = 54
 PROF_EXTRACT_CONCLUSION_COL = 63
-PROF_EXTRACT_CLEARED_DOCTOR_ROWS = (37,)
+PROF_EXTRACT_SEQUENCE_COL = 42
+PROF_EXTRACT_CLEARED_DOCTOR_ROWS: tuple[int, ...] = ()
 PROF_AMB_EXAM_BLOCKS: tuple[dict[str, tuple[int, int]], ...] = (
     {
         "date_cell": (1, 24),
@@ -446,13 +448,17 @@ def _generate_xml(template_path: Path, output_path: Path, context: dict[str, str
     output_path.write_text(xml_text, encoding="utf-8")
 
 
-def _write_xls_cell(target_sheet, source_sheet, row_index: int, col_index: int, value: object) -> None:
+def _write_xls_cell(target_sheet, source_sheet, row_index: int, col_index: int, value: object, style=None) -> None:
     existing_xf_idx = None
     existing_row = target_sheet._Worksheet__rows.get(row_index)
     if existing_row is not None:
         existing_cell = existing_row._Row__cells.get(col_index)
         if existing_cell is not None:
             existing_xf_idx = getattr(existing_cell, "xf_idx", None)
+
+    if style is not None:
+        target_sheet.write(row_index, col_index, value, style)
+        return
 
     target_sheet.write(row_index, col_index, value)
     row = target_sheet._Worksheet__rows.get(row_index)
@@ -470,6 +476,75 @@ def _write_xls_cell(target_sheet, source_sheet, row_index: int, col_index: int, 
         # Some legacy sheets have blank trailing rows without style metadata.
         # In that case we keep the written value without cloning formatting.
         return
+
+
+def _xls_shrink_to_fit_style(source_book, source_sheet, row_index: int, col_index: int):
+    xf = source_book.xf_list[source_sheet.cell_xf_index(row_index, col_index)]
+    style = xlwt.XFStyle()
+
+    try:
+        style.num_format_str = source_book.format_map[xf.format_key].format_str
+    except KeyError:
+        pass
+
+    source_font = source_book.font_list[xf.font_index]
+    font = xlwt.Font()
+    font.height = source_font.height
+    font.italic = bool(source_font.italic)
+    font.struck_out = bool(source_font.struck_out)
+    font.outline = bool(source_font.outline)
+    font.shadow = bool(source_font.shadow)
+    font.colour_index = source_font.colour_index
+    font.bold = bool(source_font.bold)
+    font._weight = source_font.weight
+    font.escapement = source_font.escapement
+    font.underline = source_font.underline_type
+    font.family = source_font.family
+    font.charset = source_font.character_set
+    font.name = source_font.name
+    style.font = font
+
+    source_alignment = xf.alignment
+    alignment = xlwt.Alignment()
+    alignment.horz = source_alignment.hor_align
+    alignment.vert = source_alignment.vert_align
+    alignment.dire = source_alignment.text_direction
+    alignment.rota = source_alignment.rotation
+    alignment.wrap = source_alignment.text_wrapped
+    alignment.shri = xlwt.Alignment.SHRINK_TO_FIT
+    alignment.inde = source_alignment.indent_level
+    style.alignment = alignment
+
+    source_border = xf.border
+    borders = xlwt.Borders()
+    borders.left = source_border.left_line_style
+    borders.right = source_border.right_line_style
+    borders.top = source_border.top_line_style
+    borders.bottom = source_border.bottom_line_style
+    borders.diag = source_border.diag_line_style
+    borders.left_colour = source_border.left_colour_index
+    borders.right_colour = source_border.right_colour_index
+    borders.top_colour = source_border.top_colour_index
+    borders.bottom_colour = source_border.bottom_colour_index
+    borders.diag_colour = source_border.diag_colour_index
+    borders.need_diag1 = source_border.diag_down
+    borders.need_diag2 = source_border.diag_up
+    style.borders = borders
+
+    source_background = xf.background
+    pattern = xlwt.Pattern()
+    pattern.pattern = source_background.fill_pattern
+    pattern.pattern_fore_colour = source_background.pattern_colour_index
+    pattern.pattern_back_colour = source_background.background_colour_index
+    style.pattern = pattern
+
+    source_protection = xf.protection
+    protection = xlwt.Protection()
+    protection.cell_locked = source_protection.cell_locked
+    protection.formula_hidden = source_protection.formula_hidden
+    style.protection = protection
+
+    return style
 
 
 def _copy_xls_target_cell_style(target_sheet, target_row: int, target_col: int, source_row: int, source_col: int) -> None:
@@ -587,18 +662,19 @@ def _prof_extract_doctor_row_values(
     encounter: Encounter | None,
 ) -> list[tuple[int, str, object, str]]:
     rows: list[tuple[int, str, object, str]] = []
+    row_indices = [row_index for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS]
     for role_id, specialty, row_index in PROF_EXTRACT_DOCTOR_ROWS:
         exam = exams_by_role.get(role_id)
         if exam is None or not exam.is_completed:
-            rows.append((row_index, "", "", ""))
             continue
 
         exam_data = _build_exam_export(exam)
         doctor_name = str(exam_data.get("doctor") or "").strip()
         doctor_line = " ".join(part for part in [specialty, doctor_name] if part).strip()
+        target_row_index = row_indices[len(rows)]
         rows.append(
             (
-                row_index,
+                target_row_index,
                 doctor_line,
                 _prof_extract_exam_date(exam, encounter),
                 _prof_extract_exam_conclusion(exam),
@@ -662,6 +738,7 @@ def _fill_exam_block(
     source_sheet,
     data: dict[str, object],
     *,
+    source_book=None,
     date_cell: tuple[int, int],
     title_cell: tuple[int, int],
     complaints_cell: tuple[int, int],
@@ -676,7 +753,26 @@ def _fill_exam_block(
     _write_xls_cell(target_sheet, source_sheet, *anamnesis_cell, str(data.get("anamnesis") or ""))
     _write_xls_cell(target_sheet, source_sheet, *objective_cell, str(data.get("objective") or ""))
     _write_xls_cell(target_sheet, source_sheet, *diagnosis_cell, str(data.get("diagnosis") or ""))
-    _write_xls_cell(target_sheet, source_sheet, *doctor_cell, str(data.get("doctor") or ""))
+    doctor_style = (
+        _xls_shrink_to_fit_style(source_book, source_sheet, *doctor_cell)
+        if source_book is not None
+        else None
+    )
+    _write_xls_cell(target_sheet, source_sheet, *doctor_cell, str(data.get("doctor") or ""), doctor_style)
+
+
+def _clear_prof_amb_exam_block(target_sheet, source_sheet, block: dict[str, tuple[int, int]]) -> None:
+    date_cell = block["date_cell"]
+    title_cell = block["title_cell"]
+    doctor_cell = block["doctor_cell"]
+    label_col = max(0, title_cell[1] - 9)
+    end_col = min(source_sheet.ncols, label_col + 31)
+    coordinates: set[tuple[int, int]] = set(block.values())
+    for row_index in range(date_cell[0], doctor_cell[0] + 1):
+        for col_index in range(label_col, end_col):
+            if source_sheet.cell_value(row_index, col_index) not in ("", None):
+                coordinates.add((row_index, col_index))
+    _clear_xls_cells(target_sheet, source_sheet, sorted(coordinates))
 
 
 def _write_xls_pairs(target_sheet, source_sheet, pairs: list[tuple[tuple[int, int], object]]) -> None:
@@ -1496,29 +1592,45 @@ def _fill_journal_344_sheet(
 
 
 def _fill_prof_extract_doctor_rows(
+    source_book,
     source_sheet,
     target_sheet,
     exams_by_role: dict[str, DoctorExam],
     encounter: Encounter | None,
 ) -> None:
     pairs: list[tuple[tuple[int, int], object]] = []
-    for row_index in PROF_EXTRACT_CLEARED_DOCTOR_ROWS:
+    for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS:
         pairs.extend(
             [
+                ((row_index, PROF_EXTRACT_SEQUENCE_COL), ""),
                 ((row_index, PROF_EXTRACT_DOCTOR_COL), ""),
                 ((row_index, PROF_EXTRACT_DATE_COL), ""),
                 ((row_index, PROF_EXTRACT_CONCLUSION_COL), ""),
             ]
         )
-    for row_index, doctor_line, completed_date, conclusion in _prof_extract_doctor_row_values(exams_by_role, encounter):
+    row_values = _prof_extract_doctor_row_values(exams_by_role, encounter)
+    doctor_style_by_row = {
+        row_index: _xls_shrink_to_fit_style(source_book, source_sheet, row_index, PROF_EXTRACT_DOCTOR_COL)
+        for row_index in {row_index for row_index, _, _, _ in row_values}
+    }
+    for sequence_number, (row_index, doctor_line, completed_date, conclusion) in enumerate(row_values, start=1):
         pairs.extend(
             [
-                ((row_index, PROF_EXTRACT_DOCTOR_COL), doctor_line),
+                ((row_index, PROF_EXTRACT_SEQUENCE_COL), sequence_number),
                 ((row_index, PROF_EXTRACT_DATE_COL), _xls_excel_date(completed_date)),
                 ((row_index, PROF_EXTRACT_CONCLUSION_COL), conclusion),
             ]
         )
     _write_xls_pairs(target_sheet, source_sheet, pairs)
+    for row_index, doctor_line, _, _ in row_values:
+        _write_xls_cell(
+            target_sheet,
+            source_sheet,
+            row_index,
+            PROF_EXTRACT_DOCTOR_COL,
+            doctor_line,
+            doctor_style_by_row[row_index],
+        )
 
 
 def _find_prof_amb_sheet_index(source_book) -> int | None:
@@ -1614,13 +1726,16 @@ def _generate_prof_amb_xls(
         "doctor": "",
     }
     for block in PROF_AMB_EXAM_BLOCKS:
-        _fill_exam_block(target_sheet, source_sheet, empty_exam_block, **block)
-    for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, _prof_amb_exam_block_values(exams_by_role, encounter)):
-        _fill_exam_block(target_sheet, source_sheet, exam_data, **block)
+        _fill_exam_block(target_sheet, source_sheet, empty_exam_block, source_book=source_book, **block)
+    exam_block_values = _prof_amb_exam_block_values(exams_by_role, encounter)
+    for block in PROF_AMB_EXAM_BLOCKS[len(exam_block_values) :]:
+        _clear_prof_amb_exam_block(target_sheet, source_sheet, block)
+    for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, exam_block_values):
+        _fill_exam_block(target_sheet, source_sheet, exam_data, source_book=source_book, **block)
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
-        _fill_prof_extract_doctor_rows(pz2_source, pz2_target, exams_by_role, encounter)
+        _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter)
 
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)

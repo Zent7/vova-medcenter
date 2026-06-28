@@ -13,7 +13,6 @@ from app.models.template_phrase import TemplatePhrase
 NO_COMPLAINTS_TEXT = "в момент осмотра жалоб нет"
 DEFAULT_NORMAL_TEXT = "Противопоказаний не выявлено"
 CHAIRMAN_ROLE_CODE = "chairman"
-EXCLUDED_AUTOFILL_ROLE_CODES = {"psychiatrist-narcologist"}
 
 
 def _first_text(*values: object) -> str:
@@ -170,7 +169,6 @@ def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, se
             ServiceDoctorRole.service_id == service_id,
             DoctorRole.is_active.is_(True),
             DoctorRole.code != CHAIRMAN_ROLE_CODE,
-            DoctorRole.code.not_in(EXCLUDED_AUTOFILL_ROLE_CODES),
         )
         .order_by(DoctorRole.sort_order.asc(), DoctorRole.name.asc())
     ).scalars().all()

@@ -14,6 +14,7 @@ window.servicesData = {
   doctorRoles: [
     { id: 1, name: "Терапевт", sortOrder: 10, isActive: true },
     { id: 2, name: "Психиатр", sortOrder: 20, isActive: true },
+    { id: 3, name: "Психиатр-нарколог", sortOrder: 30, isActive: true },
     { id: 4, name: "Невролог", sortOrder: 40, isActive: true },
     { id: 5, name: "Отоларинголог", sortOrder: 50, isActive: true },
     { id: 6, name: "Гинеколог", sortOrder: 60, isActive: true },
@@ -88,7 +89,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: [1, 2, 4, 5, 6, 7, 8, 9, 13]
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13]
     },
     {
       id: 33,
@@ -108,7 +109,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 30,
-      doctorRoleIds: [1, 2, 4, 5, 6, 7, 8, 9, 13]
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13]
     },
     {
       id: 23,
@@ -160,7 +161,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: [1, 2, 4, 5, 6, 7, 8, 9, 10, 13]
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13]
     },
 
     {

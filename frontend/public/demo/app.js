@@ -67,6 +67,7 @@ let structuredServices = [];
 const DEFAULT_DOCTOR_DIRECTORY = {
   therapist: "Казаков И.В.",
   psychiatrist: "Аносов И.Е.",
+  "psychiatrist-narcologist": "Аносов И.Е.",
   neurologist: "Казаков И.В.",
   otolaryngologist: "Барсуков А.Ф.",
   surgeon: "Конюк М.В.",
@@ -75,22 +76,12 @@ const DEFAULT_DOCTOR_DIRECTORY = {
   dentist: "Шадрикова Ю.А.",
 };
 
-const EXCLUDED_DOCTOR_ROLE_CODES = new Set(["psychiatrist-narcologist"]);
-const EXCLUDED_DOCTOR_ROLE_IDS = new Set([3]);
-
 function isExcludedDoctorRole(role) {
-  if (!role) return false;
-  const code = String(role.code || "").trim().toLowerCase();
-  const name = String(role.name || "").trim().toLowerCase();
-  return (
-    EXCLUDED_DOCTOR_ROLE_CODES.has(code) ||
-    EXCLUDED_DOCTOR_ROLE_IDS.has(Number(role.id)) ||
-    name.includes("нарколог")
-  );
+  return false;
 }
 
 function normalizeDoctorRoleIds(roleIds) {
-  return (Array.isArray(roleIds) ? roleIds : []).filter((roleId) => !EXCLUDED_DOCTOR_ROLE_IDS.has(Number(roleId)));
+  return Array.isArray(roleIds) ? roleIds.slice() : [];
 }
 
 const data = {
@@ -220,6 +211,7 @@ function initializeFallbackServiceCatalog() {
   const fallbackRoleCodes = {
     1: "therapist",
     2: "psychiatrist",
+    3: "psychiatrist-narcologist",
     4: "neurologist",
     5: "otolaryngologist",
     6: "gynecologist",
@@ -762,7 +754,6 @@ function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status
   const completed = new Set();
   const addFromStatus = () => {
     (status?.completedDoctorRoleIds || [])
-      .filter((roleId) => !EXCLUDED_DOCTOR_ROLE_CODES.has(String(roleId || "").trim().toLowerCase()))
       .forEach((roleId) => completed.add(roleId));
   };
 
@@ -778,7 +769,6 @@ function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status
         String(exam?.visitId) === String(visit.id) &&
         exam?.isCompleted,
     )
-    .filter((exam) => !EXCLUDED_DOCTOR_ROLE_CODES.has(String(exam.doctorRoleId || "").trim().toLowerCase()))
     .forEach((exam) => completed.add(exam.doctorRoleId));
 
   if (visit.backendId && String(status?.encounterId || "") === String(visit.backendId)) {
@@ -866,9 +856,6 @@ function applyDefaultDoctorDirectory() {
     if (!String(data.doctorDirectory[roleId] || "").trim()) {
       data.doctorDirectory[roleId] = doctorName;
     }
-  });
-  EXCLUDED_DOCTOR_ROLE_CODES.forEach((roleId) => {
-    delete data.doctorDirectory[roleId];
   });
 }
 
@@ -5677,6 +5664,7 @@ function renderDoctorsPage() {
     ["Офтальмолог", "ophthalmologist"],
     ["Терапевт", "therapist"],
     ["Психиатр", "psychiatrist"],
+    ["Психиатр-нарколог", "psychiatrist-narcologist"],
     ["Инфекционист", "infectionist"],
     ["Фтизиатр", "phthisiatrist"],
     ["Узист", "uzist"],
