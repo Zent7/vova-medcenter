@@ -1924,6 +1924,106 @@ function syncCompletedDoctorMarksToClient(client, exams = []) {
   client.doctorExamHistory = Array.from(byKey.values());
 }
 
+function getClientRecordsForExam(exam) {
+  const records = [];
+  const seen = new Set();
+  const clientId = String(exam?.clientId || "");
+
+  [...(data.clients || []), ...(data.backendClients || [])].forEach((client) => {
+    if (!client) return;
+    const matches =
+      String(client.id || "") === clientId ||
+      String(client.backendId || "") === clientId;
+    if (!matches || seen.has(client)) return;
+    seen.add(client);
+    records.push(client);
+  });
+
+  return records;
+}
+
+function isSameDoctorExamScope(entry, exam) {
+  if (!entry || !exam) return false;
+
+  const entryBackendEncounterId = String(entry.backendEncounterId || "");
+  const examBackendEncounterId = String(exam.backendEncounterId || "");
+  if (entryBackendEncounterId && examBackendEncounterId) {
+    return entryBackendEncounterId === examBackendEncounterId;
+  }
+
+  const entryVisitId = String(entry.visitId || "");
+  const examVisitId = String(exam.visitId || "");
+  if (entryVisitId && examVisitId) {
+    return entryVisitId === examVisitId;
+  }
+
+  return !entryBackendEncounterId && !entryVisitId;
+}
+
+function snapshotDoctorMarkCaches(exam) {
+  return {
+    dashboardDoctorStatuses: Object.fromEntries(
+      Object.entries(data.dashboardDoctorStatuses || {}).map(([key, status]) => [
+        key,
+        {
+          ...status,
+          completedDoctorRoleIds: Array.isArray(status?.completedDoctorRoleIds)
+            ? status.completedDoctorRoleIds.slice()
+            : [],
+        },
+      ]),
+    ),
+    clientHistories: getClientRecordsForExam(exam).map((client) => ({
+      client,
+      hasHistory: Array.isArray(client.doctorExamHistory),
+      history: Array.isArray(client.doctorExamHistory) ? client.doctorExamHistory.slice() : [],
+    })),
+  };
+}
+
+function restoreDoctorMarkCaches(snapshot) {
+  if (!snapshot) return;
+
+  data.dashboardDoctorStatuses = snapshot.dashboardDoctorStatuses || {};
+  (snapshot.clientHistories || []).forEach(({ client, hasHistory, history }) => {
+    if (!client) return;
+    if (hasHistory) {
+      client.doctorExamHistory = history.slice();
+    } else {
+      delete client.doctorExamHistory;
+    }
+  });
+}
+
+function removeDoctorMarkCachesForExam(exam) {
+  if (!exam?.doctorRoleId) return;
+
+  const roleId = String(exam.doctorRoleId);
+  const clientRecords = getClientRecordsForExam(exam);
+  const clientKeys = new Set([String(exam.clientId || "")]);
+  clientRecords.forEach((client) => {
+    if (client?.id) clientKeys.add(String(client.id));
+    if (client?.backendId) clientKeys.add(String(client.backendId));
+    if (!Array.isArray(client.doctorExamHistory)) return;
+    client.doctorExamHistory = client.doctorExamHistory.filter(
+      (entry) => String(entry?.doctorRoleId || "") !== roleId || !isSameDoctorExamScope(entry, exam),
+    );
+  });
+
+  Object.entries(data.dashboardDoctorStatuses || {}).forEach(([key, status]) => {
+    const clientMatches = clientKeys.has(String(key));
+    const encounterMatches =
+      !exam.backendEncounterId ||
+      !status?.encounterId ||
+      String(status.encounterId) === String(exam.backendEncounterId);
+
+    if (!clientMatches || !encounterMatches || !Array.isArray(status.completedDoctorRoleIds)) return;
+    status.completedDoctorRoleIds = status.completedDoctorRoleIds.filter(
+      (completedRoleId) => String(completedRoleId) !== roleId,
+    );
+  });
+}
+
 function hasCompletedDoctorExamHistory(clientId, doctorRoleId, currentVisitId = null) {
   if (!clientId || !doctorRoleId) return false;
   const roleCode = String(doctorRoleId || "").trim();
@@ -1966,7 +2066,7 @@ function buildDoctorMark(roleCode, requiredDoctors, completedDoctors) {
       ? `Требуется в текущем обращении: ${requiredCount}`
       : "Требуется в текущем обращении";
     return {
-      value: "✓",
+      value: "•",
       title: requiredTitle,
       state: "required",
     };
@@ -3750,12 +3850,14 @@ async function deleteDoctorExam(examId) {
   if (examIndex < 0) return false;
 
   const [exam] = data.doctorExams.splice(examIndex, 1);
+  const doctorMarkCacheSnapshot = snapshotDoctorMarkCaches(exam);
   const visit = data.visits.find((item) => String(item.id) === String(exam.visitId));
   if (visit) {
     visit.examIds = Array.isArray(visit.examIds)
       ? visit.examIds.filter((value) => String(value) !== String(exam.id))
       : [];
   }
+  removeDoctorMarkCachesForExam(exam);
 
   persistDemoState();
 
@@ -3777,6 +3879,7 @@ async function deleteDoctorExam(examId) {
         visit.examIds.push(exam.id);
       }
     }
+    restoreDoctorMarkCaches(doctorMarkCacheSnapshot);
     persistDemoState();
     showToast("Не удалось удалить карточку врача");
     console.warn("Не удалось удалить карточку врача в backend", error);
