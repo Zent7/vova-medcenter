@@ -3051,7 +3051,7 @@ async function syncVisitToBackend(visit, client) {
   if (!visit || !client) return null;
   if (visit.__backendSyncPromise) return visit.__backendSyncPromise;
   const clientId = client.backendId || client.id;
-  if (!clientId || !data.serverServicesLoaded) return null;
+  if (!clientId) return null;
 
   visit.__backendSyncPromise = (async () => {
     visit.__backendSyncing = true;
@@ -3074,9 +3074,9 @@ async function syncVisitToBackend(visit, client) {
       visit.backendId = encounter.id;
       visit.status = encounter.status || visit.status || "draft";
 
-      const selectedServiceIds = getSelectedVisitServiceIds(visit);
+      const selectedServiceIds = data.serverServicesLoaded ? getSelectedVisitServiceIds(visit) : [];
       const serviceDetails = getVisitServiceDetails(visit);
-      if (Array.isArray(selectedServiceIds)) {
+      if (data.serverServicesLoaded && Array.isArray(selectedServiceIds)) {
         await apiRequest(`/encounter-services?encounter_id=${encodeURIComponent(visit.backendId)}`, {
           method: "DELETE",
         });
