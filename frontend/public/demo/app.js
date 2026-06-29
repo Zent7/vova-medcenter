@@ -7270,7 +7270,8 @@ function getDocumentTitle(type) {
   if (type === "contract") return "Договор на оказание платных медицинских услуг";
   if (type === "driver") return "Водительская справка";
   if (type === "xml") return "XML-файл по обращению";
-  if (type === "lmk_title") return "ЛМК титульная";
+  if (type === "lmk_title") return "Личная медицинская книжка";
+  if (type === "lmk") return "Печать справки";
   if (type === "prof") return "Заключение 29Н";
   if (type === "prof_extract") return "Выписка профосмотра";
   if (type === "prof_ambulatory") return "Амбулаторная карта";
@@ -7520,17 +7521,16 @@ function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   return config.printTemplateType || config.templateType;
 }
 
-function getChairmanPrintActionsForVisit(visit) {
+function shouldOpenChairmanResultsPrintMenu(visit) {
   const formType = getChairmanFormConfigForVisit(visit).type;
-  if (formType === "lmk" || formType === "prof") {
-    return [
-      { label: "ЛМК титульная", kind: "lmk_title" },
-      { label: "ЛМК справка", kind: "lmk_certificate" },
-      { label: "ПРОФ заключение", kind: "prof_conclusion" },
-      { label: "Амб. Карта", kind: "ambulatory_card" },
-    ];
-  }
-  return [{ label: "Печать", kind: "conclusion" }];
+  return formType === "lmk" || formType === "prof";
+}
+
+function getChairmanPrintActionForVisit(visit) {
+  return {
+    label: "Печать",
+    kind: shouldOpenChairmanResultsPrintMenu(visit) ? "menu" : "conclusion",
+  };
 }
 
 const CHAIRMAN_PRINT_BLANK_SERIES = new Map([
@@ -10316,8 +10316,8 @@ function bindContentEvents() {
     const formVisit = formExam
       ? data.visits.find((item) => String(item.id) === String(formExam.visitId))
       : getCurrentVisitForClient(appState.selectedClientId);
-    const formPrintActions = getChairmanPrintActionsForVisit(formVisit);
-    const opensPrintMenu = formPrintActions.length > 1;
+    const formPrintAction = getChairmanPrintActionForVisit(formVisit);
+    const opensPrintMenu = formPrintAction.kind === "menu";
     const createPrintButton = (label, kind) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -10326,7 +10326,7 @@ function bindContentEvents() {
       button.textContent = label;
       return button;
     };
-    const printButton = createPrintButton("Печать", opensPrintMenu ? "menu" : formPrintActions[0]?.kind || "conclusion");
+    const printButton = createPrintButton(formPrintAction.label, formPrintAction.kind || "conclusion");
     chairmanActions.prepend(printButton);
 
     let chairmanPrintBlankState = {
