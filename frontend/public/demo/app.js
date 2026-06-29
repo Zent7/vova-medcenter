@@ -10389,7 +10389,7 @@ function bindContentEvents() {
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_conclusion">Проф. осмотр</button>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory_extract">Выписка из амбулаторной карты</button>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory">Амб. Карта 25У</button>
-            <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__wide--right" disabled>Результат ЗЭП</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__wide--right" disabled>Результат ЭКГ</button>
           </div>
         `,
         "modal--driver-print",
