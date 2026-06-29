@@ -1412,8 +1412,9 @@ function openClientModal(clientId = null, options = {}) {
     data.backendSearch = appState.clientSearch.trim();
     window.markClientChanged?.(targetClient, isCreated);
 
+    const shouldCreateOrUpdateVisit = isCreated || encounterMode || selectedServiceValues.length;
     const currentVisit =
-      encounterMode || selectedServiceValues.length
+      shouldCreateOrUpdateVisit
         ? window.createVisitForClientIfNeeded?.(targetClient.id, {
             serviceNames: selectedServiceValues,
             serviceIds: selectedServiceIds,

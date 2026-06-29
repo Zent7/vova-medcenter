@@ -3001,6 +3001,37 @@ function createVisitForClientIfNeeded(clientId, options = {}) {
   return createVisitForClient(clientId, options);
 }
 
+async function createVisitAndOpenEditor(selectedClient) {
+  if (!selectedClient) {
+    showToast("Сначала выбери клиента");
+    return null;
+  }
+
+  const visit = createVisitForClient(selectedClient.id, {
+    serviceNames: [],
+    serviceIds: [],
+    serviceDetails: {},
+    amount: 0,
+  });
+
+  if (!visit) {
+    showToast("Не удалось создать обращение");
+    return null;
+  }
+
+  appState.selectedClientId = selectedClient.id;
+  appState.activeVisitId = visit.id;
+  appState.page = "chart";
+  persistDemoState();
+  renderApp();
+
+  await syncVisitToBackend(visit, selectedClient);
+  await loadClientWorkspace(selectedClient);
+  renderApp();
+  showToast("Обращение создано, выбери услуги");
+  return visit;
+}
+
 function updateVisit(visitId, patch = {}) {
   ensureVisitsStore();
   const visit = data.visits.find((item) => String(item.id) === String(visitId));
@@ -4542,6 +4573,7 @@ function renderAmbulatoryCardPage() {
 
       ${renderWorkflowLoadState()}
       ${renderMedicalRecordBackendBlock(selectedClient, exams)}
+      ${renderVisitPanel(selectedClient)}
 
       <div class="two-col chart-main-grid">
         <article class="card chart-profile-card">
@@ -6040,24 +6072,7 @@ function renderVisitPanel(selectedClient) {
 
       ${
         activeVisit
-          ? `
-            <div class="encounter-grid">
-              <div><span>Дата</span><strong>${escapeHtml(activeVisit.visitDate || formatDateTime(activeVisit.createdAt))}</strong></div>
-              <div><span>Центр</span><strong>${escapeHtml(activeVisit.center || selectedClient.center || "Медцентр 1")}</strong></div>
-              <div><span>Оплата</span><strong>${escapeHtml(activeVisit.paymentType || "Наличные")}</strong></div>
-              <div><span>Сумма</span><strong>${Number(activeVisit.amount || 0).toLocaleString("ru-RU")} ₽</strong></div>
-            </div>
-            <div class="encounter-services">
-              ${(activeVisit.serviceNames || selectedClient.services || [])
-                .map((service) => `<span>${escapeHtml(service)}</span>`)
-                .join("") || "<span>Услуги не выбраны</span>"}
-            </div>
-            ${
-              activeVisit.comment
-                ? `<div class="muted" style="margin-top:8px;">${escapeHtml(activeVisit.comment)}</div>`
-                : ""
-            }
-          `
+          ? renderOperatorVisitForm(selectedClient, activeVisit)
           : `<p class="muted" style="margin:8px 0 0 0;">Создай обращение, чтобы привязать к нему услуги, врачей и документы.</p>`
       }
 
@@ -9719,15 +9734,9 @@ function bindContentEvents() {
 
   const createVisitFromDashboardButton = document.getElementById("createVisitFromDashboardButton");
   if (createVisitFromDashboardButton) {
-    createVisitFromDashboardButton.addEventListener("click", () => {
+    createVisitFromDashboardButton.addEventListener("click", async () => {
       const selectedClient = getSelectedClient();
-      if (!selectedClient) {
-        showToast("Сначала выбери клиента");
-        return;
-      }
-      if (window.openClientModal) {
-        window.openClientModal(selectedClient.id, { encounterMode: true });
-      }
+      await createVisitAndOpenEditor(selectedClient);
     });
   }
 
@@ -9881,15 +9890,9 @@ function bindContentEvents() {
 
   const createVisitButton = document.getElementById("createVisitButton");
   if (createVisitButton) {
-    createVisitButton.addEventListener("click", () => {
+    createVisitButton.addEventListener("click", async () => {
       const selectedClient = getSelectedClient();
-      if (!selectedClient) {
-        showToast("Сначала выбери клиента");
-        return;
-      }
-      if (window.openClientModal) {
-        window.openClientModal(selectedClient.id, { encounterMode: true });
-      }
+      await createVisitAndOpenEditor(selectedClient);
     });
   }
 
