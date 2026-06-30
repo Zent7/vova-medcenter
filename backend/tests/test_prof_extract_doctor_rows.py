@@ -20,6 +20,7 @@ from app.services.document_generator import (  # noqa: E402
     PROF_EXTRACT_DOCTOR_ROWS,
     PROF_EXTRACT_SEQUENCE_COL,
     _apply_context_overrides,
+    _apply_print_variant_to_xls_workbook,
     _generate_docx,
     _generate_prof_amb_xls,
     _medical_record_context_overrides,
@@ -28,6 +29,7 @@ from app.services.document_generator import (  # noqa: E402
     _prof_extract_doctor_row_values,
     _xls_auto_marker_values,
 )
+from xlutils.copy import copy as copy_xls_workbook  # noqa: E402
 
 
 def exam(role_id, doctor_name, *, is_completed=True, completed_at=None, conclusion="Годен"):
@@ -423,6 +425,22 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             pz2_sheet.cell_value(PROF_EXTRACT_DOCTOR_ROWS[0][2], PROF_EXTRACT_DOCTOR_COL),
             "Терапевт Казаков И.В.",
         )
+
+    def test_certificate_print_variant_keeps_only_selected_sheet(self):
+        template_path = next(
+            path
+            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
+            if path.name.startswith("ВСЕ")
+        )
+        output_path = Path(tempfile.gettempdir()) / "certificate_print_variant_test.xls"
+        source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
+        target_book = copy_xls_workbook(source_book)
+
+        _apply_print_variant_to_xls_workbook(target_book, "sport")
+        target_book.save(str(output_path))
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["Спорт"])
 
     def test_generated_amb_sheet_hides_unused_blocks_and_compacts_pz2_rows(self):
         output_path = Path(tempfile.gettempdir()) / "prof_extract_doctor_rows_compact_test.xls"

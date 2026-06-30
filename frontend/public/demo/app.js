@@ -7606,6 +7606,22 @@ function getChairmanCertificatePrintFlowOptions(printType) {
   return CHAIRMAN_CERTIFICATE_PRINT_FLOWS.get(String(printType || "").toLowerCase()) || null;
 }
 
+const XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE = new Map([
+  ["086", "086"],
+  ["pool", "pool"],
+  ["sport", "sport"],
+  ["gto", "gto"],
+  ["gsu", "gsu"],
+  ["gostaina", "gostaina"],
+  ["guard", "guard"],
+  ["chod", "chod"],
+  ["ekg", "ekg"],
+]);
+
+function getXlsPrintVariantForDocumentType(type) {
+  return XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE.get(String(type || "").toLowerCase()) || "";
+}
+
 function registerGeneratedDocument(result, type, client, visit) {
   const documentItem = {
     id: result.generated_document_id || generateId("document"),
@@ -7714,11 +7730,12 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
     client_id: Number(clientId),
     encounter_id: visit.backendId ? Number(visit.backendId) : null,
   };
+  const xlsPrintVariant = getXlsPrintVariantForDocumentType(type);
   if (options.blankFormId) {
     payload.blank_form_id = Number(options.blankFormId);
   }
-  if (options.printVariant) {
-    payload.print_variant = options.printVariant;
+  if (options.printVariant || xlsPrintVariant) {
+    payload.print_variant = options.printVariant || xlsPrintVariant;
   }
   const result = await apiRequest(endpoint, {
     method: "POST",

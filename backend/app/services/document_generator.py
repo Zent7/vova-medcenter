@@ -1881,6 +1881,19 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
         "ambulatory_extract": ("ПЗ2",),
         "prof_ambulatory_extract": ("ПЗ2",),
         "prof_ambulatory": ("Амб !",),
+        "086": ("086",),
+        "certificate_086": ("086",),
+        "pool": ("Бас",),
+        "sport": ("Спорт",),
+        "gto": ("ГТ",),
+        "gsu": ("ГС",),
+        "gostaina": ("ГТ",),
+        "guard": ("ЧОД",),
+        "chod": ("ЧОД",),
+        "ekg": ("ЭЭГ",),
+        "journal_344": ("Журн344",),
+        "journal344": ("Журн344",),
+        "spoiled": ("Испорч",),
     }
     target_sheet_names = sheets_by_variant.get(variant)
     if not target_sheet_names:
@@ -2045,9 +2058,19 @@ def _get_journal_info(template: DocumentTemplate) -> tuple[str, str] | None:
 def _medical_record_context_overrides(medical_record: MedicalRecord | None) -> dict[str, str]:
     overrides: dict[str, str] = {
         "HealthGroup": "",
+        "BloodGroup": "",
         "BloodType": "",
+        "RhFactor": "",
+        "RhesusFactor": "",
+        "Allergies": "",
+        "qdfMain.BloodGroup": "",
         "qdfMain.BloodType": "",
+        "qdfMain.RhFactor": "",
+        "qdfMain.Allergies": "",
+        "gdfMain.BloodGroup": "",
         "gdfMain.BloodType": "",
+        "gdfMain.RhFactor": "",
+        "gdfMain.Allergies": "",
     }
     if medical_record is None:
         return overrides
@@ -2062,6 +2085,19 @@ def _medical_record_context_overrides(medical_record: MedicalRecord | None) -> d
         overrides["Post"] = medical_record.position
         overrides["PositionApplied"] = medical_record.position
         overrides["qdfMain.Post"] = medical_record.position
+    if medical_record.blood_group:
+        overrides["BloodGroup"] = medical_record.blood_group
+        overrides["qdfMain.BloodGroup"] = medical_record.blood_group
+        overrides["gdfMain.BloodGroup"] = medical_record.blood_group
+    if medical_record.rh_factor:
+        overrides["RhFactor"] = medical_record.rh_factor
+        overrides["RhesusFactor"] = medical_record.rh_factor
+        overrides["qdfMain.RhFactor"] = medical_record.rh_factor
+        overrides["gdfMain.RhFactor"] = medical_record.rh_factor
+    if medical_record.allergies:
+        overrides["Allergies"] = medical_record.allergies
+        overrides["qdfMain.Allergies"] = medical_record.allergies
+        overrides["gdfMain.Allergies"] = medical_record.allergies
     if medical_record.health_group:
         overrides["HealthGroup"] = medical_record.health_group
         overrides["BloodType"] = medical_record.health_group
