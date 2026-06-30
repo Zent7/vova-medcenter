@@ -1671,11 +1671,13 @@ function getVisitClientForDoctorRules(visit, clientOverride = null) {
 function getRequiredDoctorRoleCountsForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
   const client = getVisitClientForDoctorRules(visit, clientOverride);
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
   const counts = new Map();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
     getDoctorRoleCodeSetFromService(service, detail, client).forEach((code) => {
+      if (suppressedRoles.has(code)) return;
       const current = counts.get(code) || 0;
       counts.set(code, code === "chairman" && isCertificateService(service) ? current + 1 : Math.max(current, 1));
     });
@@ -1703,13 +1705,45 @@ function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
 function getRequiredDoctorRoleCodesForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
   const client = getVisitClientForDoctorRules(visit, clientOverride);
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
   const result = new Set();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
-    getDoctorRoleCodeSetFromService(service, detail, client).forEach((code) => result.add(code));
+    getDoctorRoleCodeSetFromService(service, detail, client).forEach((code) => {
+      if (!suppressedRoles.has(code)) result.add(code);
+    });
   });
   return Array.from(result);
+}
+
+function getSuppressedDoctorRoleCodesForVisit(visit) {
+  return new Set(
+    (Array.isArray(visit?.suppressedDoctorRoleIds) ? visit.suppressedDoctorRoleIds : [])
+      .map((roleId) => String(roleId || "").trim())
+      .filter(Boolean),
+  );
+}
+
+function suppressDoctorRoleForVisit(visit, doctorRoleId) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!visit || !roleId) return;
+
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
+  suppressedRoles.add(roleId);
+  visit.suppressedDoctorRoleIds = Array.from(suppressedRoles);
+}
+
+function restoreDoctorRoleForVisit(visit, doctorRoleId) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!visit || !roleId || !Array.isArray(visit.suppressedDoctorRoleIds)) return;
+
+  visit.suppressedDoctorRoleIds = visit.suppressedDoctorRoleIds.filter(
+    (value) => String(value || "").trim() !== roleId,
+  );
+  if (!visit.suppressedDoctorRoleIds.length) {
+    delete visit.suppressedDoctorRoleIds;
+  }
 }
 
 function getServerServiceByName(name) {
@@ -3438,10 +3472,12 @@ function getDoctorExamById(examId) {
 function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
   ensureVisitsStore();
 
+  const visit = data.visits.find((item) => String(item.id) === String(visitId));
+  restoreDoctorRoleForVisit(visit, doctorRoleId);
+
   let exam = getDoctorExam(clientId, visitId, doctorRoleId);
   if (exam) {
     if (doctorRoleId === "chairman") {
-      const visit = data.visits.find((item) => String(item.id) === String(visitId));
       const nextFields = applyCertificateDefaultsToChairmanFields(exam.fields || {}, visit);
       if (JSON.stringify(nextFields) !== JSON.stringify(exam.fields || {})) {
         exam.fields = nextFields;
@@ -3474,7 +3510,6 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
   };
 
   if (doctorRoleId === "chairman") {
-    const visit = data.visits.find((item) => String(item.id) === String(visitId));
     if (visit) {
       exam.fields = applyDriverSelectionsToChairmanFields(exam.fields, getDriverDetailFromVisit(visit), visit);
       exam.fields = applyCertificateDefaultsToChairmanFields(exam.fields, visit);
@@ -3483,7 +3518,6 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
 
   data.doctorExams.push(exam);
 
-  const visit = data.visits.find((item) => item.id === visitId);
   if (visit && !visit.examIds.includes(exam.id)) {
     visit.examIds.push(exam.id);
   }
@@ -3887,6 +3921,7 @@ async function deleteDoctorExam(examId) {
     visit.examIds = Array.isArray(visit.examIds)
       ? visit.examIds.filter((value) => String(value) !== String(exam.id))
       : [];
+    suppressDoctorRoleForVisit(visit, exam.doctorRoleId);
   }
   removeDoctorMarkCachesForExam(exam);
 
@@ -3909,6 +3944,7 @@ async function deleteDoctorExam(examId) {
       if (!visit.examIds.includes(exam.id)) {
         visit.examIds.push(exam.id);
       }
+      restoreDoctorRoleForVisit(visit, exam.doctorRoleId);
     }
     restoreDoctorMarkCaches(doctorMarkCacheSnapshot);
     persistDemoState();
