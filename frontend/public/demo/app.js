@@ -24,7 +24,8 @@ const appState = {
   clientSearch: "",
   clientEncounterDate: "",
   clientEncounterDateFrom: "",
-  clientEncounterDateTo: getLocalDateInputValue(),
+  clientEncounterDateTo: "",
+  clientPeriodFilterApplied: false,
   serviceGroupFilter: "all",
   visitServiceGroupFilter: "all",
   visitServiceSearch: "",
@@ -917,16 +918,23 @@ function applyPersistedDemoState() {
   }
   if (typeof savedAppState.centerFilter === "string") appState.centerFilter = savedAppState.centerFilter;
   appState.clientSearch = "";
-  if (typeof savedAppState.clientEncounterDate === "string") appState.clientEncounterDate = savedAppState.clientEncounterDate;
-  if (typeof savedAppState.clientEncounterDateFrom === "string") {
-    appState.clientEncounterDateFrom = savedAppState.clientEncounterDateFrom;
-  }
-  if (typeof savedAppState.clientEncounterDateTo === "string" && savedAppState.clientEncounterDateTo.trim()) {
-    appState.clientEncounterDateTo = savedAppState.clientEncounterDateTo;
-  }
-  if (appState.clientEncounterDate && !appState.clientEncounterDateFrom && !appState.clientEncounterDateTo) {
-    appState.clientEncounterDateFrom = appState.clientEncounterDate;
-    appState.clientEncounterDateTo = appState.clientEncounterDate;
+  appState.clientPeriodFilterApplied = savedAppState.clientPeriodFilterApplied === true;
+  if (appState.clientPeriodFilterApplied) {
+    if (typeof savedAppState.clientEncounterDate === "string") appState.clientEncounterDate = savedAppState.clientEncounterDate;
+    if (typeof savedAppState.clientEncounterDateFrom === "string") {
+      appState.clientEncounterDateFrom = savedAppState.clientEncounterDateFrom;
+    }
+    if (typeof savedAppState.clientEncounterDateTo === "string") {
+      appState.clientEncounterDateTo = savedAppState.clientEncounterDateTo;
+    }
+    if (appState.clientEncounterDate && !appState.clientEncounterDateFrom && !appState.clientEncounterDateTo) {
+      appState.clientEncounterDateFrom = appState.clientEncounterDate;
+      appState.clientEncounterDateTo = appState.clientEncounterDate;
+    }
+  } else {
+    appState.clientEncounterDate = "";
+    appState.clientEncounterDateFrom = "";
+    appState.clientEncounterDateTo = "";
   }
   if (Number.isFinite(savedAppState.dashboardPage) && savedAppState.dashboardPage > 0) {
     appState.dashboardPage = savedAppState.dashboardPage;
@@ -1020,6 +1028,7 @@ function persistDemoState() {
         clientEncounterDate: appState.clientEncounterDate,
         clientEncounterDateFrom: appState.clientEncounterDateFrom,
         clientEncounterDateTo: appState.clientEncounterDateTo,
+        clientPeriodFilterApplied: appState.clientPeriodFilterApplied,
         dashboardPage: appState.dashboardPage,
         serviceGroupFilter: appState.serviceGroupFilter,
         visitServiceGroupFilter: appState.visitServiceGroupFilter,
@@ -4170,9 +4179,14 @@ function getVisibleDashboardClients() {
 
 async function loadClientsFromBackend(searchValue) {
   const search = String(searchValue || "").trim();
-  const legacyEncounterDate = parseRuDateToIso(appState.clientEncounterDate, "");
-  const encounterDateFrom = parseRuDateToIso(appState.clientEncounterDateFrom || legacyEncounterDate, "");
-  const encounterDateTo = parseRuDateToIso(appState.clientEncounterDateTo || legacyEncounterDate, "");
+  const shouldFilterByEncounterDate = appState.clientPeriodFilterApplied === true;
+  const legacyEncounterDate = shouldFilterByEncounterDate ? parseRuDateToIso(appState.clientEncounterDate, "") : "";
+  const encounterDateFrom = shouldFilterByEncounterDate
+    ? parseRuDateToIso(appState.clientEncounterDateFrom || legacyEncounterDate, "")
+    : "";
+  const encounterDateTo = shouldFilterByEncounterDate
+    ? parseRuDateToIso(appState.clientEncounterDateTo || legacyEncounterDate, "")
+    : "";
   const requestId = ++clientSearchRequestId;
   clientSearchAbortController?.abort();
   const abortController = new AbortController();
@@ -4246,6 +4260,7 @@ function resetDashboardClientSelection() {
   appState.clientEncounterDate = "";
   appState.clientEncounterDateFrom = "";
   appState.clientEncounterDateTo = "";
+  appState.clientPeriodFilterApplied = false;
   appState.dashboardPage = 1;
   appState.selectedClientId = null;
   appState.activeVisitId = null;
@@ -4874,7 +4889,7 @@ function renderSketchHome() {
                 </label>
                 <label>
                   <span>По дату</span>
-                  <input id="clientEncounterDateToInput" type="date" value="${escapeHtml(parseRuDateToIso(appState.clientEncounterDateTo || appState.clientEncounterDate, getLocalDateInputValue()))}" />
+                  <input id="clientEncounterDateToInput" type="date" value="${escapeHtml(parseRuDateToIso(appState.clientEncounterDateTo || appState.clientEncounterDate, ""))}" />
                 </label>
                 <button class="primary-button" id="applyClientPeriodFilterButton" type="button">Показать</button>
                 <button class="ghost-button" id="clearClientPeriodFilterButton" type="button">Сброс</button>
@@ -9744,6 +9759,7 @@ function bindContentEvents() {
       appState.clientEncounterDate = "";
       appState.clientEncounterDateFrom = document.getElementById("clientEncounterDateFromInput")?.value || "";
       appState.clientEncounterDateTo = document.getElementById("clientEncounterDateToInput")?.value || "";
+      appState.clientPeriodFilterApplied = Boolean(appState.clientEncounterDateFrom || appState.clientEncounterDateTo);
       appState.dashboardPage = 1;
       appState.selectedClientId = null;
       appState.activeVisitId = null;
@@ -9757,7 +9773,8 @@ function bindContentEvents() {
     clearClientPeriodFilterButton.addEventListener("click", () => {
       appState.clientEncounterDate = "";
       appState.clientEncounterDateFrom = "";
-      appState.clientEncounterDateTo = getLocalDateInputValue();
+      appState.clientEncounterDateTo = "";
+      appState.clientPeriodFilterApplied = false;
       appState.dashboardPage = 1;
       appState.selectedClientId = null;
       appState.activeVisitId = null;
