@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 import re
 from typing import Any
 
@@ -315,6 +315,7 @@ def build_document_context(
         "BirthDateCalc_DATEMONTH1": birth_month_name,
         "BirthDateCalc_YEAR1": birth_year,
         "VisitDate": visit_date,
+        "PrintDateTime": datetime.now().strftime("%d.%m.%Y %H:%M"),
         "VisitDate_EN": visit_date_en,
         "VisitDateMarine": visit_date_en,
         "ContractDate": contract_date,

@@ -7475,7 +7475,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "sport") return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
   if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
-  if (normalizedType === "lmk") return findDocxSafely(["лмк_шаблон"], ["лмк"], []);
+  if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
   if (normalizedType === "gims") return findDocxSafely(["гимс"], ["гимс"], []);
   if (normalizedType === "chod" || normalizedType === "guard") {
     return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
