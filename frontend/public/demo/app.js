@@ -10436,7 +10436,7 @@ function bindContentEvents() {
               <button type="button" class="driver-print-classic__button" disabled>Печать дубликата</button>
             </div>
             <div class="chairman-print-results__row">
-              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Прикрепить ЛМК</button>
+              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Присвоить ЛМК</button>
               <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
             </div>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_conclusion">Проф. осмотр</button>
