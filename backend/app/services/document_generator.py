@@ -2140,6 +2140,20 @@ def _prof_29n_doctor_context_overrides(client: Client, exams: list[DoctorExam]) 
     }
 
 
+def _document_doctor_name_for_context(exams: list[DoctorExam]) -> str:
+    doctor_names: list[str] = []
+    chairman_doctor = ""
+    for exam in exams:
+        doctor_name = str(exam.doctor_name or "").strip()
+        if not doctor_name:
+            continue
+        if doctor_name not in doctor_names:
+            doctor_names.append(doctor_name)
+        if str(exam.doctor_role_id or "") == "chairman" and not chairman_doctor:
+            chairman_doctor = doctor_name
+    return chairman_doctor or ", ".join(doctor_names)
+
+
 def _load_encounter_document_values(db: Session, client: Client, encounter: Encounter | None) -> dict[str, object]:
     if encounter is None:
         fallback_services = client.legacy_payload_json.get("services", []) if isinstance(client.legacy_payload_json, dict) else []
@@ -2217,7 +2231,6 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         .scalars()
         .all()
     )
-    doctor_names: list[str] = []
     diagnosis = ""
     mkb10 = ""
     medical_record = db.execute(
@@ -2236,8 +2249,6 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         }
     )
     for exam in exams:
-        if exam.doctor_name and exam.doctor_name not in doctor_names:
-            doctor_names.append(exam.doctor_name)
         fields = exam.fields_json or {}
         diagnosis = diagnosis or _first_field_value(
             fields,
@@ -2279,7 +2290,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
     return {
         "service_names": service_names,
         "service_rows": service_rows,
-        "doctor_name": ", ".join(doctor_names),
+        "doctor_name": _document_doctor_name_for_context(exams),
         "diagnosis": diagnosis,
         "mkb10": mkb10,
         "exams": exams,
