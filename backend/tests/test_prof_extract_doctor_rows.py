@@ -23,6 +23,7 @@ from app.services.document_generator import (  # noqa: E402
     _apply_print_variant_to_xls_workbook,
     _generate_docx,
     _generate_prof_amb_xls,
+    _document_doctor_name_for_context,
     _medical_record_context_overrides,
     _prof_29n_doctor_context_overrides,
     _prof_amb_exam_block_values,
@@ -217,6 +218,30 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertIn("Невролог Н.Н.", marker_values["невролог"])
         self.assertNotIn("Сибирцев В.А.", marker_values["психиатр"])
         self.assertNotIn("Сибирцев В.А.", marker_values["психиатр нарколог"])
+
+    def test_document_doctor_name_prefers_chairman(self):
+        self.assertEqual(
+            _document_doctor_name_for_context(
+                [
+                    exam("dentist", "Dentist D."),
+                    exam("chairman", "Chairman C."),
+                    exam("therapist", "Therapist T."),
+                ]
+            ),
+            "Chairman C.",
+        )
+
+    def test_document_doctor_name_keeps_legacy_list_without_chairman(self):
+        self.assertEqual(
+            _document_doctor_name_for_context(
+                [
+                    exam("dentist", "Dentist D."),
+                    exam("therapist", "Therapist T."),
+                    exam("therapist", "Therapist T."),
+                ]
+            ),
+            "Dentist D., Therapist T.",
+        )
 
     def test_medical_record_overrides_always_clear_blood_type_tokens(self):
         self.assertEqual(
