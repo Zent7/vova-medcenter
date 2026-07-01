@@ -2013,6 +2013,9 @@ function snapshotDoctorMarkCaches(exam) {
           completedDoctorRoleIds: Array.isArray(status?.completedDoctorRoleIds)
             ? status.completedDoctorRoleIds.slice()
             : [],
+          suppressedDoctorRoleIds: Array.isArray(status?.suppressedDoctorRoleIds)
+            ? status.suppressedDoctorRoleIds.slice()
+            : [],
         },
       ]),
     ),
@@ -2064,6 +2067,35 @@ function removeDoctorMarkCachesForExam(exam) {
     status.completedDoctorRoleIds = status.completedDoctorRoleIds.filter(
       (completedRoleId) => String(completedRoleId) !== roleId,
     );
+  });
+}
+
+function suppressDashboardDoctorRoleForExam(exam) {
+  if (!exam?.doctorRoleId) return;
+
+  const roleId = String(exam.doctorRoleId);
+  const clientRecords = getClientRecordsForExam(exam);
+  const clientKeys = new Set([String(exam.clientId || "")]);
+  clientRecords.forEach((client) => {
+    if (client?.id) clientKeys.add(String(client.id));
+    if (client?.backendId) clientKeys.add(String(client.backendId));
+  });
+
+  Object.entries(data.dashboardDoctorStatuses || {}).forEach(([key, status]) => {
+    const clientMatches = clientKeys.has(String(key));
+    const encounterMatches =
+      !exam.backendEncounterId ||
+      !status?.encounterId ||
+      String(status.encounterId) === String(exam.backendEncounterId);
+
+    if (!clientMatches || !encounterMatches) return;
+    const suppressedRoles = new Set(
+      (Array.isArray(status.suppressedDoctorRoleIds) ? status.suppressedDoctorRoleIds : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    );
+    suppressedRoles.add(roleId);
+    status.suppressedDoctorRoleIds = Array.from(suppressedRoles);
   });
 }
 
@@ -3287,13 +3319,18 @@ function parseDashboardDoctorStatusServiceDetail(notes) {
   }
 }
 
-function mapDashboardDoctorStatus(status) {
+function mapDashboardDoctorStatus(status, previousStatus = null) {
   const services = Array.isArray(status?.services)
     ? status.services.map((service) => ({
         serviceId: String(service.service_id),
         detail: parseDashboardDoctorStatusServiceDetail(service.notes),
       }))
     : [];
+  const suppressedDoctorRoleIds = Array.isArray(status?.suppressed_doctor_role_ids)
+    ? status.suppressed_doctor_role_ids.slice()
+    : Array.isArray(previousStatus?.suppressedDoctorRoleIds)
+      ? previousStatus.suppressedDoctorRoleIds.slice()
+      : [];
   return {
     clientId: status?.client_id,
     encounterId: status?.encounter_id || null,
@@ -3303,6 +3340,7 @@ function mapDashboardDoctorStatus(status) {
     completedDoctorRoleIds: Array.isArray(status?.completed_doctor_role_ids)
       ? status.completed_doctor_role_ids.slice()
       : [],
+    suppressedDoctorRoleIds,
   };
 }
 
@@ -3323,6 +3361,9 @@ function getDashboardDoctorStatusVisit(client) {
       result[service.serviceId] = service.detail;
       return result;
     }, {}),
+    suppressedDoctorRoleIds: Array.isArray(status.suppressedDoctorRoleIds)
+      ? status.suppressedDoctorRoleIds.slice()
+      : [],
     status: status.encounterStatus || "draft",
   };
 }
@@ -3374,10 +3415,10 @@ async function loadDashboardDoctorStatuses(clients, { render = true } = {}) {
 
     const nextStatuses = { ...data.dashboardDoctorStatuses };
     ids.forEach((id) => {
-      nextStatuses[String(id)] = mapDashboardDoctorStatus({ client_id: id });
+      nextStatuses[String(id)] = mapDashboardDoctorStatus({ client_id: id }, nextStatuses[String(id)]);
     });
     for (const status of Array.isArray(statuses) ? statuses : []) {
-      nextStatuses[String(status.client_id)] = mapDashboardDoctorStatus(status);
+      nextStatuses[String(status.client_id)] = mapDashboardDoctorStatus(status, nextStatuses[String(status.client_id)]);
     }
     data.dashboardDoctorStatuses = nextStatuses;
   } catch (error) {
@@ -3933,6 +3974,7 @@ async function deleteDoctorExam(examId) {
     suppressDoctorRoleForVisit(visit, exam.doctorRoleId);
   }
   removeDoctorMarkCachesForExam(exam);
+  suppressDashboardDoctorRoleForExam(exam);
 
   persistDemoState();
 
