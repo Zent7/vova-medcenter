@@ -49,6 +49,44 @@ def apply_completion_state(exam: DoctorExam) -> None:
         exam.completed_at = None
 
 
+def restore_doctor_role_on_encounter(db: Session, encounter_id: int | None, doctor_role_id: str) -> None:
+    if encounter_id is None:
+        return
+
+    encounter = db.get(Encounter, encounter_id)
+    if encounter is None:
+        return
+
+    role_id = str(doctor_role_id or "").strip()
+    suppressed = [
+        str(value).strip()
+        for value in (encounter.suppressed_doctor_role_ids or [])
+        if str(value).strip() and str(value).strip() != role_id
+    ]
+    encounter.suppressed_doctor_role_ids = suppressed
+
+
+def suppress_doctor_role_on_encounter(db: Session, encounter_id: int | None, doctor_role_id: str) -> None:
+    if encounter_id is None:
+        return
+
+    encounter = db.get(Encounter, encounter_id)
+    if encounter is None:
+        return
+
+    role_id = str(doctor_role_id or "").strip()
+    if not role_id:
+        return
+
+    suppressed = {
+        str(value).strip()
+        for value in (encounter.suppressed_doctor_role_ids or [])
+        if str(value).strip()
+    }
+    suppressed.add(role_id)
+    encounter.suppressed_doctor_role_ids = sorted(suppressed)
+
+
 @router.get("", response_model=list[DoctorExamRead])
 def list_doctor_exams(
     client_id: int | None = Query(default=None),
@@ -102,6 +140,7 @@ def create_or_update_doctor_exam(payload: DoctorExamCreate, db: Session = Depend
         for key, value in payload.model_dump().items():
             setattr(exam, key, value)
 
+    restore_doctor_role_on_encounter(db, exam.encounter_id, exam.doctor_role_id)
     apply_completion_state(exam)
     db.commit()
     db.refresh(exam)
@@ -151,6 +190,7 @@ def delete_doctor_exam(exam_id: int, db: Session = Depends(get_db)) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Осмотр не найден")
 
     exam.deleted_at = datetime.utcnow()
+    suppress_doctor_role_on_encounter(db, exam.encounter_id, exam.doctor_role_id)
     db.commit()
     write_audit_log(
         db,

@@ -248,17 +248,61 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             _medical_record_context_overrides(None),
             {
                 "HealthGroup": "",
+                "BloodGroup": "",
                 "BloodType": "",
+                "RhFactor": "",
+                "RhesusFactor": "",
+                "Allergies": "",
+                "qdfMain.BloodGroup": "",
                 "qdfMain.BloodType": "",
+                "qdfMain.RhFactor": "",
+                "qdfMain.Allergies": "",
+                "gdfMain.BloodGroup": "",
                 "gdfMain.BloodType": "",
+                "gdfMain.RhFactor": "",
+                "gdfMain.Allergies": "",
             },
         )
 
-        overrides = _medical_record_context_overrides(SimpleNamespace(health_group="2", marital_status="", work_place="", position=""))
+        overrides = _medical_record_context_overrides(
+            SimpleNamespace(
+                health_group="2",
+                blood_group="A (II)",
+                rh_factor="Rh(-)",
+                allergies="пенициллин",
+                marital_status="",
+                work_place="",
+                position="",
+            )
+        )
 
+        self.assertEqual(overrides["BloodGroup"], "A (II)")
+        self.assertEqual(overrides["RhFactor"], "Rh(-)")
+        self.assertEqual(overrides["RhesusFactor"], "Rh(-)")
+        self.assertEqual(overrides["Allergies"], "пенициллин")
         self.assertEqual(overrides["BloodType"], "2")
         self.assertEqual(overrides["qdfMain.BloodType"], "2")
         self.assertEqual(overrides["gdfMain.BloodType"], "2")
+
+    def test_prof_amb_xls_fills_blood_rh_and_allergies(self):
+        template_path = self._prof_template_path()
+        output_path = Path(tempfile.gettempdir()) / "prof_amb_blood_fields_test.xls"
+        context = self._context()
+        context.update(
+            {
+                "BloodGroup": "A (II)",
+                "RhFactor": "Rh(-)",
+                "Allergies": "пенициллин",
+            }
+        )
+
+        _generate_prof_amb_xls(template_path, output_path, context, self._client(), None, [])
+
+        book = xlrd.open_workbook(str(output_path), formatting_info=True)
+        sheet = book.sheet_by_name("Амб !")
+        self.assertEqual(sheet.cell_value(47, 40), "A (II)")
+        self.assertEqual(sheet.cell_value(47, 54), "Rh(-)")
+        self.assertEqual(sheet.cell_value(48, 44), "пенициллин")
 
     def test_context_overrides_keep_empty_strings_to_clear_tokens(self):
         context = {"qdfMain.BloodType": "[qdfMain.BloodType]", "Keep": "old"}

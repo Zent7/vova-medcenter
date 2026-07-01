@@ -3139,6 +3139,7 @@ async function syncVisitToBackend(visit, client) {
         payment_type: visit.paymentType || "cash",
         total_amount: Number(visit.amount || calculateVisitAmountByIds(getSelectedVisitServiceIds(visit), getVisitServiceDetails(visit))),
         comment: visit.comment || "",
+        suppressed_doctor_role_ids: Array.from(getSuppressedDoctorRoleCodesForVisit(visit)),
         status: visit.status || "draft",
       };
 
@@ -3148,6 +3149,7 @@ async function syncVisitToBackend(visit, client) {
       });
       visit.backendId = encounter.id;
       visit.status = encounter.status || visit.status || "draft";
+      visit.suppressedDoctorRoleIds = normalizeDoctorRoleIds(encounter.suppressed_doctor_role_ids);
 
       const selectedServiceIds = data.serverServicesLoaded ? getSelectedVisitServiceIds(visit) : [];
       const serviceDetails = getVisitServiceDetails(visit);
@@ -3239,6 +3241,9 @@ async function loadEncountersForClient(client) {
         return result;
       }, {});
       const existingVisit = existingVisitsByBackendId.get(String(encounter.id));
+      const suppressedDoctorRoleIds = normalizeDoctorRoleIds(
+        encounter.suppressed_doctor_role_ids || existingVisit?.suppressedDoctorRoleIds || [],
+      );
       mappedVisits.push({
         ...(existingVisit || {}),
         id: `encounter-${encounter.id}`,
@@ -3253,6 +3258,7 @@ async function loadEncountersForClient(client) {
         paymentType: encounter.payment_type || "cash",
         amount: Number(encounter.total_amount || 0),
         comment: encounter.comment || "",
+        suppressedDoctorRoleIds,
         examIds: [],
         documentIds: [],
         status: encounter.status || "draft",
@@ -3519,11 +3525,14 @@ function getDoctorExamById(examId) {
   return data.doctorExams.find((item) => String(item.id) === String(examId)) || null;
 }
 
-function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
+function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
   ensureVisitsStore();
 
+  const { restoreSuppressed = true } = options;
   const visit = data.visits.find((item) => String(item.id) === String(visitId));
-  restoreDoctorRoleForVisit(visit, doctorRoleId);
+  if (restoreSuppressed) {
+    restoreDoctorRoleForVisit(visit, doctorRoleId);
+  }
 
   let exam = getDoctorExam(clientId, visitId, doctorRoleId);
   if (exam) {
@@ -3583,7 +3592,7 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
   const createdOrExisting = [];
 
   requiredRoleCodes.forEach((doctorRoleId) => {
-    const exam = getOrCreateDoctorExam(client.id, visit.id, doctorRoleId);
+    const exam = getOrCreateDoctorExam(client.id, visit.id, doctorRoleId, { restoreSuppressed: false });
     if (!exam) return;
 
     if (!exam.isCompleted && exam.status !== "draft") {
@@ -3603,6 +3612,12 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
   }
 
   return createdOrExisting;
+}
+
+async function prepareVisitDoctorExamsForDocuments(client, visit) {
+  if (!client || !visit) return [];
+  await syncVisitToBackend(visit, client);
+  return ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
 }
 
 function openDoctorExamCard({ clientId, visitId, doctorRoleId }) {
@@ -3958,9 +3973,10 @@ function saveDoctorExamDraft(examId, updatedFields) {
   return true;
 }
 
-async function deleteDoctorExam(examId) {
+async function deleteDoctorExam(examId, options = {}) {
   ensureVisitsStore();
 
+  const { renderOptimistic = false } = options;
   const examIndex = data.doctorExams.findIndex((item) => item.id === examId);
   if (examIndex < 0) return false;
 
@@ -3977,6 +3993,9 @@ async function deleteDoctorExam(examId) {
   suppressDashboardDoctorRoleForExam(exam);
 
   persistDemoState();
+  if (renderOptimistic) {
+    renderApp();
+  }
 
   if (!exam.backendId) {
     return true;
@@ -3999,6 +4018,9 @@ async function deleteDoctorExam(examId) {
     }
     restoreDoctorMarkCaches(doctorMarkCacheSnapshot);
     persistDemoState();
+    if (renderOptimistic) {
+      renderApp();
+    }
     showToast("Не удалось удалить карточку врача");
     console.warn("Не удалось удалить карточку врача в backend", error);
     return false;
@@ -4035,7 +4057,8 @@ function openCompletedDoctorExamActions({ selectedClient, activeVisit, doctorRol
   });
 
   document.getElementById("deleteCompletedDoctorExam")?.addEventListener("click", async () => {
-    const removed = await deleteDoctorExam(currentExam.id);
+    closeActionModal();
+    const removed = await deleteDoctorExam(currentExam.id, { renderOptimistic: true });
     if (removed) {
       closeActionModal();
       showToast(`Карточка врача "${doctorName}" удалена`);
@@ -6522,6 +6545,20 @@ function getExamFieldValue(exam, keys) {
   return keys.map((key) => String(fields[key] || "").trim()).find(Boolean) || "";
 }
 
+function getVisitForDoctorExam(exam) {
+  if (!exam?.visitId) return null;
+  return data.visits.find((visit) => String(visit.id) === String(exam.visitId)) || null;
+}
+
+function shouldShowDoctorExamInAmbulatorySheet(exam, selectedClient = null) {
+  if (!exam) return false;
+  if (exam.isCompleted) return true;
+  const visit = getVisitForDoctorExam(exam);
+  if (!visit || visit.status === "closed") return false;
+  if (selectedClient && String(visit.clientId) !== String(selectedClient.id)) return false;
+  return getRequiredDoctorRoleCodesForVisit(visit, selectedClient).includes(exam.doctorRoleId);
+}
+
 function buildAmbulatorySheetEntries(entries, exams, selectedClient = null) {
   const backendEntries = (Array.isArray(entries) ? entries : []).map((entry) => ({
     id: `record-${entry.id}`,
@@ -6543,14 +6580,14 @@ function buildAmbulatorySheetEntries(entries, exams, selectedClient = null) {
   );
 
   const localEntries = (Array.isArray(exams) ? exams : [])
-    .filter((exam) => exam?.isCompleted)
+    .filter((exam) => shouldShowDoctorExamInAmbulatorySheet(exam, selectedClient))
     .map((exam) => ({
       id: exam.id,
       source: "exam",
       backendId: null,
       doctorRoleId: exam.doctorRoleId || "",
       doctorName: getClientDoctorFullName(selectedClient, exam.doctorRoleId) || exam.doctorName || getDoctorDisplayName(exam.doctorRoleId, selectedClient) || "Врач",
-      entryDate: formatApiDate(exam.updatedAt) || "—",
+      entryDate: formatApiDate(exam.isCompleted ? exam.updatedAt : getVisitForDoctorExam(exam)?.visitDate || exam.updatedAt) || "-",
       complaints: normalizeSheetValue(getExamFieldValue(exam, ["complaints", "complaintsPreset"])),
       anamnesis: normalizeSheetValue(getExamFieldValue(exam, ["anamnesis", "epidAnamnesis", "allergyAnamnesis"])),
       objective: normalizeSheetValue(
@@ -6587,7 +6624,7 @@ function renderMedicalRecordBackendBlock(selectedClient, exams = []) {
   }
 
   const draft = buildMedicalRecordDraft(selectedClient, record, data.medicalRecordEntries);
-  const entries = buildAmbulatorySheetEntries(data.medicalRecordEntries, exams);
+  const entries = buildAmbulatorySheetEntries(data.medicalRecordEntries, exams, selectedClient);
   const chairmanExam = getCompletedChairmanExam(exams);
   const chairmanMedicalRecordData = buildChairmanMedicalRecordData(chairmanExam?.fields || {});
   const primaryEntries = entries.slice(0, 3);
@@ -7092,6 +7129,11 @@ async function openAmbulatoryCardForCurrentClient() {
 
   if (selectedClient) {
     await loadClientWorkspace(selectedClient);
+    const activeVisit = getCurrentVisitForClient(selectedClient.id);
+    if (activeVisit) {
+      await prepareVisitDoctorExamsForDocuments(selectedClient, activeVisit);
+      renderApp();
+    }
   } else if (!data.workflowDataLoading) {
     await loadWorkflowData();
   }
@@ -7773,7 +7815,7 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
     await loadDocumentTemplatesFromBackend();
   }
 
-  await syncVisitToBackend(visit, client);
+  await prepareVisitDoctorExamsForDocuments(client, visit);
 
   const template = pickDocumentTemplate(type, visit, client);
   if (!template) {
@@ -10033,8 +10075,9 @@ function bindContentEvents() {
         const patch = readOperatorVisitForm(operatorVisitForm);
         const amountInput = operatorVisitForm.querySelector('input[name="amount"]');
         if (amountInput) amountInput.value = String(calculateVisitAmountByIds(patch.serviceIds, patch.serviceDetails));
-        await saveOperatorVisitForm({ recalculate: true });
+        const savePromise = saveOperatorVisitForm({ recalculate: true });
         renderAppKeepingOperatorVisitPosition(operatorVisitForm);
+        await savePromise;
       });
     });
 
@@ -10043,8 +10086,9 @@ function bindContentEvents() {
         const patch = readOperatorVisitForm(operatorVisitForm);
         const amountInput = operatorVisitForm.querySelector('input[name="amount"]');
         if (amountInput) amountInput.value = String(calculateVisitAmountByIds(patch.serviceIds, patch.serviceDetails));
-        await saveOperatorVisitForm({ recalculate: true });
+        const savePromise = saveOperatorVisitForm({ recalculate: true });
         renderAppKeepingOperatorVisitPosition(operatorVisitForm);
+        await savePromise;
       });
     });
   }
@@ -10564,18 +10608,18 @@ function bindContentEvents() {
         button.addEventListener("click", async (event) => {
           event.preventDefault();
           event.stopPropagation();
+          const targetWindow = window.open("about:blank", "_blank");
           await runChairmanPrint(
             button.dataset.chairmanPrintMenuKind || "conclusion",
             button.textContent?.trim() || "документ",
             button,
+            targetWindow,
           );
         });
       });
     };
 
-    const runChairmanPrint = async (printKind, actionLabel, currentButton) => {
-      const targetWindow = null;
-
+    const runChairmanPrint = async (printKind, actionLabel, currentButton, targetWindow = null) => {
       const examId = chairmanForm.dataset.examId;
       if (!examId) {
         if (targetWindow && !targetWindow.closed) targetWindow.close();
@@ -10675,7 +10719,8 @@ function bindContentEvents() {
         openChairmanPrintMenu();
         return;
       }
-      await runChairmanPrint(printButton.dataset.chairmanPrint || "conclusion", printButton.textContent?.trim() || "документ", printButton);
+      const targetWindow = window.open("about:blank", "_blank");
+      await runChairmanPrint(printButton.dataset.chairmanPrint || "conclusion", printButton.textContent?.trim() || "\u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442", printButton, targetWindow);
     });
   }
 

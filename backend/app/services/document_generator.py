@@ -1817,6 +1817,9 @@ def _generate_prof_amb_xls(
         ((26, 56), passport_series),
         ((26, 59), passport_number),
         ((38, 44), work_place),
+        ((47, 40), context.get("BloodGroup", "")),
+        ((47, 54), context.get("RhFactor", "") or context.get("RhesusFactor", "")),
+        ((48, 44), context.get("Allergies", "")),
     ]
     for (row_index, col_index), value in header_values:
         _write_xls_cell(target_sheet, source_sheet, row_index, col_index, value)
@@ -1834,9 +1837,6 @@ def _generate_prof_amb_xls(
             (45, 26),
             (47, 18),
             (47, 26),
-            (47, 40),
-            (47, 54),
-            (48, 44),
             (49, 18),
             (49, 26),
         ],
@@ -2085,19 +2085,22 @@ def _medical_record_context_overrides(medical_record: MedicalRecord | None) -> d
         overrides["Post"] = medical_record.position
         overrides["PositionApplied"] = medical_record.position
         overrides["qdfMain.Post"] = medical_record.position
-    if medical_record.blood_group:
-        overrides["BloodGroup"] = medical_record.blood_group
-        overrides["qdfMain.BloodGroup"] = medical_record.blood_group
-        overrides["gdfMain.BloodGroup"] = medical_record.blood_group
-    if medical_record.rh_factor:
-        overrides["RhFactor"] = medical_record.rh_factor
-        overrides["RhesusFactor"] = medical_record.rh_factor
-        overrides["qdfMain.RhFactor"] = medical_record.rh_factor
-        overrides["gdfMain.RhFactor"] = medical_record.rh_factor
-    if medical_record.allergies:
-        overrides["Allergies"] = medical_record.allergies
-        overrides["qdfMain.Allergies"] = medical_record.allergies
-        overrides["gdfMain.Allergies"] = medical_record.allergies
+    blood_group = getattr(medical_record, "blood_group", None)
+    rh_factor = getattr(medical_record, "rh_factor", None)
+    allergies = getattr(medical_record, "allergies", None)
+    if blood_group:
+        overrides["BloodGroup"] = blood_group
+        overrides["qdfMain.BloodGroup"] = blood_group
+        overrides["gdfMain.BloodGroup"] = blood_group
+    if rh_factor:
+        overrides["RhFactor"] = rh_factor
+        overrides["RhesusFactor"] = rh_factor
+        overrides["qdfMain.RhFactor"] = rh_factor
+        overrides["gdfMain.RhFactor"] = rh_factor
+    if allergies:
+        overrides["Allergies"] = allergies
+        overrides["qdfMain.Allergies"] = allergies
+        overrides["gdfMain.Allergies"] = allergies
     if medical_record.health_group:
         overrides["HealthGroup"] = medical_record.health_group
         overrides["BloodType"] = medical_record.health_group
