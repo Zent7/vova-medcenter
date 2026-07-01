@@ -3639,10 +3639,24 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
   return createdOrExisting;
 }
 
-async function prepareVisitDoctorExamsForDocuments(client, visit) {
+async function prepareVisitDoctorExamsForDocuments(client, visit, options = {}) {
   if (!client || !visit) return [];
+  const { markCompleted = false } = options;
   await syncVisitToBackend(visit, client);
-  return ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
+  const exams = await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: false });
+  if (markCompleted) {
+    exams.forEach((exam) => {
+      if (exam.isCompleted) return;
+      exam.isCompleted = true;
+      exam.status = "completed";
+      exam.updatedAt = new Date().toISOString();
+    });
+    persistDemoState();
+  }
+  for (const exam of exams) {
+    await syncDoctorExamToBackend(exam);
+  }
+  return exams;
 }
 
 function openDoctorExamCard({ clientId, visitId, doctorRoleId }) {
@@ -7154,11 +7168,6 @@ async function openAmbulatoryCardForCurrentClient() {
 
   if (selectedClient) {
     await loadClientWorkspace(selectedClient);
-    const activeVisit = getCurrentVisitForClient(selectedClient.id);
-    if (activeVisit) {
-      await prepareVisitDoctorExamsForDocuments(selectedClient, activeVisit);
-      renderApp();
-    }
   } else if (!data.workflowDataLoading) {
     await loadWorkflowData();
   }
@@ -7840,7 +7849,7 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
     await loadDocumentTemplatesFromBackend();
   }
 
-  await prepareVisitDoctorExamsForDocuments(client, visit);
+  await prepareVisitDoctorExamsForDocuments(client, visit, { markCompleted: true });
 
   const template = pickDocumentTemplate(type, visit, client);
   if (!template) {
