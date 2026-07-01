@@ -10524,18 +10524,18 @@ function bindContentEvents() {
         button.addEventListener("click", async (event) => {
           event.preventDefault();
           event.stopPropagation();
+          const targetWindow = window.open("about:blank", "_blank");
           await runChairmanPrint(
             button.dataset.chairmanPrintMenuKind || "conclusion",
             button.textContent?.trim() || "документ",
             button,
+            targetWindow,
           );
         });
       });
     };
 
-    const runChairmanPrint = async (printKind, actionLabel, currentButton) => {
-      const targetWindow = null;
-
+    const runChairmanPrint = async (printKind, actionLabel, currentButton, targetWindow = null) => {
       const examId = chairmanForm.dataset.examId;
       if (!examId) {
         if (targetWindow && !targetWindow.closed) targetWindow.close();
@@ -10635,7 +10635,8 @@ function bindContentEvents() {
         openChairmanPrintMenu();
         return;
       }
-      await runChairmanPrint(printButton.dataset.chairmanPrint || "conclusion", printButton.textContent?.trim() || "документ", printButton);
+      const targetWindow = window.open("about:blank", "_blank");
+      await runChairmanPrint(printButton.dataset.chairmanPrint || "conclusion", printButton.textContent?.trim() || "\u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442", printButton, targetWindow);
     });
   }
 
