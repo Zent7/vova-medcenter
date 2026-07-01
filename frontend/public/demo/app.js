@@ -9991,8 +9991,9 @@ function bindContentEvents() {
         const patch = readOperatorVisitForm(operatorVisitForm);
         const amountInput = operatorVisitForm.querySelector('input[name="amount"]');
         if (amountInput) amountInput.value = String(calculateVisitAmountByIds(patch.serviceIds, patch.serviceDetails));
-        await saveOperatorVisitForm({ recalculate: true });
+        const savePromise = saveOperatorVisitForm({ recalculate: true });
         renderAppKeepingOperatorVisitPosition(operatorVisitForm);
+        await savePromise;
       });
     });
 
@@ -10001,8 +10002,9 @@ function bindContentEvents() {
         const patch = readOperatorVisitForm(operatorVisitForm);
         const amountInput = operatorVisitForm.querySelector('input[name="amount"]');
         if (amountInput) amountInput.value = String(calculateVisitAmountByIds(patch.serviceIds, patch.serviceDetails));
-        await saveOperatorVisitForm({ recalculate: true });
+        const savePromise = saveOperatorVisitForm({ recalculate: true });
         renderAppKeepingOperatorVisitPosition(operatorVisitForm);
+        await savePromise;
       });
     });
   }
