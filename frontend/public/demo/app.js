@@ -773,11 +773,33 @@ function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status
     )
     .forEach((exam) => completed.add(exam.doctorRoleId));
 
-  if (visit.backendId && String(status?.encounterId || "") === String(visit.backendId)) {
+  if (!visit.backendId || String(status?.encounterId || "") === String(visit.backendId)) {
     addFromStatus();
   }
 
   return completed;
+}
+
+function getSuppressedDoctorRoleIdsForDashboardVisit(visit = null, status = null) {
+  const suppressed = new Set();
+  const addFromStatus = () => {
+    (status?.suppressedDoctorRoleIds || [])
+      .forEach((roleId) => {
+        const normalized = String(roleId || "").trim();
+        if (normalized) suppressed.add(normalized);
+      });
+  };
+
+  if (visit) {
+    getSuppressedDoctorRoleCodesForVisit(visit).forEach((roleId) => suppressed.add(roleId));
+    if (!visit.backendId || String(status?.encounterId || "") === String(visit.backendId)) {
+      addFromStatus();
+    }
+  } else {
+    addFromStatus();
+  }
+
+  return suppressed;
 }
 
 const _repairDemoTextMap = {
@@ -2127,12 +2149,15 @@ function hasCompletedDoctorExamHistory(clientId, doctorRoleId, currentVisitId = 
   );
 }
 
-function buildDoctorMark(roleCode, requiredDoctors, completedDoctors) {
+function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors = new Set()) {
   const requiredCount = requiredDoctors instanceof Map
     ? Number(requiredDoctors.get(roleCode) || 0)
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
+  if (suppressedDoctors.has(roleCode)) {
+    return { value: "", title: "", state: "empty" };
+  }
   if (completedDoctors.has(roleCode)) {
     return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
   }
@@ -4060,7 +4085,6 @@ function openCompletedDoctorExamActions({ selectedClient, activeVisit, doctorRol
     closeActionModal();
     const removed = await deleteDoctorExam(currentExam.id, { renderOptimistic: true });
     if (removed) {
-      closeActionModal();
       showToast(`Карточка врача "${doctorName}" удалена`);
       renderApp();
     }
@@ -4509,7 +4533,8 @@ function buildExcelRows(clients) {
     );
     const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : new Map();
     const completedDoctors = getCompletedDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
-    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors);
+    const suppressedDoctors = getSuppressedDoctorRoleIdsForDashboardVisit(currentVisit, status);
+    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors);
 
     return {
       id: client.id,
