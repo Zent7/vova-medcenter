@@ -67,6 +67,7 @@ let structuredServices = [];
 
 const DEFAULT_DOCTOR_DIRECTORY = {
   therapist: "Казаков И.В.",
+  chairman: "Казаков И.В.",
   psychiatrist: "Аносов И.Е.",
   "psychiatrist-narcologist": "Аносов И.Е.",
   neurologist: "Казаков И.В.",
@@ -2900,6 +2901,29 @@ function getDoctorDisplayName(doctorRoleId, client = null) {
   return role?.name || doctorRoleId;
 }
 
+function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") {
+  const roleId = String(doctorRoleId || "").trim();
+  const clientDoctorName = getClientDoctorFullName(client, roleId);
+  if (clientDoctorName) return clientDoctorName;
+
+  const directoryName = getDoctorFullName(roleId);
+  if (directoryName) return directoryName;
+
+  const normalizedFallback = String(fallbackName || "").trim();
+  const template = getDoctorTemplate(roleId);
+  const role = doctorRoles.find((item) => String(item.id) === roleId || item.code === roleId);
+  const genericNames = new Set(
+    [template?.name, role?.name, roleId, "Врач", "Председатель", "ПРЕДСЕДАТЕЛЬ"]
+      .filter(Boolean)
+      .map((value) => String(value).trim().toLowerCase()),
+  );
+  if (normalizedFallback && !genericNames.has(normalizedFallback.toLowerCase())) {
+    return normalizedFallback;
+  }
+
+  return getDoctorDisplayName(roleId, client);
+}
+
 function buildDoctorExamFields(template) {
   const result = {};
 
@@ -3318,7 +3342,7 @@ async function loadDoctorExamsForClient(client, visit = null) {
       visitId: visit?.id || `encounter-${exam.encounter_id}`,
       backendEncounterId: exam.encounter_id || null,
       doctorRoleId: exam.doctor_role_id,
-      doctorName: getClientDoctorFullName(client, exam.doctor_role_id) || exam.doctor_name || getDoctorDisplayName(exam.doctor_role_id, client),
+      doctorName: getDoctorSignatureName(exam.doctor_role_id, client, exam.doctor_name),
       status: exam.is_completed ? "completed" : "draft",
       isCompleted: Boolean(exam.is_completed),
       updatedAt: new Date().toISOString(),
@@ -3583,7 +3607,7 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
     clientId,
     visitId,
     doctorRoleId,
-    doctorName: getDoctorDisplayName(
+    doctorName: getDoctorSignatureName(
       doctorRoleId,
       getClientPool().find((item) => String(item.id) === String(clientId)) || null,
     ),
@@ -3611,7 +3635,7 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
   return exam;
 }
 
-async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend = false } = {}) {
+async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend = false, markCompleted = syncToBackend } = {}) {
   if (!client || !visit) return [];
   const requiredRoleCodes = getRequiredDoctorRoleCodesForVisit(visit, client);
   const createdOrExisting = [];
@@ -3622,6 +3646,11 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
 
     if (!exam.isCompleted && exam.status !== "draft") {
       exam.status = "draft";
+      exam.updatedAt = new Date().toISOString();
+    }
+    if (markCompleted && !exam.isCompleted) {
+      exam.isCompleted = true;
+      exam.status = "completed";
       exam.updatedAt = new Date().toISOString();
     }
 
@@ -4176,7 +4205,7 @@ async function syncDoctorExamToBackend(exam) {
       client_id: Number(clientId),
       encounter_id: visit?.backendId ? Number(visit.backendId) : null,
       doctor_role_id: exam.doctorRoleId,
-      doctor_name: getDoctorDisplayName(exam.doctorRoleId, client),
+      doctor_name: getDoctorSignatureName(exam.doctorRoleId, client, exam.doctorName),
       fields_json: exam.fields || {},
       is_completed: Boolean(exam.isCompleted),
     }),
@@ -4184,7 +4213,7 @@ async function syncDoctorExamToBackend(exam) {
   exam.backendId = savedExam.id;
   exam.backendEncounterId = savedExam.encounter_id || visit?.backendId || null;
   exam.updatedAt = savedExam.completed_at || savedExam.updated_at || new Date().toISOString();
-  exam.doctorName = getClientDoctorFullName(client, exam.doctorRoleId) || savedExam.doctor_name || getDoctorDisplayName(exam.doctorRoleId, client);
+  exam.doctorName = getDoctorSignatureName(exam.doctorRoleId, client, savedExam.doctor_name);
   exam.fields = savedExam.fields_json || exam.fields || {};
   exam.isCompleted = Boolean(savedExam.is_completed);
   exam.status = exam.isCompleted ? "completed" : "draft";
@@ -6604,7 +6633,7 @@ function buildAmbulatorySheetEntries(entries, exams, selectedClient = null) {
     source: "backend",
     backendId: entry.id,
     doctorRoleId: entry.doctor_role_id || "",
-    doctorName: getClientDoctorFullName(selectedClient, entry.doctor_role_id) || entry.doctor_name || getDoctorDisplayName(entry.doctor_role_id, selectedClient) || "Врач",
+    doctorName: getDoctorSignatureName(entry.doctor_role_id, selectedClient, entry.doctor_name) || "Врач",
     entryDate: formatApiDate(entry.entry_date) || "—",
     complaints: normalizeSheetValue(entry.complaints),
     anamnesis: normalizeSheetValue(entry.anamnesis),
@@ -6625,7 +6654,7 @@ function buildAmbulatorySheetEntries(entries, exams, selectedClient = null) {
       source: "exam",
       backendId: null,
       doctorRoleId: exam.doctorRoleId || "",
-      doctorName: getClientDoctorFullName(selectedClient, exam.doctorRoleId) || exam.doctorName || getDoctorDisplayName(exam.doctorRoleId, selectedClient) || "Врач",
+      doctorName: getDoctorSignatureName(exam.doctorRoleId, selectedClient, exam.doctorName) || "Врач",
       entryDate: formatApiDate(exam.isCompleted ? exam.updatedAt : getVisitForDoctorExam(exam)?.visitDate || exam.updatedAt) || "-",
       complaints: normalizeSheetValue(getExamFieldValue(exam, ["complaints", "complaintsPreset"])),
       anamnesis: normalizeSheetValue(getExamFieldValue(exam, ["anamnesis", "epidAnamnesis", "allergyAnamnesis"])),
@@ -6687,7 +6716,7 @@ function renderMedicalRecordBackendBlock(selectedClient, exams = []) {
     .join(", ");
   const healthGroup = draft.healthGroup;
   const serviceDiagnosis = draft.dispensaryObservation || diagnosis;
-  const chairmanName = normalizeSheetValue(selectedClient?.chairman || selectedClient?.therapist);
+  const chairmanName = normalizeSheetValue(getDoctorSignatureName("chairman", selectedClient));
   const visibleEntries = data.medicalRecordEditMode ? draft.entries : entries;
   const memberNames = normalizeSheetValue(visibleEntries.map((entry) => entry.doctorName).slice(0, 4).join(", "));
   const commissionDate = (data.medicalRecordEditMode ? draft.entries : primaryEntries)[0]?.entryDate || openedAt;
