@@ -1334,6 +1334,17 @@ DRIVER_RESTRICTION_TOKEN_FIELDS = {
     "TCB": ("restrictionBBE", ("b be", "bbe")),
     "TCC": ("restrictionCCE", ("c ce", "cce")),
 }
+DRIVER_XLS_BACK_STATUS_ROWS = (
+    (14, "TCA"),
+    (17, "TCB"),
+    (20, "TCC"),
+    (25, "ManualControlCalc"),
+    (27, "AutomaticTransmissionCalc"),
+    (29, "ParkingSystemCalc"),
+    (31, "VisionTCCalc"),
+    (33, "HearingTCCalc"),
+)
+DRIVER_XLS_BACK_STATUS_COLS = (29, 62)
 
 
 def _truthy_driver_value(value: object) -> bool:
@@ -1615,6 +1626,10 @@ def _fill_driver_xls_sheets(
             ((36, 8), driver_lines[6]),
             ((36, 41), driver_lines[6]),
         ]
+        for row_index, context_key in DRIVER_XLS_BACK_STATUS_ROWS:
+            status_value = _restriction_text(context.get(context_key))
+            for col_index in DRIVER_XLS_BACK_STATUS_COLS:
+                back_cells.append(((row_index, col_index), status_value))
         _write_xls_pairs(back_target, back_source, back_cells)
 
 

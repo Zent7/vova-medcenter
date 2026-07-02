@@ -2,7 +2,14 @@
 let clientModalServiceDetails = {};
 let clientModalSubmitAction = "save";
 
-const CLIENT_DRIVER_DEFAULT_CATEGORIES = ["A", "B", "C", "D", "BE", "M"];
+const CLIENT_DRIVER_DEFAULT_CATEGORIES = ["A", "B", "C", "D", "BE", "M"];
+const CLIENT_DRIVER_CATEGORY_ROWS = [
+  ["A", "B", "C", "D"],
+  ["BE", "CE", "DE"],
+  ["Tm", "Tb", "M"],
+  ["A1", "B1", "C1", "D1", "C1E", "D1E"],
+];
+const CLIENT_DRIVER_CATEGORY_OPTIONS = CLIENT_DRIVER_CATEGORY_ROWS.flat();
 const CLIENT_DRIVER_LIMITATIONS = [
   "Категории A, M, A1, B1",
   "Категории B, BE, B1",
@@ -413,8 +420,14 @@ function getClientDriverCategoriesFromForm() {
   const categoryInputs = Array.from(actionModalContent.querySelectorAll('input[name="clientDriverCategory"]'));
   if (!categoryInputs.length) return CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
   const checked = categoryInputs.filter((input) => input.checked)
-    .map((input) => input.value);
+    .map((input) => input.value);
   return checked;
+}
+
+function getClientDriverCategoryOptions() {
+  return typeof DRIVER_CATEGORY_OPTIONS !== "undefined"
+    ? DRIVER_CATEGORY_OPTIONS
+    : CLIENT_DRIVER_CATEGORY_OPTIONS;
 }
 
 function getClientDriverFlagsFromForm(fieldName) {
@@ -451,7 +464,7 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
   const normalizedCategories = Array.isArray(selectedCategories)
     ? (typeof normalizeDriverCategories === "function"
         ? normalizeDriverCategories(selectedCategories)
-        : DRIVER_CATEGORY_OPTIONS.filter((item) => selectedCategories.includes(item)))
+        : getClientDriverCategoryOptions().filter((item) => selectedCategories.includes(item)))
     : CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
 
 
@@ -496,13 +509,13 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
 
         <div class="client-driver-categories">
           <div class="client-driver-category-row client-driver-category-row--top">
-            ${["A", "B", "C", "D"].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${CLIENT_DRIVER_CATEGORY_ROWS[0].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
           </div>
           <div class="client-driver-category-row">
-            ${["BE", "CE", "DE"].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${CLIENT_DRIVER_CATEGORY_ROWS[1].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
           </div>
           <div class="client-driver-category-row">
-            ${["Tm", "Tb", "M"].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${CLIENT_DRIVER_CATEGORY_ROWS[2].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
 
 
 
@@ -514,7 +527,7 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
 
 
 
-            ${["A1", "B1", "C1", "D1", "C1E", "D1E"].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${CLIENT_DRIVER_CATEGORY_ROWS[3].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
           </div>
         </div>
 
