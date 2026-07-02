@@ -1566,6 +1566,16 @@ const DRIVER_LIMITATION_FIELD_TO_LABEL = {
 const DRIVER_LIMITATION_LABEL_TO_FIELD = Object.fromEntries(
   Object.entries(DRIVER_LIMITATION_FIELD_TO_LABEL).map(([key, value]) => [value, key]),
 );
+const DRIVER_LIMITATION_FIELD_ALIASES = {
+  restrictionAM: ["Категории A, M, A1, B1"],
+  restrictionBBE: ["Категории B, BE, B1", "BBE"],
+  restrictionCCE: ["Категории C, CE, D, DE, Tm, Tb, C1, D1, C1E, D1E", "CCE"],
+};
+
+function hasDriverLimitationSelection(limitations, fieldKey) {
+  const label = DRIVER_LIMITATION_FIELD_TO_LABEL[fieldKey];
+  return limitations.includes(label) || (DRIVER_LIMITATION_FIELD_ALIASES[fieldKey] || []).some((alias) => limitations.includes(alias));
+}
 
 function collectChairmanDriverCategories(fields = {}) {
   const categories = [];
@@ -1645,9 +1655,9 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
     indicationHearingAid: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationHearingAid) : Boolean(fields.indicationHearingAid),
     indicationNoHiring: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationNoHiring) : Boolean(fields.indicationNoHiring),
     indicationOneYear: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationOneYear) : Boolean(fields.indicationOneYear),
-    restrictionAM: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionAM) : Boolean(fields.restrictionAM),
-    restrictionBBE: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionBBE) : Boolean(fields.restrictionBBE),
-    restrictionCCE: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionCCE) : Boolean(fields.restrictionCCE),
+    restrictionAM: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionAM") : Boolean(fields.restrictionAM),
+    restrictionBBE: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionBBE") : Boolean(fields.restrictionBBE),
+    restrictionCCE: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionCCE") : Boolean(fields.restrictionCCE),
     restrictionNoHands: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionNoHands) : Boolean(fields.restrictionNoHands),
     restrictionNoLegs: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionNoLegs) : Boolean(fields.restrictionNoLegs),
     examDate: fields.examDate || visit?.visitDate || "",

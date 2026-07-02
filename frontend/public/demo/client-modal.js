@@ -10,11 +10,16 @@ const CLIENT_DRIVER_CATEGORY_ROWS = [
   ["A1", "B1", "C1", "D1", "C1E", "D1E"],
 ];
 const CLIENT_DRIVER_CATEGORY_OPTIONS = CLIENT_DRIVER_CATEGORY_ROWS.flat();
-const CLIENT_DRIVER_LIMITATIONS = [
+const CLIENT_DRIVER_LIMITATIONS = [
   "Категории A, M, A1, B1",
   "Категории B, BE, B1",
   "Категории C, CE, D, DE, Tm, Tb, C1, D1, C1E, D1E",
-];
+];
+const CLIENT_DRIVER_LIMITATION_ALIASES = {
+  "Категории A, M, A1, B1": ["AM"],
+  "Категории B, BE, B1": ["B BE", "BBE"],
+  "Категории C, CE, D, DE, Tm, Tb, C1, D1, C1E, D1E": ["C CE", "CCE"],
+};
 const CLIENT_DRIVER_INDICATIONS = [
   "С ручным упр-ем",
   "С автоматич. трансмиссией",
@@ -430,6 +435,10 @@ function getClientDriverCategoryOptions() {
     : CLIENT_DRIVER_CATEGORY_OPTIONS;
 }
 
+function isClientDriverFlagSelected(selectedValues, value) {
+  return selectedValues.includes(value) || (CLIENT_DRIVER_LIMITATION_ALIASES[value] || []).some((alias) => selectedValues.includes(alias));
+}
+
 function getClientDriverFlagsFromForm(fieldName) {
 
 
@@ -533,7 +542,7 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
 
         <div class="client-driver-box client-driver-box--limits">
           <strong>Мед. ограничения к упр-ию ТС</strong>
-          ${CLIENT_DRIVER_LIMITATIONS.map((item) => renderClientClassicCheckbox("clientDriverLimit", item, item, selectedLimitations.includes(item))).join("")}
+          ${CLIENT_DRIVER_LIMITATIONS.map((item) => renderClientClassicCheckbox("clientDriverLimit", item, item, isClientDriverFlagSelected(selectedLimitations, item))).join("")}
           <span class="client-driver-red-dot">•</span>
         </div>
 
