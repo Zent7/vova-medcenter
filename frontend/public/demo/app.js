@@ -3635,7 +3635,7 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
   return exam;
 }
 
-async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend = false, markCompleted = syncToBackend } = {}) {
+async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend = false } = {}) {
   if (!client || !visit) return [];
   const requiredRoleCodes = getRequiredDoctorRoleCodesForVisit(visit, client);
   const createdOrExisting = [];
@@ -3648,12 +3648,6 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
       exam.status = "draft";
       exam.updatedAt = new Date().toISOString();
     }
-    if (markCompleted && !exam.isCompleted) {
-      exam.isCompleted = true;
-      exam.status = "completed";
-      exam.updatedAt = new Date().toISOString();
-    }
-
     createdOrExisting.push(exam);
   });
 
@@ -3668,20 +3662,10 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
   return createdOrExisting;
 }
 
-async function prepareVisitDoctorExamsForDocuments(client, visit, options = {}) {
+async function prepareVisitDoctorExamsForDocuments(client, visit) {
   if (!client || !visit) return [];
-  const { markCompleted = false } = options;
   await syncVisitToBackend(visit, client);
   const exams = await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: false });
-  if (markCompleted) {
-    exams.forEach((exam) => {
-      if (exam.isCompleted) return;
-      exam.isCompleted = true;
-      exam.status = "completed";
-      exam.updatedAt = new Date().toISOString();
-    });
-    persistDemoState();
-  }
   for (const exam of exams) {
     await syncDoctorExamToBackend(exam);
   }
@@ -7878,7 +7862,7 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
     await loadDocumentTemplatesFromBackend();
   }
 
-  await prepareVisitDoctorExamsForDocuments(client, visit, { markCompleted: true });
+  await prepareVisitDoctorExamsForDocuments(client, visit);
 
   const template = pickDocumentTemplate(type, visit, client);
   if (!template) {
