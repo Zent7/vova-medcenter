@@ -187,7 +187,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
         back_sheet = result_book.sheet_by_name("Водительская Оборотная")
 
-        expected_marks = ["Z", "V", "V", "Z", "Z", "Z", "Z", "V", "Z", "Z", "Z", "Z", "Z", "Z", "V", "Z"]
+        expected_marks = ["Z", "✓", "✓", "Z", "Z", "Z", "Z", "✓", "Z", "Z", "Z", "Z", "Z", "Z", "✓", "Z"]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], expected_marks)
         self.assertEqual(back_sheet.cell_value(36, 8), "Председатель")

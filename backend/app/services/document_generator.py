@@ -1513,7 +1513,7 @@ def _driver_category_marks(context: dict[str, str], client: Client, exams_by_rol
     chairman = exams_by_role.get("chairman")
     chairman_categories = _driver_categories_from_chairman(chairman.fields_json or {}) if chairman and chairman.is_completed else None
     selected = chairman_categories if chairman_categories is not None else _driver_categories_from_context(context, client)
-    return ["V" if category in selected else "Z" for category in DRIVER_XLS_CATEGORY_KEYS]
+    return ["✓" if category in selected else "Z" for category in DRIVER_XLS_CATEGORY_KEYS]
 
 
 def _driver_marker_style(source_book, source_sheet, row_index: int, col_index: int):
@@ -1522,7 +1522,7 @@ def _driver_marker_style(source_book, source_sheet, row_index: int, col_index: i
 
     style = xlwt.XFStyle()
     font = xlwt.Font()
-    font.name = "Arial Cyr"
+    font.name = "Arial"
     font.height = 320
     font.bold = False
     font.italic = False
