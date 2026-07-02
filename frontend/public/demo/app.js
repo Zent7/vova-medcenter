@@ -1667,15 +1667,24 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
 function getDriverDetailFromVisit(visit) {
   if (!visit) return {};
   const serviceDetails = getVisitServiceDetails(visit);
-  const details = Object.values(serviceDetails);
-  const detailWithCategories = details.find((detail) =>
-    Array.isArray(detail?.categories)
-      ? detail.categories.length
-      : String(detail?.categories || "").trim(),
-  );
-  if (detailWithCategories) return detailWithCategories;
   const driverServiceId = getSelectedVisitServiceIds(visit).find((serviceId) => isDriverService(getServiceById(serviceId)));
-  return driverServiceId ? (serviceDetails[String(driverServiceId)] ||= {}) : {};
+  const primaryDetail = driverServiceId ? (serviceDetails[String(driverServiceId)] ||= {}) : {};
+  const details = Object.values(serviceDetails).filter((detail) => detail && typeof detail === "object");
+  const driverDetails = details.filter((detail) =>
+    (Array.isArray(detail.categories) ? detail.categories.length : String(detail.categories || "").trim()) ||
+    Array.isArray(detail.indications) ||
+    Array.isArray(detail.limitations) ||
+    Object.hasOwn(detail, "boatFit"),
+  );
+  driverDetails.forEach((detail) => {
+    if (detail === primaryDetail) return;
+    if (!primaryDetail.categories && detail.categories) primaryDetail.categories = detail.categories;
+    if (!Array.isArray(primaryDetail.indications) && Array.isArray(detail.indications)) primaryDetail.indications = detail.indications.slice();
+    if (!Array.isArray(primaryDetail.limitations) && Array.isArray(detail.limitations)) primaryDetail.limitations = detail.limitations.slice();
+    if (!Object.hasOwn(primaryDetail, "boatFit") && Object.hasOwn(detail, "boatFit")) primaryDetail.boatFit = detail.boatFit;
+  });
+  if (driverServiceId) return primaryDetail;
+  return driverDetails[0] || {};
 }
 
 function getDoctorRoleCodeById(roleId) {
@@ -8745,6 +8754,7 @@ async function openDriverPrintFlow(options = {}) {
     flowState.error = "";
     renderFlow();
     try {
+      await prepareVisitDoctorExamsForDocuments(flowState.client, flowState.visit);
       const result = await apiRequest("/documents/print", {
         method: "POST",
         body: JSON.stringify({
