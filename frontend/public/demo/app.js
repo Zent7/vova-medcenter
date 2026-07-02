@@ -8553,6 +8553,12 @@ async function openDriverPrintFlow(options = {}) {
     console.warn("Не удалось загрузить свободные серии бланков", error);
   }
 
+  const availableSeriesOptions = Array.isArray(seriesOptions) ? seriesOptions.slice() : [];
+  const storedSeries = getStoredDriverPrintSeries();
+  const isStoredSeriesAvailable = availableSeriesOptions.some(
+    (item) => normalizeBlankSeries(item?.series).toLowerCase() === storedSeries.toLowerCase(),
+  );
+  const defaultSeries = normalizeBlankSeries(availableSeriesOptions[0]?.series || seriesOptions[0]?.series);
   const seriesOptionMap = new Map();
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
@@ -8608,7 +8614,8 @@ async function openDriverPrintFlow(options = {}) {
     seriesOptions,
     selectedSeries:
       preselectedSeries ||
-      getStoredDriverPrintSeries() ||
+      (isStoredSeriesAvailable ? storedSeries : "") ||
+      defaultSeries ||
       normalizeBlankSeries(seriesOptions[0]?.series),
     selectedCertificateType: "",
     certificateTypes: requestedCertificateTypes,
