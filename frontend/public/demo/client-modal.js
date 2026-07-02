@@ -866,7 +866,7 @@ function renderClientServiceSelector(selectedServices = []) {
                         ${selectedSet.has(service.name) ? "checked" : ""}
                       />
                       <span>${escapeHtml(service.name)}</span>
-                      ${selectedSet.has(service.name) ? '<span class="client-service-chip__remove" aria-hidden="true">×</span>' : ""}
+                      ${selectedSet.has(service.name) ? '<span class="client-service-chip__check" aria-hidden="true"></span>' : ""}
                     </label>
                   `,
                 )
@@ -879,12 +879,18 @@ function renderClientServiceSelector(selectedServices = []) {
 }
 
 function bindClientServiceGroupButtons() {
-  actionModalContent.querySelectorAll('#serviceSelectorContainer input[name="services"]').forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      refreshClientDriverPanel();
-      refreshClientPaymentPanel();
-    });
-  });
+  actionModalContent.querySelectorAll('#serviceSelectorContainer input[name="services"]').forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const selectedNow = getClientModalSelectedServicesFromDom();
+      const container = document.getElementById("serviceSelectorContainer");
+      if (container) {
+        container.outerHTML = `<div id="serviceSelectorContainer">${renderClientServiceSelector(selectedNow)}</div>`;
+        bindClientServiceGroupButtons();
+      }
+      refreshClientDriverPanel();
+      refreshClientPaymentPanel();
+    });
+  });
 
   actionModalContent.querySelectorAll("[data-client-service-group]").forEach((button) => {
     button.addEventListener("click", () => {

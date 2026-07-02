@@ -1441,19 +1441,25 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   color: #0c7d7b;
 }
 
-.client-service-chip__remove {
+.client-service-chip__check {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 18px;
   height: 18px;
-  border-radius: 999px;
-  background: rgba(12, 125, 123, 0.14);
-  color: #0c7d7b;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
+  border: 2px solid #0c7d7b;
+  border-radius: 4px;
+  background: #0c7d7b;
   flex: 0 0 auto;
+}
+
+.client-service-chip__check::before {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
 }
 
 .client-payment-block {
