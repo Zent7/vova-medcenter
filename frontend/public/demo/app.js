@@ -2167,7 +2167,7 @@ function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressed
       ? `Требуется в текущем обращении: ${requiredCount}`
       : "Требуется в текущем обращении";
     return {
-      value: "•",
+      value: "✓",
       title: requiredTitle,
       state: "required",
     };
