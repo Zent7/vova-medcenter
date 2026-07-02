@@ -1620,8 +1620,8 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
   const indications = Array.isArray(detail.indications) ? detail.indications : [];
   const limitations = Array.isArray(detail.limitations) ? detail.limitations : [];
   const hasCategoryOverrides = sourceCategories.length > 0;
-  const hasIndicationOverrides = indications.length > 0;
-  const hasLimitationOverrides = limitations.length > 0;
+  const hasIndicationOverrides = Array.isArray(detail.indications);
+  const hasLimitationOverrides = Array.isArray(detail.limitations);
 
   return {
     ...fields,
@@ -3676,6 +3676,16 @@ async function prepareVisitDoctorExamsForDocuments(client, visit) {
   if (!client || !visit) return [];
   await syncVisitToBackend(visit, client);
   const exams = await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: false });
+  const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
+  if (chairmanExam && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
+    const nextFields = applyDriverSelectionsToChairmanFields(chairmanExam.fields || {}, getDriverDetailFromVisit(visit), visit);
+    if (JSON.stringify(nextFields) !== JSON.stringify(chairmanExam.fields || {})) {
+      chairmanExam.fields = nextFields;
+      chairmanExam.updatedAt = new Date().toISOString();
+      visit.chairmanFields = { ...nextFields };
+      persistDemoState();
+    }
+  }
   for (const exam of exams) {
     await syncDoctorExamToBackend(exam);
   }
