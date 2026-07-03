@@ -1335,7 +1335,14 @@ function getVisitPaymentTotals(services = [], amount = 0, fallbackPaymentType = 
 }
 
 function isDriverService(service) {
-  return DRIVER_SERVICE_LEGACY_IDS.has(Number(service?.legacySourceId ?? service?.id));
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
+  const normalizedName = String(service?.name || "").trim().toLowerCase();
+  return (
+    DRIVER_SERVICE_LEGACY_IDS.has(legacyId) ||
+    normalizedName.includes("водител") ||
+    normalizedName.includes("водительск") ||
+    normalizedName.includes("водительского удостовер")
+  );
 }
 
 function isTractorService(service) {
