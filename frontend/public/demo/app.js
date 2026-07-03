@@ -1414,6 +1414,20 @@ function getServicesForVisit(visit) {
     .filter(Boolean);
 }
 
+function hasDriverAdmissionCategoriesForVisit(visit) {
+  if (!visit) return false;
+  const client = getClientPool().find((item) => String(item.id) === String(visit.clientId));
+  const detail = getDriverDetailFromVisit(visit);
+  const values = [
+    detail.categories,
+    visit.admissionCategory,
+    client?.admissionCategory,
+    client?.category,
+    client?.rawApiClient?.admission_category,
+  ];
+  return values.some((value) => normalizeDriverCategories(value).length > 0);
+}
+
 function getChairmanFormTypeForVisit(visit) {
   const services = getServicesForVisit(visit);
   const serviceText = [
@@ -1423,7 +1437,7 @@ function getChairmanFormTypeForVisit(visit) {
     .join(" ")
     .toLowerCase();
 
-  if (services.some(isDriverService) || serviceText.includes("водител")) return "driver";
+  if (services.some(isDriverService) || serviceText.includes("водител") || hasDriverAdmissionCategoriesForVisit(visit)) return "driver";
   if (services.some(isGimsService) || serviceText.includes("гимс")) return "gims";
   if (services.some(isLmkService) || serviceText.includes("лмк")) return "lmk";
   if (services.some(isProfService) || serviceText.includes("профосмотр") || serviceText.includes("29н")) return "prof";
