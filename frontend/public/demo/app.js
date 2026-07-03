@@ -8287,8 +8287,8 @@ function getAutoServiceSeriesOptions() {
     .filter((series) => series && !isPreenteredBlankSeries(series));
 }
 
-function getDriverPrintSeriesPickerOptions(seriesOptions = []) {
-  const ordered = [...PREENTERED_BLANK_SERIES, ...CERTIFICATE_PRINT_SERIES_OPTIONS, ...getAutoServiceSeriesOptions()];
+function getDriverPrintSeriesPickerOptions(seriesOptions = [], { includeSuggestedSeries = true } = {}) {
+  const ordered = includeSuggestedSeries ? [...PREENTERED_BLANK_SERIES, ...CERTIFICATE_PRINT_SERIES_OPTIONS, ...getAutoServiceSeriesOptions()] : [];
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
     if (series) ordered.push(series);
@@ -8531,6 +8531,7 @@ async function openDriverPrintFlow(options = {}) {
     : [];
   const compactCertificateFlow = Boolean(options.compactCertificateFlow);
   const preselectedCertificateType = getDriverPrintCertificateType(preselectedSeries);
+  const isOrdinaryDriverFlow = !preselectedCertificateType && !requestedCertificateTypes.length;
   const template = pickDocumentTemplate("driver", visit, client);
   if (!template && !preselectedCertificateType && !requestedCertificateTypes.length) {
     showToast("Не найден шаблон водительской справки");
@@ -8552,6 +8553,9 @@ async function openDriverPrintFlow(options = {}) {
   } catch (error) {
     console.warn("Не удалось загрузить свободные серии бланков", error);
   }
+  if (isOrdinaryDriverFlow && Array.isArray(seriesOptions)) {
+    seriesOptions = seriesOptions.filter((item) => !isCertificatePrintSeries(item?.series));
+  }
 
   const availableSeriesOptions = Array.isArray(seriesOptions) ? seriesOptions.slice() : [];
   const storedSeries = getStoredDriverPrintSeries();
@@ -8564,7 +8568,7 @@ async function openDriverPrintFlow(options = {}) {
     const series = normalizeBlankSeries(item?.series);
     if (series) seriesOptionMap.set(series.toLowerCase(), item);
   });
-  getDriverPrintSeriesPickerOptions(seriesOptions).forEach((series) => {
+  getDriverPrintSeriesPickerOptions(seriesOptions, { includeSuggestedSeries: !isOrdinaryDriverFlow }).forEach((series) => {
     const normalizedKey = normalizeBlankSeries(series).toLowerCase();
     if (!seriesOptionMap.has(normalizedKey)) {
       seriesOptionMap.set(normalizedKey, {
@@ -8577,7 +8581,7 @@ async function openDriverPrintFlow(options = {}) {
   });
   seriesOptions = Array.from(seriesOptionMap.values());
 
-  if (!Array.isArray(seriesOptions) || !seriesOptions.length) {
+  if ((!Array.isArray(seriesOptions) || !seriesOptions.length) && !isOrdinaryDriverFlow) {
     try {
       const query = new URLSearchParams({
         blank_type: blankType,
