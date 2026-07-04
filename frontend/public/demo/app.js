@@ -3707,7 +3707,7 @@ async function prepareVisitDoctorExamsForDocuments(client, visit) {
   await syncVisitToBackend(visit, client);
   const exams = await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: false });
   const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
-  if (chairmanExam && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
+  if (chairmanExam && !chairmanExam.isCompleted && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
     const nextFields = applyDriverSelectionsToChairmanFields(chairmanExam.fields || {}, getDriverDetailFromVisit(visit), visit);
     if (JSON.stringify(nextFields) !== JSON.stringify(chairmanExam.fields || {})) {
       chairmanExam.fields = nextFields;
