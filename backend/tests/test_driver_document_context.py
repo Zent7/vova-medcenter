@@ -100,7 +100,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(context["VisionTCCalc"], "true")
         self.assertEqual(context["DriveShipCalc"], "true")
         self.assertEqual(context["TCA"], "X")
-        self.assertEqual(context["TCB"], "")
+        self.assertEqual(context["TCB"], "X")
         self.assertEqual(context["TCC"], "X")
 
     def test_xml_context_uses_boolean_categories_and_restrictions(self):
@@ -125,7 +125,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(xml_context["ManualControlCalc"], "true")
         self.assertEqual(xml_context["AutomaticTransmissionCalc"], "false")
         self.assertEqual(xml_context["CategoryACalc"], "true")
-        self.assertEqual(xml_context["CategoryBCalc"], "false")
+        self.assertEqual(xml_context["CategoryBCalc"], "true")
 
     def test_driver_xls_back_sheet_fills_categories_restrictions_and_signer(self):
         template_path = next(
@@ -194,7 +194,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(back_sheet.cell_value(36, 41), "Председатель")
         for row_index, expected in [
             (14, "установлено"),
-            (17, "не установлено"),
+            (17, "установлено"),
             (20, "установлено"),
             (25, "установлено"),
             (27, "не установлено"),

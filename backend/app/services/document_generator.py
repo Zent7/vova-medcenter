@@ -1334,6 +1334,11 @@ DRIVER_RESTRICTION_TOKEN_FIELDS = {
     "TCB": ("restrictionBBE", ("b be", "bbe")),
     "TCC": ("restrictionCCE", ("c ce", "cce")),
 }
+DRIVER_RESTRICTION_CATEGORY_GROUPS = {
+    "TCA": {"A", "M", "A1", "B1"},
+    "TCB": {"B", "BE", "B1"},
+    "TCC": {"C", "CE", "D", "DE", "Tm", "Tb", "C1", "D1", "C1E", "D1E"},
+}
 DRIVER_XLS_BACK_STATUS_ROWS = (
     (14, "TCA"),
     (17, "TCB"),
@@ -1462,15 +1467,19 @@ def _driver_field_or_text_flag(fields: dict, field_key: str, fallback_text: obje
     return _driver_text_contains(fallback_text, labels)
 
 
-def _driver_flag_context_values(client: Client, exams: list[DoctorExam]) -> dict[str, str]:
+def _driver_flag_context_values(client: Client, exams: list[DoctorExam], selected: set[str] | None = None) -> dict[str, str]:
     chairman = _driver_completed_chairman(exams)
     fields = (chairman.fields_json or {}) if chairman else {}
     fallback_text = client.indications or ""
+    selected_categories = selected if selected is not None else _driver_categories_for_documents(client, exams)
     context: dict[str, str] = {}
     for token, (field_key, labels) in DRIVER_INDICATION_TOKEN_FIELDS.items():
         context[token] = "true" if _driver_field_or_text_flag(fields, field_key, fallback_text, labels) else "false"
     for token, (field_key, labels) in DRIVER_RESTRICTION_TOKEN_FIELDS.items():
-        context[token] = "X" if _driver_field_or_text_flag(fields, field_key, fallback_text, labels) else ""
+        category_group = DRIVER_RESTRICTION_CATEGORY_GROUPS.get(token, set())
+        has_category = bool(selected_categories.intersection(category_group))
+        has_restriction = _driver_field_or_text_flag(fields, field_key, fallback_text, labels)
+        context[token] = "X" if has_restriction or has_category else ""
     context["DriveShipCalc"] = "true" if _truthy_driver_value(fields.get("categoryBoat")) else "false"
     return context
 
@@ -1479,7 +1488,7 @@ def _driver_document_context_overrides(client: Client, exams: list[DoctorExam]) 
     selected = _driver_categories_for_documents(client, exams)
     return {
         **_driver_category_context_values(selected),
-        **_driver_flag_context_values(client, exams),
+        **_driver_flag_context_values(client, exams, selected),
     }
 
 
@@ -1495,7 +1504,7 @@ def _driver_xml_context_overrides(context: dict[str, str], client: Client, exams
         for token_name in token_names:
             overrides[token_name] = value
 
-    flag_context = _driver_flag_context_values(client, exams)
+    flag_context = _driver_flag_context_values(client, exams, selected)
     overrides.update(
         {
             token_name: flag_context[token_name]
