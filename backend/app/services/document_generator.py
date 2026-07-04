@@ -1396,6 +1396,17 @@ def _driver_completed_chairman(exams: list[DoctorExam]) -> DoctorExam | None:
     )
 
 
+def _driver_latest_chairman(exams: list[DoctorExam]) -> DoctorExam | None:
+    return next(
+        (
+            exam
+            for exam in exams
+            if str(exam.doctor_role_id or "").strip().lower() == "chairman"
+        ),
+        None,
+    )
+
+
 def _driver_categories_from_chairman(fields: dict) -> set[str] | None:
     exact_fields = {field_key for field_key in DRIVER_CATEGORY_FIELD_KEYS.values() if field_key in fields}
     if "categoryE" in fields:
@@ -1468,7 +1479,7 @@ def _driver_field_or_text_flag(fields: dict, field_key: str, fallback_text: obje
 
 
 def _driver_flag_context_values(client: Client, exams: list[DoctorExam], selected: set[str] | None = None) -> dict[str, str]:
-    chairman = _driver_completed_chairman(exams)
+    chairman = _driver_completed_chairman(exams) or _driver_latest_chairman(exams)
     fields = (chairman.fields_json or {}) if chairman else {}
     fallback_text = client.indications or ""
     selected_categories = selected if selected is not None else _driver_categories_for_documents(client, exams)

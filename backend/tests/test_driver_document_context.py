@@ -103,6 +103,29 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(context["TCB"], "X")
         self.assertEqual(context["TCC"], "X")
 
+    def test_driver_indications_use_latest_chairman_draft(self):
+        context = _driver_document_context_overrides(
+            client(admission_category=""),
+            [
+                chairman(
+                    {
+                        "indicationManual": True,
+                        "indicationAutomatic": True,
+                        "indicationAcoustic": False,
+                        "indicationGlasses": True,
+                        "indicationHearingAid": False,
+                    },
+                    is_completed=False,
+                )
+            ],
+        )
+
+        self.assertEqual(context["ManualControlCalc"], "true")
+        self.assertEqual(context["AutomaticTransmissionCalc"], "true")
+        self.assertEqual(context["ParkingSystemCalc"], "false")
+        self.assertEqual(context["VisionTCCalc"], "true")
+        self.assertEqual(context["HearingTCCalc"], "false")
+
     def test_xml_context_uses_boolean_categories_and_restrictions(self):
         test_client = client(admission_category="A B C D")
         exams = [
