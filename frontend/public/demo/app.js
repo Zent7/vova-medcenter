@@ -1452,8 +1452,13 @@ function hasDriverAdmissionCategoriesForVisit(visit) {
 
 function getChairmanFormTypeForVisit(visit) {
   const services = getServicesForVisit(visit);
+  const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
+  const rawClient = client?.rawApiClient || {};
   const serviceText = normalizeSearchTextWithRepairs([
     ...(Array.isArray(visit?.serviceNames) ? visit.serviceNames : []),
+    ...(Array.isArray(client?.services) ? client.services : []),
+    ...(Array.isArray(rawClient?.services) ? rawClient.services : []),
+    ...(Array.isArray(rawClient?.legacy_payload_json?.services) ? rawClient.legacy_payload_json.services : []),
     ...services.map((service) => service.name),
     ...(Array.isArray(visit?.rawApiEncounter?.services) ? visit.rawApiEncounter.services : []),
   ]
@@ -2323,19 +2328,28 @@ async function apiRequest(path, options = {}) {
 
   if (!response.ok) {
     let detail = "";
+    let errorBody = null;
+    let errorText = "";
     try {
-      const errorBody = await response.json();
-      if (errorBody?.detail?.message) {
-        detail = errorBody.detail.message;
-      } else if (typeof errorBody?.detail === "string") {
-        detail = errorBody.detail;
-      } else if (Array.isArray(errorBody?.detail)) {
-        detail = JSON.stringify({ detail: errorBody.detail });
-      } else if (errorBody?.detail && typeof errorBody.detail === "object") {
-        detail = JSON.stringify(errorBody.detail);
-      }
+      errorText = await response.text();
     } catch {
-      detail = await response.text();
+      errorText = "";
+    }
+    try {
+      errorBody = errorText ? JSON.parse(errorText) : null;
+    } catch {
+      errorBody = null;
+    }
+    if (errorBody?.detail?.message) {
+      detail = errorBody.detail.message;
+    } else if (typeof errorBody?.detail === "string") {
+      detail = errorBody.detail;
+    } else if (Array.isArray(errorBody?.detail)) {
+      detail = JSON.stringify({ detail: errorBody.detail });
+    } else if (errorBody?.detail && typeof errorBody.detail === "object") {
+      detail = JSON.stringify(errorBody.detail);
+    } else {
+      detail = errorText;
     }
     throw new Error(detail || `HTTP ${response.status}`);
   }
@@ -8992,19 +9006,28 @@ async function openDriverPrintFlow(options = {}) {
       setStoredDriverPrintSeries(lookupSeries || flowState.selectedSeries);
       renderFlow();
       try {
-        const query = new URLSearchParams({
-          blank_type: flowState.blankType,
-          center_id: String(flowState.centerId),
-        });
-        if (lookupSeries) {
-          query.set("series", lookupSeries);
-        } else {
-          query.set("series", "");
+        const requestedSeries = lookupSeries || flowState.selectedSeries;
+        const fetchNextBlank = async (autoCreate = false) => {
+          const query = new URLSearchParams({
+            blank_type: flowState.blankType,
+            center_id: String(flowState.centerId),
+          });
+          query.set("series", lookupSeries || "");
+          if (autoCreate) {
+            query.set("auto_create", "true");
+          }
+          return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
+        };
+        const shouldAutoCreateImmediately =
+          !isPreenteredBlankSeries(requestedSeries) && !canAutoCreateChairmanBlankSeries(requestedSeries);
+        try {
+          flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
+        } catch (error) {
+          if (!canAutoCreateChairmanBlankSeries(requestedSeries)) {
+            throw error;
+          }
+          flowState.currentBlank = await fetchNextBlank(true);
         }
-        if (!isPreenteredBlankSeries(lookupSeries || flowState.selectedSeries)) {
-          query.set("auto_create", "true");
-        }
-        flowState.currentBlank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         if (flowState.currentBlank?.series) {
           flowState.selectedSeries = normalizeBlankSeries(flowState.currentBlank.series);
           flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries) || flowState.selectedCertificateType;
