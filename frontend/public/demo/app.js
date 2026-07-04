@@ -863,6 +863,28 @@ function repairDemoText(value) {
   return str.replace(_repairDemoTextRegex, (m) => _repairDemoTextMap[m] ?? m);
 }
 
+function decodeLatin1Utf8Mojibake(value) {
+  const str = String(value ?? "");
+  if (!str || Array.from(str).some((char) => char.charCodeAt(0) > 255)) return str;
+  try {
+    return decodeURIComponent(
+      Array.from(str)
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join(""),
+    );
+  } catch (error) {
+    return str;
+  }
+}
+
+function normalizeSearchTextWithRepairs(value) {
+  const raw = String(value ?? "");
+  const decoded = decodeLatin1Utf8Mojibake(raw);
+  return [raw, repairDemoText(raw), decoded, repairDemoText(decoded)]
+    .join(" ")
+    .toLowerCase();
+}
+
 function loadPersistedDemoState() {
   try {
     const raw = window.localStorage?.getItem(DEMO_STORAGE_KEY);
@@ -1430,12 +1452,12 @@ function hasDriverAdmissionCategoriesForVisit(visit) {
 
 function getChairmanFormTypeForVisit(visit) {
   const services = getServicesForVisit(visit);
-  const serviceText = [
+  const serviceText = normalizeSearchTextWithRepairs([
     ...(Array.isArray(visit?.serviceNames) ? visit.serviceNames : []),
     ...services.map((service) => service.name),
+    ...(Array.isArray(visit?.rawApiEncounter?.services) ? visit.rawApiEncounter.services : []),
   ]
-    .join(" ")
-    .toLowerCase();
+    .join(" "));
 
   if (services.some(isDriverService) || serviceText.includes("водител")) return "driver";
   if (services.some(isGimsService) || serviceText.includes("гимс")) return "gims";
@@ -8025,6 +8047,32 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
   }
 }
 
+async function openPrintFlowForVisit(client, visit) {
+  if (!client || !visit) {
+    showToast("Не удалось подготовить печать");
+    return;
+  }
+
+  const formInfo = getChairmanFormInfo(visit, client);
+  if (formInfo.printMode === "driver-flow") {
+    appState.selectedClientId = client.id;
+    appState.activeVisitId = visit.id;
+    persistDemoState();
+    await openDriverPrintFlow();
+    return;
+  }
+
+  await loadDoctorExamsForClient(client, visit);
+  appState.selectedClientId = client.id;
+  appState.activeVisitId = visit.id;
+  persistDemoState();
+  openDoctorExamCard({
+    clientId: client.id,
+    visitId: visit.id,
+    doctorRoleId: "chairman",
+  });
+}
+
 async function createDemoDocument(type) {
   ensureVisitsStore();
   const client = getSelectedClient();
@@ -10435,7 +10483,7 @@ function bindContentEvents() {
       if (selectedClient && doctorRoleId) {
         const activeVisit = getCurrentVisitForClient(selectedClient.id) || getOrCreateDraftVisit(selectedClient.id);
         if (doctorRoleId === "print") {
-          await openDriverPrintFlow();
+          await openPrintFlowForVisit(selectedClient, activeVisit);
           return;
         }
         await loadDoctorExamsForClient(selectedClient, activeVisit);
