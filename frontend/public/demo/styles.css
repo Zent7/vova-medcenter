@@ -2472,14 +2472,6 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   font-weight: 700;
 }
 
-.excel-doctor-mark--done {
-  color: #11623a;
-}
-
-.excel-doctor-mark--required {
-  color: #8a5200;
-}
-
 .sketch-table__grid--skeleton {
   cursor: default;
   pointer-events: none;

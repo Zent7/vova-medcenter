@@ -4670,9 +4670,7 @@ function renderExcelDoctorCell(row, key) {
   const mark = row[key];
   const value = typeof mark === "object" && mark !== null ? mark.value || "" : mark || "";
   const title = typeof mark === "object" && mark !== null ? mark.title || "" : "";
-  const markState = typeof mark === "object" && mark !== null ? mark.state || "" : "";
-  const modifier = markState || (value === "✓" ? "done" : "empty");
-  return `<span class="excel-doctor-mark excel-doctor-mark--${modifier}" title="${escapeHtml(title)}" data-row-doctor-role-id="${escapeHtml(doctorRoleId)}">${escapeHtml(value)}</span>`;
+  return `<span class="excel-doctor-mark" title="${escapeHtml(title)}" data-row-doctor-role-id="${escapeHtml(doctorRoleId)}">${escapeHtml(value)}</span>`;
 }
 
 function renderExcelActionCell(value, actionId) {
