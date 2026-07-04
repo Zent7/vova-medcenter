@@ -1437,7 +1437,7 @@ function getChairmanFormTypeForVisit(visit) {
     .join(" ")
     .toLowerCase();
 
-  if (services.some(isDriverService) || serviceText.includes("водител") || hasDriverAdmissionCategoriesForVisit(visit)) return "driver";
+  if (services.some(isDriverService) || serviceText.includes("водител")) return "driver";
   if (services.some(isGimsService) || serviceText.includes("гимс")) return "gims";
   if (services.some(isLmkService) || serviceText.includes("лмк")) return "lmk";
   if (services.some(isProfService) || serviceText.includes("профосмотр") || serviceText.includes("29н")) return "prof";
@@ -1458,6 +1458,7 @@ function getChairmanFormTypeForVisit(visit) {
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return "psych342";
   if (serviceText.includes("чод") || serviceText.includes("охран")) return "guard";
   if (services.some(isCertificateService)) return "certificate";
+  if (hasDriverAdmissionCategoriesForVisit(visit)) return "driver";
   return "default";
 }
 
