@@ -154,7 +154,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         template_path = next(
             path
             for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.stat().st_size == 2407424
+            if "Водительская Оборотная" in xlrd.open_workbook(str(path), on_demand=True).sheet_names()
         )
         source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
         target_book = copy_xls_workbook(source_book)
