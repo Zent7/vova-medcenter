@@ -5004,6 +5004,7 @@ function renderSketchHome() {
     "Инфекционист",
     "Фтизиатр",
     "Узист",
+    "Председатель",
   ];
   const excelColumns = [
     "Дата обращения",
