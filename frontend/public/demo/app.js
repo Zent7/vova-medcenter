@@ -781,6 +781,39 @@ function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status
   return completed;
 }
 
+function getExistingDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
+  const existing = new Set();
+  const addFromStatus = () => {
+    (status?.existingDoctorRoleIds || [])
+      .forEach((roleId) => {
+        const normalized = String(roleId || "").trim();
+        if (normalized) existing.add(normalized);
+      });
+  };
+
+  if (!visit) {
+    addFromStatus();
+    return existing;
+  }
+
+  (Array.isArray(data.doctorExams) ? data.doctorExams : [])
+    .filter(
+      (exam) =>
+        String(exam?.clientId) === String(client?.id) &&
+        String(exam?.visitId) === String(visit.id),
+    )
+    .forEach((exam) => {
+      const normalized = String(exam?.doctorRoleId || "").trim();
+      if (normalized) existing.add(normalized);
+    });
+
+  if (!visit.backendId || String(status?.encounterId || "") === String(visit.backendId)) {
+    addFromStatus();
+  }
+
+  return existing;
+}
+
 function getSuppressedDoctorRoleIdsForDashboardVisit(visit = null, status = null) {
   const suppressed = new Set();
   const addFromStatus = () => {
@@ -2102,6 +2135,9 @@ function snapshotDoctorMarkCaches(exam) {
         key,
         {
           ...status,
+          existingDoctorRoleIds: Array.isArray(status?.existingDoctorRoleIds)
+            ? status.existingDoctorRoleIds.slice()
+            : [],
           completedDoctorRoleIds: Array.isArray(status?.completedDoctorRoleIds)
             ? status.completedDoctorRoleIds.slice()
             : [],
@@ -2155,10 +2191,17 @@ function removeDoctorMarkCachesForExam(exam) {
       !status?.encounterId ||
       String(status.encounterId) === String(exam.backendEncounterId);
 
-    if (!clientMatches || !encounterMatches || !Array.isArray(status.completedDoctorRoleIds)) return;
-    status.completedDoctorRoleIds = status.completedDoctorRoleIds.filter(
-      (completedRoleId) => String(completedRoleId) !== roleId,
-    );
+    if (!clientMatches || !encounterMatches) return;
+    if (Array.isArray(status.existingDoctorRoleIds)) {
+      status.existingDoctorRoleIds = status.existingDoctorRoleIds.filter(
+        (existingRoleId) => String(existingRoleId) !== roleId,
+      );
+    }
+    if (Array.isArray(status.completedDoctorRoleIds)) {
+      status.completedDoctorRoleIds = status.completedDoctorRoleIds.filter(
+        (completedRoleId) => String(completedRoleId) !== roleId,
+      );
+    }
   });
 }
 
@@ -2219,17 +2262,20 @@ function hasCompletedDoctorExamHistory(clientId, doctorRoleId, currentVisitId = 
   );
 }
 
-function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors = new Set()) {
+function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors = new Set(), existingDoctors = new Set()) {
   const requiredCount = requiredDoctors instanceof Map
     ? Number(requiredDoctors.get(roleCode) || 0)
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
-  if (suppressedDoctors.has(roleCode)) {
-    return { value: "", title: "", state: "empty" };
-  }
   if (completedDoctors.has(roleCode)) {
     return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
+  }
+  if (existingDoctors.has(roleCode)) {
+    return { value: "✓", title: "Карточка врача добавлена в текущем обращении", state: "existing" };
+  }
+  if (suppressedDoctors.has(roleCode)) {
+    return { value: "", title: "", state: "empty" };
   }
   if (requiredCount > 0) {
     const requiredTitle = requiredCount > 1
@@ -3470,6 +3516,11 @@ function mapDashboardDoctorStatus(status, previousStatus = null) {
     encounterStatus: status?.encounter_status || null,
     blankNumber: status?.blank_number || "",
     services,
+    existingDoctorRoleIds: Array.isArray(status?.existing_doctor_role_ids)
+      ? status.existing_doctor_role_ids.slice()
+      : Array.isArray(previousStatus?.existingDoctorRoleIds)
+        ? previousStatus.existingDoctorRoleIds.slice()
+        : [],
     completedDoctorRoleIds: Array.isArray(status?.completed_doctor_role_ids)
       ? status.completed_doctor_role_ids.slice()
       : [],
@@ -4648,8 +4699,9 @@ function buildExcelRows(clients) {
     );
     const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : new Map();
     const completedDoctors = getCompletedDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
+    const existingDoctors = getExistingDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
     const suppressedDoctors = getSuppressedDoctorRoleIdsForDashboardVisit(currentVisit, status);
-    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors);
+    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors, existingDoctors);
 
     return {
       id: client.id,

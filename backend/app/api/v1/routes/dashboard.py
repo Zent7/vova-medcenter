@@ -18,9 +18,14 @@ from app.schemas.dashboard import (
     DashboardClientDoctorStatusService,
     DashboardStats,
 )
-from app.services.doctor_rules import should_include_doctor_role_for_client_sex
 
 router = APIRouter()
+
+
+def _append_unique_role(target: list[str], role_id: object) -> None:
+    normalized = str(role_id or "").strip()
+    if normalized and normalized not in target:
+        target.append(normalized)
 
 
 @router.get("/stats", response_model=DashboardStats)
@@ -66,10 +71,8 @@ def get_client_doctor_statuses(
         )
 
     encounter_ids = [encounter_id for encounter_id, _, _ in latest_encounter_by_client.values()]
-    client_sex_by_id = dict(
-        db.execute(select(Client.id, Client.sex).where(Client.id.in_(unique_client_ids))).all()
-    )
     services_by_encounter: dict[int, list[DashboardClientDoctorStatusService]] = defaultdict(list)
+    existing_roles_by_encounter: dict[int, list[str]] = defaultdict(list)
     completed_roles_by_encounter: dict[int, list[str]] = defaultdict(list)
     blank_number_by_encounter: dict[int, str] = {}
 
@@ -85,17 +88,17 @@ def get_client_doctor_statuses(
             )
 
         exam_rows = db.execute(
-            select(DoctorExam.encounter_id, DoctorExam.doctor_role_id)
+            select(DoctorExam.encounter_id, DoctorExam.doctor_role_id, DoctorExam.is_completed)
             .where(
                 DoctorExam.deleted_at.is_(None),
-                DoctorExam.is_completed.is_(True),
                 DoctorExam.encounter_id.in_(encounter_ids),
             )
             .order_by(DoctorExam.encounter_id.asc(), DoctorExam.id.asc())
         ).all()
-        for encounter_id, doctor_role_id in exam_rows:
-            if doctor_role_id not in completed_roles_by_encounter[encounter_id]:
-                completed_roles_by_encounter[encounter_id].append(doctor_role_id)
+        for encounter_id, doctor_role_id, is_completed in exam_rows:
+            _append_unique_role(existing_roles_by_encounter[encounter_id], doctor_role_id)
+            if is_completed:
+                _append_unique_role(completed_roles_by_encounter[encounter_id], doctor_role_id)
 
         blank_rows = db.execute(
             select(GeneratedDocument.encounter_id, GeneratedDocument.blank_number_snapshot)
@@ -122,11 +125,6 @@ def get_client_doctor_statuses(
             continue
 
         encounter_id, encounter_status, suppressed_doctor_role_ids = encounter
-        completed_doctor_role_ids = [
-            doctor_role_id
-            for doctor_role_id in completed_roles_by_encounter[encounter_id]
-            if should_include_doctor_role_for_client_sex(doctor_role_id, client_sex_by_id.get(client_id))
-        ]
         result.append(
             DashboardClientDoctorStatus(
                 client_id=client_id,
@@ -134,7 +132,8 @@ def get_client_doctor_statuses(
                 encounter_status=encounter_status,
                 blank_number=blank_number_by_encounter.get(encounter_id),
                 services=services_by_encounter[encounter_id],
-                completed_doctor_role_ids=completed_doctor_role_ids,
+                existing_doctor_role_ids=existing_roles_by_encounter[encounter_id],
+                completed_doctor_role_ids=completed_roles_by_encounter[encounter_id],
                 suppressed_doctor_role_ids=suppressed_doctor_role_ids,
             )
         )

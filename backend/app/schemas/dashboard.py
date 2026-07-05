@@ -19,5 +19,6 @@ class DashboardClientDoctorStatus(BaseModel):
     encounter_status: str | None = None
     blank_number: str | None = None
     services: list[DashboardClientDoctorStatusService] = Field(default_factory=list)
+    existing_doctor_role_ids: list[str] = Field(default_factory=list)
     completed_doctor_role_ids: list[str] = Field(default_factory=list)
     suppressed_doctor_role_ids: list[str] = Field(default_factory=list)
