@@ -264,7 +264,7 @@ function initializeFallbackServiceCatalog() {
 
 function isGuardCertificateServiceName(name) {
   const normalized = String(name || "").trim().toLowerCase();
-  return normalized.includes("чод") && (normalized.includes("002") || normalized.includes("охран"));
+  return normalized.includes("чод") || (normalized.includes("002") && normalized.includes("охран"));
 }
 
 function getGuardCertificateFallbackService() {
@@ -1468,6 +1468,7 @@ function getChairmanFormTypeForVisit(visit) {
   if (services.some(isGimsService) || serviceText.includes("гимс")) return "gims";
   if (services.some(isLmkService) || serviceText.includes("лмк")) return "lmk";
   if (services.some(isProfService) || serviceText.includes("профосмотр") || serviceText.includes("29н")) return "prof";
+  if (services.some((service) => isGuardCertificateServiceName(service?.name)) || isGuardCertificateServiceName(serviceText)) return "guard";
   if (services.some(isTractorService) || serviceText.includes("трактор") || serviceText.includes("071")) return "tractor";
   if (serviceText.includes("драг") || serviceText.includes("drug") || serviceText.includes("alcohol")) return "drug";
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) return "marine";
@@ -8336,6 +8337,9 @@ function buildServiceSeriesAbbreviation(service) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
   if (!name) return "";
+  if (isGuardCertificateServiceName(name)) {
+    return "4026";
+  }
   if (
     isDriverService(service) ||
     isTractorService(service) ||
