@@ -81,6 +81,13 @@
     return match ? match[1] : null;
   }
 
+  function isPresetTextField(element) {
+    if (!element || element.type === "radio" || element.type === "checkbox") return false;
+    if (element.tagName === "TEXTAREA") return true;
+    if (element.tagName !== "INPUT") return false;
+    return ["", "text", "search", "tel", "url", "email", "number"].includes(element.type || "");
+  }
+
   function notifyMissingDoctorPreset(doctorRoleId, presetName, presets) {
     const availablePresets = presets && typeof presets === "object" ? Object.keys(presets) : [];
     console.warn("Doctor preset was not found", {
@@ -1719,8 +1726,6 @@
     // соответствующие значения полей из window.doctorPresets.
     const presetSelect = form.querySelector('select[name="complaintsPreset"]');
     if (presetSelect) {
-      const initialPresets = (window.doctorPresets || {})[form.dataset.doctorRoleId];
-      let lastAppliedPresetValues = findDoctorPreset(initialPresets, presetSelect.value);
       presetSelect.addEventListener("change", () => {
         const doctorRoleId = form.dataset.doctorRoleId;
         const presetName = presetSelect.value;
@@ -1735,22 +1740,10 @@
           const elements = form.elements[fieldKey];
           if (!elements) return;
           const el = elements.length && elements.tagName === undefined ? elements[0] : elements;
-          if (!el || el.type === "radio" || el.type === "checkbox") return;
+          if (!isPresetTextField(el)) return;
           const nextValue = value == null ? "" : repairPresetText(value);
-          const currentValue = String(el.value ?? "");
-          const previousPresetValue = lastAppliedPresetValues && fieldKey in lastAppliedPresetValues
-            ? String(lastAppliedPresetValues[fieldKey] ?? "")
-            : null;
-          const canAutofill =
-            !currentValue.trim() ||
-            (previousPresetValue !== null && currentValue === previousPresetValue);
-
-          if (canAutofill) {
-            el.value = nextValue;
-          }
+          el.value = nextValue;
         });
-
-        lastAppliedPresetValues = { ...preset };
       });
     }
 
