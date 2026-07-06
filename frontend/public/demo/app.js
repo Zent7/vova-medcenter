@@ -271,6 +271,31 @@ function hasGuardCertificateServiceName(services) {
   return Array.isArray(services) && services.some((service) => isGuardCertificateServiceName(service));
 }
 
+function normalizeAdmissionServiceNames(...sources) {
+  const names = [];
+  sources.forEach((source) => {
+    const values = Array.isArray(source) ? source : [source];
+    values
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .forEach((value) => {
+        if (!names.some((item) => item.toLowerCase() === value.toLowerCase())) {
+          names.push(value);
+        }
+      });
+  });
+  return names;
+}
+
+function getClientAdmissionServiceNames(client) {
+  const rawClient = client?.rawApiClient || client || {};
+  return normalizeAdmissionServiceNames(
+    client?.services,
+    rawClient?.services,
+    rawClient?.legacy_payload_json?.services,
+  );
+}
+
 function getGuardCertificateFallbackService() {
   const fallbackService = window.servicesData?.services?.find((service) => isGuardCertificateServiceName(service?.name));
   const certificateGroupId = serviceGroups.find((group) => String(group?.name || "").toLowerCase().includes("справ"))?.id;
@@ -742,10 +767,11 @@ function getVisitServiceNamesForDisplay(visit) {
 }
 
 function resolveDashboardAdmissionCategory(client, visit = null) {
-  if (!visit) return resolveAdmissionCategoryValue(client?.category, client?.services);
+  const clientServiceNames = getClientAdmissionServiceNames(client);
+  if (!visit) return resolveAdmissionCategoryValue(client?.category, clientServiceNames);
 
   const services = getServicesForVisit(visit);
-  const serviceNames = getVisitServiceNamesForDisplay(visit);
+  const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit), clientServiceNames);
   const hasDriverService = services.some(isDriverService);
   if (hasDriverService) {
     const driverDetail = getDriverDetailFromVisit(visit);
@@ -755,7 +781,7 @@ function resolveDashboardAdmissionCategory(client, visit = null) {
     return resolveAdmissionCategoryValue(driverCategories.join(", "), serviceNames);
   }
 
-  return resolveAdmissionCategoryValue("", serviceNames) || resolveAdmissionCategoryValue(client?.category, client?.services);
+  return resolveAdmissionCategoryValue("", serviceNames) || resolveAdmissionCategoryValue(client?.category, clientServiceNames);
 }
 
 function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
