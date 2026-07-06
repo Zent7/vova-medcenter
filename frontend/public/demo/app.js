@@ -1998,6 +1998,7 @@ function joinDocument(client) {
 
 function mapApiClient(client) {
   const services = Array.isArray(client.services) ? client.services : [];
+  const admissionServices = getClientAdmissionServiceNames(client);
   const encounterDateText = client.encounter_date_text || client.real_date_text || client.created_at || "";
   const encounterTimeSource = client.latest_encounter_created_at || client.created_at || "";
   const encounterDateTime = formatDateTimeWithFallbackTime(encounterDateText, encounterTimeSource);
@@ -2024,7 +2025,7 @@ function mapApiClient(client) {
     services,
     registration: client.registration_text || client.address_text || "",
     admissionCategory: client.admission_category || "",
-    category: resolveAdmissionCategoryValue(client.admission_category, services),
+    category: resolveAdmissionCategoryValue(client.admission_category, admissionServices),
     referenceNumber: client.reference_number || "",
     gynecologist: client.doctor_gynecologist || "",
     stomatologist: client.doctor_stomatologist || "",
