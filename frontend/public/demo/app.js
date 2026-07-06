@@ -791,6 +791,7 @@ function resolveDashboardAdmissionCategory(client, visit = null) {
 
   const services = getServicesForVisit(visit);
   const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit), clientServiceNames);
+  if (hasGuardCertificateServiceName(serviceNames)) return "4026";
   const hasDriverService = services.some(isDriverService);
   if (hasDriverService) {
     const driverDetail = getDriverDetailFromVisit(visit);
