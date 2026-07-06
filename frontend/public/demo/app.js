@@ -249,13 +249,18 @@ function initializeFallbackServiceCatalog() {
     });
   }
 
-  data.serverServices = fallback.services.map((service) => ({
-    ...service,
-    backendId: service.backendId || service.id,
-    legacySourceId: service.legacySourceId || service.legacy_source_id || service.id,
-    recallAfterDays: service.recallAfterDays || null,
-    doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
-  }));
+  data.serverServices = fallback.services.map((service) => {
+    const isGuardFallback = isGuardCertificateServiceName(service?.name);
+    const fallbackId = isGuardFallback ? "guard-certificate-fallback" : service.id;
+    return {
+      ...service,
+      id: fallbackId,
+      backendId: isGuardFallback ? null : service.backendId || service.id,
+      legacySourceId: service.legacySourceId || service.legacy_source_id || (isGuardFallback ? 9 : service.id),
+      recallAfterDays: service.recallAfterDays || null,
+      doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
+    };
+  });
   structuredServices = data.serverServices.slice();
   data.serverServicesLoaded = true;
   ensureGuardCertificateService();
@@ -317,9 +322,10 @@ function getClientAdmissionServiceNames(client) {
 
 function getGuardCertificateFallbackService() {
   const fallbackService = window.servicesData?.services?.find((service) => isGuardCertificateServiceName(service?.name));
+  const fallbackId = "guard-certificate-fallback";
   const certificateGroupId = serviceGroups.find((group) => String(group?.name || "").toLowerCase().includes("справ"))?.id;
   const base = fallbackService || {
-    id: 9,
+    id: fallbackId,
     name: "Справка 002 ЧОД (для охраны)",
     groupId: certificateGroupId || 7,
     price: 3500,
@@ -331,9 +337,9 @@ function getGuardCertificateFallbackService() {
   const groupId = certificateGroupId || base.groupId || 7;
   return {
     ...base,
-    id: base.id || 9,
-    backendId: base.backendId || base.id || 9,
-    legacySourceId: base.legacySourceId || base.legacy_source_id || base.id || 9,
+    id: fallbackId,
+    backendId: base.backendId || null,
+    legacySourceId: base.legacySourceId || base.legacy_source_id || 9,
     groupId,
     price: Number(base.price || 3500),
     isActive: base.isActive !== false,
@@ -664,19 +670,20 @@ const OPERATOR_SERVICE_PRIORITY_BY_LEGACY_ID = new Map([
   [19, 4],
   [7, 5],
   [37, 6],
-  [12, 7],
-  [2, 8],
-  [11, 9],
-  [4, 10],
-  [5, 11],
-  [3, 12],
-  [27, 13],
-  [30, 14],
-  [24, 15],
-  [31, 16],
-  [10, 17],
-  [32, 18],
-  [38, 19],
+  [9, 7],
+  [12, 8],
+  [2, 9],
+  [11, 10],
+  [4, 11],
+  [5, 12],
+  [3, 13],
+  [27, 14],
+  [30, 15],
+  [24, 16],
+  [31, 17],
+  [10, 18],
+  [32, 19],
+  [38, 20],
 ]);
 
 function getOperatorServicePriority(service) {

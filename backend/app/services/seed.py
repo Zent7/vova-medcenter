@@ -151,6 +151,7 @@ SERVICE_CATALOG = [
     (3, 7, "Справка для посещения бассейна", "1000.00"),
     (5, 7, "спорт", "1200.00"),
     (27, 9, "ЭКГ", "1200.00"),
+    (9, 7, "Справка 002 ЧОД (для охраны)", "3500.00"),
     (30, 7, "095", "1800.00"),
     (24, 7, "Санаторно-курортная карта 072У", "2500.00"),
     (31, 7, "Справка для получения путевки 070У", "2000.00"),
@@ -200,6 +201,7 @@ SERVICE_DOCTOR_ROLE_IDS = {
     3: [1, 6, 8],
     4: [1],
     5: [1, 10],
+    9: [1, 7],
     10: [1],
     11: [4, 2, 1, 13],
     12: [6, 1, 10, 4, 7, 5, 13],
@@ -222,6 +224,7 @@ SERVICE_RECALL_AFTER_DAYS = {
     4: 365,
     5: 365,
     6: 365,
+    9: 365,
     10: 365,
     11: 365,
     12: 365,
@@ -382,6 +385,7 @@ def seed_reference_data(db: Session) -> None:
         _ensure_user_roles_and_staff(db)
         _ensure_center_details(db)
         _ensure_service_catalog(db)
+        _backfill_guard_certificate_service_records(db)
         _ensure_foundation_catalog(db)
         has_large_import = db.execute(select(Client.id).offset(2000).limit(1)).scalar_one_or_none() is not None
         if not has_large_import:
@@ -671,6 +675,42 @@ def _ensure_service_catalog(db: Session) -> None:
             db.execute(
                 ServiceDoctorRole.__table__.delete().where(ServiceDoctorRole.service_id == old_service.id)
             )
+
+    db.commit()
+
+
+def _backfill_guard_certificate_service_records(db: Session) -> None:
+    """Move guard certificate encounters that were saved with the 071U service id."""
+    guard_service = db.execute(select(Service).where(Service.legacy_source_id == 9)).scalar_one_or_none()
+    tractor_service = db.execute(select(Service).where(Service.legacy_source_id == 7)).scalar_one_or_none()
+    if guard_service is None or tractor_service is None:
+        return
+
+    rows = db.execute(
+        select(EncounterService, Client.legacy_payload_json)
+        .join(Encounter, EncounterService.encounter_id == Encounter.id)
+        .join(Client, Encounter.client_id == Client.id)
+        .where(
+            EncounterService.service_id == tractor_service.id,
+            Client.legacy_payload_json.is_not(None),
+        )
+    ).all()
+    for encounter_service, legacy_payload in rows:
+        payload_text = str(legacy_payload or "").lower()
+        has_guard_marker = (
+            "\u043e\u0445\u0440\u0430\u043d" in payload_text
+            or "\u0447\u043e\u0434" in payload_text
+            or "guard" in payload_text
+            or "chod" in payload_text
+        )
+        if "002" not in payload_text or not has_guard_marker:
+            continue
+
+        encounter_service.service_id = guard_service.id
+        if not encounter_service.unit_price:
+            encounter_service.unit_price = guard_service.price
+        if not encounter_service.line_total:
+            encounter_service.line_total = guard_service.price
 
     db.commit()
 
