@@ -844,6 +844,7 @@
         : buildAutoEkgConclusion(ekgDate, chairmanType);
     const noteValue = emptyLegacyValue(fields.note, ["прио/"]);
     const fieldOptions = (key) => template.fields.find((field) => field.key === key)?.options || [];
+    const isDriverChairmanFlow = chairmanInfo.printMode === "driver-flow";
     const renderChairmanSelect = (name, value, options) => {
       const currentValue = String(value ?? "");
       const selectOptions = currentValue && !options.includes(currentValue) ? [...options, currentValue] : options;
@@ -1050,7 +1051,7 @@
                     ${renderCheckboxField("categoryD1E", !!fields.categoryD1E, "D1E")}
                     ${renderCheckboxField("categoryTractor", !!fields.categoryTractor, "тракторы (п.8.)")}
                     ${renderCheckboxField("categoryBoat", !!fields.categoryBoat, "лайнеры и катера (п.9)")}
-                    ${renderCheckboxField("categorySailing", !!fields.categorySailing, "парусный спорт")}
+                    ${isDriverChairmanFlow ? "" : renderCheckboxField("categorySailing", !!fields.categorySailing, "парусный спорт")}
                   </div>
 
                   <div class="chairman-column">
@@ -1081,10 +1082,12 @@
               </div>
             </div>
 
-            <div class="chairman-footer">
-              ${renderCheckboxField("periodicProf", !!fields.periodicProf, "Периодический проф")}
-              ${renderCheckboxField("stampApplied", !!fields.stampApplied, "Печать поставлена")}
-            </div>
+            ${isDriverChairmanFlow ? "" : `
+              <div class="chairman-footer">
+                ${renderCheckboxField("periodicProf", !!fields.periodicProf, "Периодический проф")}
+                ${renderCheckboxField("stampApplied", !!fields.stampApplied, "Печать поставлена")}
+              </div>
+            `}
 
             <div class="chairman-note">
               <label>Примечание:</label>
