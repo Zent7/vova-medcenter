@@ -262,8 +262,27 @@ function initializeFallbackServiceCatalog() {
   refreshServiceCatalog();
 }
 
+function decodeEarlyLatin1Utf8Mojibake(value) {
+  const str = String(value ?? "");
+  if (!str || Array.from(str).some((char) => char.charCodeAt(0) > 255)) return str;
+  try {
+    return decodeURIComponent(
+      Array.from(str)
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join(""),
+    );
+  } catch (error) {
+    return str;
+  }
+}
+
+function normalizeGuardCertificateServiceName(name) {
+  const raw = String(name || "").trim();
+  return `${raw} ${decodeEarlyLatin1Utf8Mojibake(raw)}`.toLowerCase();
+}
+
 function isGuardCertificateServiceName(name) {
-  const normalized = normalizeSearchTextWithRepairs(name).trim();
+  const normalized = normalizeGuardCertificateServiceName(name);
   return normalized.includes("чод") || (normalized.includes("002") && normalized.includes("охран"));
 }
 
