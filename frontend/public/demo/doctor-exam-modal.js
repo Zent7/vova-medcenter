@@ -868,6 +868,7 @@
     const noteValue = emptyLegacyValue(fields.note, ["прио/"]);
     const fieldOptions = (key) => template.fields.find((field) => field.key === key)?.options || [];
     const isDriverChairmanFlow = chairmanInfo.printMode === "driver-flow";
+    const hideDriverDetails = ["sport", "pool", "certificate072"].includes(chairmanType);
     const renderChairmanSelect = (name, value, options) => {
       const currentValue = String(value ?? "");
       const selectOptions = currentValue && !options.includes(currentValue) ? [...options, currentValue] : options;
@@ -1052,6 +1053,7 @@
                 </div>
               </div>
 
+              ${hideDriverDetails ? "" : `
               <div class="chairman-conclusion-right">
                 <div class="chairman-columns">
                   <div class="chairman-column">
@@ -1098,6 +1100,7 @@
                   </div>
                 </div>
               </div>
+              `}
 
               <div class="chairman-actions">
                 <button type="submit" class="chairman-action-btn">Сохранить</button>
@@ -1105,7 +1108,7 @@
               </div>
             </div>
 
-            ${isDriverChairmanFlow ? "" : `
+            ${isDriverChairmanFlow || hideDriverDetails ? "" : `
               <div class="chairman-footer">
                 ${renderCheckboxField("periodicProf", !!fields.periodicProf, "Периодический проф")}
                 ${renderCheckboxField("stampApplied", !!fields.stampApplied, "Печать поставлена")}

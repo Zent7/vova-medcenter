@@ -2820,6 +2820,8 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 .chairman-form--marine .chairman-conclusion-right,
 .chairman-form--drug .chairman-conclusion-right,
 .chairman-form--sport .chairman-conclusion-right,
+.chairman-form--pool .chairman-conclusion-right,
+.chairman-form--certificate072 .chairman-conclusion-right,
 .chairman-form--certificate086 .chairman-conclusion-right,
 .chairman-form--certificate095 .chairman-conclusion-right {
   display: none;
@@ -2830,6 +2832,8 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 .chairman-form--marine .chairman-footer,
 .chairman-form--drug .chairman-footer,
 .chairman-form--sport .chairman-footer,
+.chairman-form--pool .chairman-footer,
+.chairman-form--certificate072 .chairman-footer,
 .chairman-form--certificate086 .chairman-footer,
 .chairman-form--certificate095 .chairman-footer {
   grid-template-columns: repeat(2, minmax(0, max-content));
