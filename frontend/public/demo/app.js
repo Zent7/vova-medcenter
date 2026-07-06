@@ -263,7 +263,7 @@ function initializeFallbackServiceCatalog() {
 }
 
 function isGuardCertificateServiceName(name) {
-  const normalized = String(name || "").trim().toLowerCase();
+  const normalized = normalizeSearchTextWithRepairs(name).trim();
   return normalized.includes("чод") || (normalized.includes("002") && normalized.includes("охран"));
 }
 
