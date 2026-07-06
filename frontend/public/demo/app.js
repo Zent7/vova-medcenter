@@ -283,7 +283,7 @@ function normalizeGuardCertificateServiceName(name) {
 
 function isGuardCertificateServiceName(name) {
   const normalized = normalizeGuardCertificateServiceName(name);
-  return normalized.includes("чод") || (normalized.includes("002") && normalized.includes("охран"));
+  return normalized.includes("\u0447\u043e\u0434") || (normalized.includes("002") && normalized.includes("\u043e\u0445\u0440\u0430\u043d"));
 }
 
 function hasGuardCertificateServiceName(services) {
