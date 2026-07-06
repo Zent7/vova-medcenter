@@ -100,26 +100,34 @@
 
   const AUTO_EKG_CONCLUSION_PREFIX =
     "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей";
+  const GUARD_AUTO_EKG_CONCLUSION_PREFIX =
+    "Ритм синусовый, ЧСС, ЭОС нормальное положение, ЭКГ без особенностей";
 
   function extractRuDate(value) {
     return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{2}|\d{4})\b/)?.[0] || "";
   }
 
-  function todayRuDate() {
+  function todayRuDate(useFullYear = false) {
     return new Date().toLocaleDateString("ru-RU", {
       day: "2-digit",
       month: "2-digit",
-      year: "2-digit",
+      year: useFullYear ? "numeric" : "2-digit",
     });
   }
 
-  function buildAutoEkgConclusion(date) {
-    const finalDate = extractRuDate(date) || todayRuDate();
-    return `${AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
+  function getAutoEkgConclusionPrefix(chairmanType = "") {
+    return chairmanType === "guard" ? GUARD_AUTO_EKG_CONCLUSION_PREFIX : AUTO_EKG_CONCLUSION_PREFIX;
   }
 
-  function isAutoEkgConclusion(value) {
-    return String(value ?? "").trim().startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `);
+  function buildAutoEkgConclusion(date, chairmanType = "") {
+    const finalDate = extractRuDate(date) || todayRuDate(chairmanType === "guard");
+    return `${getAutoEkgConclusionPrefix(chairmanType)} от ${finalDate}`;
+  }
+
+  function isAutoEkgConclusion(value, chairmanType = "") {
+    const normalized = String(value ?? "").trim();
+    if (normalized.startsWith(`${getAutoEkgConclusionPrefix(chairmanType)} от `)) return true;
+    return chairmanType === "guard" && normalized.startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `);
   }
 
   function closeMedicalRequirementsPicker() {
@@ -821,14 +829,19 @@
     const keepEkgFieldsManual = ["lmk", "prof"].includes(chairmanType);
     const ekgValue = emptyLegacyValue(fields.ekg, ['Медицинский центр ООО "ЦМО "ЮЛМЕД" ЭКГ от 07.04.2025']);
     const examDateValue = fields.examDate ?? "";
-    const ekgDate = extractRuDate(ekgValue) || extractRuDate(examDateValue) || todayRuDate();
-    const storedEkgConclusionValue = emptyLegacyValue(fields.ekgConclusion, [
+    const ekgDate = extractRuDate(ekgValue) || extractRuDate(examDateValue);
+    const rawStoredEkgConclusionValue = emptyLegacyValue(fields.ekgConclusion, [
       "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей от 07.04.2025",
     ]);
+    const storedEkgConclusionValue =
+      chairmanType === "guard" &&
+      String(rawStoredEkgConclusionValue).trim().startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `)
+        ? ""
+        : rawStoredEkgConclusionValue;
     const ekgConclusionValue =
       keepEkgFieldsManual || String(storedEkgConclusionValue).trim()
         ? storedEkgConclusionValue
-        : buildAutoEkgConclusion(ekgDate);
+        : buildAutoEkgConclusion(ekgDate, chairmanType);
     const noteValue = emptyLegacyValue(fields.note, ["прио/"]);
     const fieldOptions = (key) => template.fields.find((field) => field.key === key)?.options || [];
     const renderChairmanSelect = (name, value, options) => {
@@ -1654,15 +1667,15 @@
 
       if (!["lmk", "prof"].includes(form.dataset.chairmanFormType || "")) {
         const syncAutoEkgConclusion = () => {
+          const chairmanType = form.dataset.chairmanFormType || "";
           const conclusionInput = form.elements.ekgConclusion;
           if (!conclusionInput) return;
           const currentValue = String(conclusionInput.value || "").trim();
-          if (currentValue && !isAutoEkgConclusion(currentValue)) return;
+          if (currentValue && !isAutoEkgConclusion(currentValue, chairmanType)) return;
           const ekgDate =
             extractRuDate(form.elements.ekg?.value) ||
-            extractRuDate(form.elements.examDate?.value) ||
-            todayRuDate();
-          conclusionInput.value = buildAutoEkgConclusion(ekgDate);
+            extractRuDate(form.elements.examDate?.value);
+          conclusionInput.value = buildAutoEkgConclusion(ekgDate, chairmanType);
         };
         form.elements.examDate?.addEventListener("input", syncAutoEkgConclusion);
         form.elements.examDate?.addEventListener("change", syncAutoEkgConclusion);
