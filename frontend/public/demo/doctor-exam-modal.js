@@ -88,6 +88,29 @@
     return ["", "text", "search", "tel", "url", "email", "number"].includes(element.type || "");
   }
 
+  function getFirstNamedControl(elements) {
+    if (!elements) return null;
+    if (elements.length && elements.tagName === undefined) return elements[0] || null;
+    return elements;
+  }
+
+  function dispatchPresetFieldEvents(element) {
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function applyPresetFieldValue(form, fieldKey, value) {
+    const element = getFirstNamedControl(form.elements[fieldKey]);
+    if (!isPresetTextField(element)) return false;
+
+    const nextValue = value == null ? "" : repairPresetText(value);
+    if (element.value === nextValue) return false;
+
+    element.value = nextValue;
+    dispatchPresetFieldEvents(element);
+    return true;
+  }
+
   function notifyMissingDoctorPreset(doctorRoleId, presetName, presets) {
     const availablePresets = presets && typeof presets === "object" ? Object.keys(presets) : [];
     console.warn("Doctor preset was not found", {
@@ -1753,12 +1776,7 @@
         }
 
         Object.entries(preset).forEach(([fieldKey, value]) => {
-          const elements = form.elements[fieldKey];
-          if (!elements) return;
-          const el = elements.length && elements.tagName === undefined ? elements[0] : elements;
-          if (!isPresetTextField(el)) return;
-          const nextValue = value == null ? "" : repairPresetText(value);
-          el.value = nextValue;
+          applyPresetFieldValue(form, fieldKey, value);
         });
       });
     }
