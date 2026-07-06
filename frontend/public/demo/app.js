@@ -267,6 +267,10 @@ function isGuardCertificateServiceName(name) {
   return normalized.includes("чод") || (normalized.includes("002") && normalized.includes("охран"));
 }
 
+function hasGuardCertificateServiceName(services) {
+  return Array.isArray(services) && services.some((service) => isGuardCertificateServiceName(service));
+}
+
 function getGuardCertificateFallbackService() {
   const fallbackService = window.servicesData?.services?.find((service) => isGuardCertificateServiceName(service?.name));
   const certificateGroupId = serviceGroups.find((group) => String(group?.name || "").toLowerCase().includes("справ"))?.id;
@@ -715,10 +719,11 @@ function renderCopyableValue(value, label, options = {}) {
 
 function resolveAdmissionCategoryValue(categoryValue, services) {
   const directValue = String(categoryValue || "").trim();
-  if (directValue) return directValue;
   const serviceNames = Array.isArray(services)
     ? services.map((service) => String(service || "").trim()).filter(Boolean)
     : [];
+  if (directValue && !(hasGuardCertificateServiceName(serviceNames) && /^0?71у?$/i.test(directValue))) return directValue;
+  if (hasGuardCertificateServiceName(serviceNames)) return "4026";
   return serviceNames.join(", ");
 }
 
