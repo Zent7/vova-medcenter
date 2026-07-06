@@ -260,6 +260,7 @@ CLIENT_SEARCH_COLUMNS = (
     Client.first_name,
     Client.middle_name,
     Client.birth_date,
+    Client.sex,
     Client.phone,
     Client.document_type,
     Client.document_series,

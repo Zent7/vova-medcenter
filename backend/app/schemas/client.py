@@ -76,6 +76,7 @@ class ClientSearchRead(BaseModel):
     first_name: str
     middle_name: str | None = None
     birth_date: date
+    sex: str | None = None
     phone: str | None = None
     document_type: str | None = None
     document_series: str | None = None
