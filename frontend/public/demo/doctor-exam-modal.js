@@ -868,7 +868,7 @@
     const noteValue = emptyLegacyValue(fields.note, ["прио/"]);
     const fieldOptions = (key) => template.fields.find((field) => field.key === key)?.options || [];
     const isDriverChairmanFlow = chairmanInfo.printMode === "driver-flow";
-    const hideDriverDetails = ["sport", "pool", "certificate072"].includes(chairmanType);
+    const hideDriverDetails = ["sport", "pool", "certificate072", "certificate086", "certificate095"].includes(chairmanType);
     const renderChairmanSelect = (name, value, options) => {
       const currentValue = String(value ?? "");
       const selectOptions = currentValue && !options.includes(currentValue) ? [...options, currentValue] : options;
