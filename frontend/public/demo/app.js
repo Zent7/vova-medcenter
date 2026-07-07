@@ -7930,8 +7930,8 @@ function canAutoCreateChairmanBlankSeries(series) {
 }
 
 const CHAIRMAN_NUMBERED_CERTIFICATE_SERIES = new Map([
-  ["086", "086У"],
-  ["095", "095У"],
+  ["086", "086"],
+  ["095", "095"],
 ]);
 
 function getChairmanNumberedCertificateSeries(printType) {
@@ -8135,7 +8135,6 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
       ...(numberedCertificateSeries
         ? {
             preselectedSeries: numberedCertificateSeries,
-            certificateTypes: printType ? [printType] : [],
             selectedCertificateType: printType || "",
             compactCertificateFlow: true,
           }
@@ -8213,6 +8212,28 @@ const DRIVER_PRINT_VARIANTS = [
 const PREENTERED_BLANK_SERIES = ["40", "4026", "ЛМК", "ГИМС"];
 const PREENTERED_BLANK_SERIES_SET = new Set(PREENTERED_BLANK_SERIES.map((item) => item.toLowerCase()));
 const CERTIFICATE_PRINT_SERIES_OPTIONS = [
+  "ЛМК",
+  "ПРОФ",
+  "4027",
+  "БС",
+  "ГТ",
+  "086",
+  "095",
+  "ГС",
+  "ЧОД",
+  "40655",
+  "4016",
+  "ПЗ",
+  "ПИМС",
+  "40290",
+  "ПУН",
+  "ЭЭГ",
+  "4023",
+  "ОСК",
+  "ФПО",
+  "4024",
+  "4025",
+  "41",
   "070У",
   "071У",
   "072У",
@@ -8262,17 +8283,21 @@ const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["псих освид", "psych342"],
   ["псих. освид", "psych342"],
   ["гто", "gto"],
+  ["гт", "gto"],
   ["1144", "gto"],
   ["басс", "pool"],
+  ["бс", "pool"],
   ["бассейн", "pool"],
   ["спорт", "sport"],
   ["спорт экг", "sport"],
   ["экг", "ekg"],
+  ["ээг", "ekg"],
   ["экгр", "ekg"],
   ["экгн", "ekg"],
   ["лмк", "lmk"],
   ["гимс", "gims"],
   ["4026", "chod"],
+  ["4027", "chod"],
   ["чод", "chod"],
   ["охран", "guard"],
   ["охрана", "guard"],
@@ -8326,8 +8351,11 @@ const SERVICE_SERIES_OVERRIDES = new Map([
   ["справка гто 1144", "ГТО"],
   ["справка для поступления 086у", "086У"],
   ["справка формы 086у", "086У"],
+  ["086", "086"],
+  ["086у", "086"],
   ["справка по форме 095у", "095У"],
   ["справка 095/у о временной нетрудоспособности", "095У"],
+  ["095у", "095"],
   ["095", "095У"],
   ["справка для участия в соревнованиях", "СПОРТ"],
   ["справка спорт + экг", "СПОРТ"],
@@ -8476,7 +8504,14 @@ function getAutoServiceSeriesOptions() {
 }
 
 function getDriverPrintSeriesPickerOptions(seriesOptions = [], { includeSuggestedSeries = true } = {}) {
-  const ordered = includeSuggestedSeries ? [...PREENTERED_BLANK_SERIES, ...CERTIFICATE_PRINT_SERIES_OPTIONS, ...getAutoServiceSeriesOptions()] : [];
+  const ordered = includeSuggestedSeries
+    ? [
+        "40",
+        ...CERTIFICATE_PRINT_SERIES_OPTIONS,
+        ...PREENTERED_BLANK_SERIES.filter((series) => series !== "40"),
+        ...getAutoServiceSeriesOptions(),
+      ]
+    : [];
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
     if (series) ordered.push(series);
@@ -10949,7 +10984,6 @@ function bindContentEvents() {
           ...(numberedCertificateSeries
             ? {
                 preselectedSeries: numberedCertificateSeries,
-                certificateTypes: printType ? [printType] : [],
                 selectedCertificateType: printType || "",
                 compactCertificateFlow: true,
               }
