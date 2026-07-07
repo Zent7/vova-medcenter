@@ -8843,7 +8843,9 @@ async function openDriverPrintFlow(options = {}) {
   }
 
   const renderPrintActions = () => {
-    const certificateTypes = flowState.certificateTypes.length
+    const certificateTypes = flowState.compactCertificateFlow && flowState.selectedCertificateType
+      ? [flowState.selectedCertificateType]
+      : flowState.certificateTypes.length
       ? flowState.certificateTypes
       : flowState.selectedCertificateType
         ? [flowState.selectedCertificateType]

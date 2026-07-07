@@ -1676,12 +1676,15 @@
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");
       if (medicalRequirementsInput) {
         const rememberCurrentRequirements = () => rememberMedicalRequirementValue(medicalRequirementsInput.value);
-        const medicalRequirementsOpenButton = form.querySelector("[data-medical-requirements-open]");
-        medicalRequirementsOpenButton?.addEventListener("click", (event) => {
+        const openRequirementsPicker = (event) => {
           event.preventDefault();
           event.stopPropagation();
           openMedicalRequirementsPicker(medicalRequirementsInput);
-        });
+        };
+        const medicalRequirementsOpenButton = form.querySelector("[data-medical-requirements-open]");
+        medicalRequirementsOpenButton?.addEventListener("click", openRequirementsPicker);
+        medicalRequirementsInput.addEventListener("click", openRequirementsPicker);
+        medicalRequirementsInput.addEventListener("focus", openRequirementsPicker);
         medicalRequirementsInput.addEventListener("change", rememberCurrentRequirements);
         medicalRequirementsInput.addEventListener("blur", rememberCurrentRequirements);
       }
