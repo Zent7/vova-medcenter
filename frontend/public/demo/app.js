@@ -9075,14 +9075,6 @@ async function openDriverPrintFlow(options = {}) {
           <div class="driver-print-classic__actions driver-print-classic__actions--driver">
             ${renderPrintActions()}
           </div>
-          ${
-            flowState.compactCertificateFlow
-              ? ""
-              : `
-                <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="court">справка Суда</button>
-                <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="ambulatory">Амб. Карта 25У</button>
-              `
-          }
         </div>
       `,
       "modal--driver-print",
