@@ -92,6 +92,16 @@ window.servicesData = {
       doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13]
     },
     {
+      id: 42,
+      name: "ЛМК справка",
+      groupId: 4,
+      price: 0,
+      notes: "",
+      isActive: true,
+      sortOrder: 15,
+      doctorRoleIds: [1, 13]
+    },
+    {
       id: 33,
       name: "Направление на Флюорографию",
       groupId: 4,
@@ -295,16 +305,6 @@ window.servicesData = {
       doctorRoleIds: [1, 4, 5, 7]
     },
     {
-      id: 39,
-      name: "DRUG/ALCOHOL TEST № 96",
-      groupId: 7,
-      price: 2500,
-      notes: "",
-      isActive: true,
-      sortOrder: 140,
-      doctorRoleIds: [1, 13]
-    },
-    {
       id: 40,
       name: "Справка 342н (псих. освид.)",
       groupId: 7,
@@ -313,6 +313,16 @@ window.servicesData = {
       isActive: true,
       sortOrder: 150,
       doctorRoleIds: [2, 4, 1, 13]
+    },
+    {
+      id: 43,
+      name: "СЭМТ-196",
+      groupId: 7,
+      price: 0,
+      notes: "",
+      isActive: true,
+      sortOrder: 160,
+      doctorRoleIds: [1, 13]
     },
     {
       id: 13,

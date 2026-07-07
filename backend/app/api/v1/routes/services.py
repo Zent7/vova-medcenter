@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import case, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -8,10 +8,13 @@ from app.schemas.service import ServiceRead, ServiceUpdate
 
 router = APIRouter()
 
+HIDDEN_SERVICE_LEGACY_IDS = (39,)
+
 OPERATOR_SERVICE_PRIORITY = (
     8,   # Медицинская комиссия
     29,  # Медицинская комиссия, базовые категории
     18,  # ЛМК
+    42,  # ЛМК справка
     19,  # Продление ЛМК
     7,   # 071У
     37,  # Медкомиссия для управления маломерными судами
@@ -29,7 +32,8 @@ OPERATOR_SERVICE_PRIORITY = (
     10,  # Справка для выезжающих за границу 082у
     32,  # капельница
     38,  # Морская медицинская комиссия
-    39,  # DRUG/ALCOHOL TEST № 96
+    40,  # Справка 342н
+    43,  # СЭМТ-196
 )
 
 
@@ -44,7 +48,13 @@ def list_services(db: Session = Depends(get_db)) -> list[ServiceRead]:
     )
     services = db.execute(
         select(Service)
-        .where(Service.is_active.is_(True))
+        .where(
+            Service.is_active.is_(True),
+            or_(
+                Service.legacy_source_id.is_(None),
+                Service.legacy_source_id.not_in(HIDDEN_SERVICE_LEGACY_IDS),
+            ),
+        )
         .order_by(priority_order.asc(), Service.category_id.asc(), Service.legacy_source_id.asc(), Service.name.asc())
     ).scalars().all()
     service_ids = [item.id for item in services]

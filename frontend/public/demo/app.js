@@ -1,4 +1,5 @@
 const API_BASE_URL = window.DEMO_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
+const HIDDEN_SERVICE_LEGACY_IDS = new Set([39]);
 
 
 function getLocalDateInputValue(value = new Date()) {
@@ -206,6 +207,11 @@ function persistMedicalRecordPanelHeight(height) {
   }
 }
 
+function isHiddenService(service) {
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
+  return HIDDEN_SERVICE_LEGACY_IDS.has(legacyId);
+}
+
 function initializeFallbackServiceCatalog() {
   const fallback = window.servicesData;
   if (!fallback || !Array.isArray(fallback.services)) return;
@@ -249,7 +255,7 @@ function initializeFallbackServiceCatalog() {
     });
   }
 
-  data.serverServices = fallback.services.map((service) => {
+  data.serverServices = fallback.services.filter((service) => !isHiddenService(service)).map((service) => {
     const isGuardFallback = isGuardCertificateServiceName(service?.name);
     const fallbackId = isGuardFallback ? "guard-certificate-fallback" : service.id;
     return {
@@ -470,9 +476,9 @@ const doctorRoleByExcelColumn = {
 const DRIVER_SERVICE_LEGACY_IDS = new Set([8, 29]);
 const TRACTOR_SERVICE_LEGACY_IDS = new Set([7]);
 const GIMS_SERVICE_LEGACY_IDS = new Set([37]);
-const LMK_SERVICE_LEGACY_IDS = new Set([18, 19]);
+const LMK_SERVICE_LEGACY_IDS = new Set([18, 19, 42]);
 const PROF_SERVICE_LEGACY_IDS = new Set([16]);
-const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 39, 40]);
+const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 40, 43]);
 const SPORT_SERVICE_LEGACY_IDS = new Set([4, 5]);
 const EKG_SERVICE_LEGACY_IDS = new Set([6, 20, 21, 27]);
 const POOL_SERVICE_LEGACY_IDS = new Set([3]);
@@ -526,13 +532,6 @@ const CHAIRMAN_FORM_CONFIGS = {
     templateType: "marine",
     printMode: "document",
     note: "Подтягивается морской сертификат.",
-  },
-  drug: {
-    type: "drug",
-    label: "Председатель: drug/alcohol test",
-    templateType: "drug",
-    printMode: "document",
-    note: "Подтягивается шаблон drug/alcohol test.",
   },
   sport: {
     type: "sport",
@@ -667,23 +666,26 @@ const OPERATOR_SERVICE_PRIORITY_BY_LEGACY_ID = new Map([
   [8, 1],
   [29, 2],
   [18, 3],
-  [19, 4],
-  [7, 5],
-  [37, 6],
-  [9, 7],
-  [12, 8],
-  [2, 9],
-  [11, 10],
-  [4, 11],
-  [5, 12],
-  [3, 13],
-  [27, 14],
-  [30, 15],
-  [24, 16],
-  [31, 17],
-  [10, 18],
-  [32, 19],
-  [38, 20],
+  [42, 4],
+  [19, 5],
+  [7, 6],
+  [37, 7],
+  [9, 8],
+  [12, 9],
+  [2, 10],
+  [11, 11],
+  [4, 12],
+  [5, 13],
+  [3, 14],
+  [27, 15],
+  [30, 16],
+  [24, 17],
+  [31, 18],
+  [10, 19],
+  [32, 20],
+  [38, 21],
+  [40, 22],
+  [43, 23],
 ]);
 
 function getOperatorServicePriority(service) {
@@ -1561,7 +1563,6 @@ function getChairmanFormTypeForVisit(visit) {
   if (services.some(isProfService) || serviceText.includes("профосмотр") || serviceText.includes("29н")) return "prof";
   if (services.some((service) => isGuardCertificateServiceName(service?.name)) || isGuardCertificateServiceName(serviceText)) return "guard";
   if (services.some(isTractorService) || serviceText.includes("трактор") || serviceText.includes("071")) return "tractor";
-  if (serviceText.includes("драг") || serviceText.includes("drug") || serviceText.includes("alcohol")) return "drug";
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) return "marine";
   if (serviceText.includes("гто") || serviceText.includes("1144")) return "gto";
   if (serviceText.includes("басс")) return "pool";
@@ -2710,7 +2711,7 @@ async function loadServicesFromBackend() {
     ]);
     serviceGroups = Array.isArray(categories) ? categories.map(mapApiServiceCategory) : [];
     doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole).filter((role) => !isExcludedDoctorRole(role)) : [];
-    data.serverServices = Array.isArray(services) ? services.map(mapApiService) : [];
+    data.serverServices = Array.isArray(services) ? services.map(mapApiService).filter((service) => !isHiddenService(service)) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
     ensureGuardCertificateService();
@@ -7835,7 +7836,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     );
   }
   if (normalizedType === "prof") return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр", "29н"], []);
-  if (normalizedType === "drug") return findDocxSafely(["драг тест морская шаблон"], ["драг"], []);
   if (normalizedType === "marine") return findDocxSafely(["серт морская шаблон"], ["морская", "marine", "seafarer"], ["драг"]);
   if (normalizedType === "13082") return findDocxSafely(["13082"], ["13082"], []);
   if (normalizedType === "13098") return findDocxSafely(["13098"], ["13098"], []);
@@ -7869,9 +7869,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("профосмотр") || serviceText.includes("29н")) return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр"], ["выписка"]);
   if (serviceText.includes("санатор")) {
     return findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], []);
-  }
-  if (serviceText.includes("драг") || serviceText.includes("drug") || serviceText.includes("alcohol")) {
-    return findDocxSafely(["драг тест морская шаблон"], ["драг"], []);
   }
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) {
     return findDocxSafely(["серт морская шаблон"], ["морская", "marine", "seafarer"], ["драг"]);
@@ -8026,12 +8023,6 @@ function getAutoGeneratedMedicalDocumentConfig(visit) {
     };
   }
 
-  if (serviceText.includes("драг") || serviceText.includes("drug") || serviceText.includes("alcohol")) {
-    return {
-      toast: "Драг-тест сформирован",
-      errorMessage: "Не удалось автоматически сформировать драг-тест",
-    };
-  }
 
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) {
     return {
@@ -8287,7 +8278,6 @@ const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["охрана", "guard"],
   ["29н", "prof"],
   ["проф", "prof"],
-  ["драг", "drug"],
   ["морская", "marine"],
   ["морск", "marine"],
   ["13082", "13082"],
@@ -8312,7 +8302,6 @@ const CERTIFICATE_PRINT_TYPE_LABELS = {
   chod: "Справка ЧОД",
   guard: "Справка охрана",
   prof: "Заключение 29Н",
-  drug: "Drug/alcohol test",
   marine: "Морская справка",
   "13082": "13082",
   "13098": "13098",
@@ -8346,8 +8335,10 @@ const SERVICE_SERIES_OVERRIDES = new Map([
   ["электрокардиография (экг)", "ЭКГ"],
   ["капельное введение лекарственных средств", "КАПЕЛЬНИЦА"],
   ["капельница", "КАПЕЛЬНИЦА"],
+  ["лмк справка", "ЛМК"],
   ["морская медицинская комиссия", "МОРСКАЯ"],
-  ["drug/alcohol test № 96", "ДРАГ"],
+  ["сэмт-196", "СЭМТ-196"],
+  ["сэмт 196", "СЭМТ-196"],
   ["узи брюшной полости", "УЗИ ОБП"],
   ["узи молочных желез", "УЗИ МЖ"],
   ["узи предстательной железы", "УЗИ ПЖ"],
@@ -8399,7 +8390,6 @@ function getDriverPrintCertificateType(series) {
   if (normalized.includes("4026") || normalized.includes("чод")) return "chod";
   if (normalized.includes("охран")) return "guard";
   if (normalized.includes("29н") || normalized.includes("проф")) return "prof";
-  if (normalized.includes("драг")) return "drug";
   if (normalized.includes("морск") || normalized.includes("marine") || normalized.includes("seafar")) return "marine";
   if (normalized === "13082" || normalized === "13098") return normalized;
   return "";
