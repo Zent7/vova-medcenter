@@ -161,8 +161,11 @@
     if (!textarea) return;
     closeMedicalRequirementsPicker();
 
-    let history = saveMedicalRequirementsHistory(loadMedicalRequirementsHistory());
-    let selectedValue = normalizeMedicalRequirementValue(textarea.value) || history[0] || "";
+    const currentTextareaValue = normalizeMedicalRequirementValue(textarea.value);
+    let history = currentTextareaValue
+      ? rememberMedicalRequirementValue(currentTextareaValue)
+      : saveMedicalRequirementsHistory(loadMedicalRequirementsHistory());
+    let selectedValue = currentTextareaValue || history[0] || "";
     const overlay = document.createElement("div");
     overlay.className = "medical-requirements-picker";
     overlay.dataset.medicalRequirementsPicker = "true";
@@ -1675,16 +1678,23 @@
     if (form.dataset.doctorRoleId === "chairman") {
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");
       if (medicalRequirementsInput) {
+        let medicalRequirementsRememberTimer = null;
         const rememberCurrentRequirements = () => rememberMedicalRequirementValue(medicalRequirementsInput.value);
+        const rememberCurrentRequirementsSoon = () => {
+          window.clearTimeout(medicalRequirementsRememberTimer);
+          medicalRequirementsRememberTimer = window.setTimeout(rememberCurrentRequirements, 250);
+        };
         const openRequirementsPicker = (event) => {
           event.preventDefault();
           event.stopPropagation();
+          rememberCurrentRequirements();
           openMedicalRequirementsPicker(medicalRequirementsInput);
         };
         const medicalRequirementsOpenButton = form.querySelector("[data-medical-requirements-open]");
         medicalRequirementsOpenButton?.addEventListener("click", openRequirementsPicker);
         medicalRequirementsInput.addEventListener("click", openRequirementsPicker);
         medicalRequirementsInput.addEventListener("focus", openRequirementsPicker);
+        medicalRequirementsInput.addEventListener("input", rememberCurrentRequirementsSoon);
         medicalRequirementsInput.addEventListener("change", rememberCurrentRequirements);
         medicalRequirementsInput.addEventListener("blur", rememberCurrentRequirements);
       }
