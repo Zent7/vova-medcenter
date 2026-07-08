@@ -3811,6 +3811,41 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   background: transparent;
 }
 
+#actionModal.modal--legacy-certificate-print .modal__card {
+  width: min(452px, calc(100% - 28px));
+  border: 2px solid #9a9a9a;
+  border-radius: 0;
+  background: #e6e6e6;
+  box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.18), 0 18px 36px rgba(15, 23, 42, 0.22);
+}
+
+#actionModal.modal--legacy-certificate-print .modal__header {
+  min-height: 28px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #b8b8b8;
+  background: #e6e6e6;
+}
+
+#actionModal.modal--legacy-certificate-print .modal__header h2 {
+  color: #202020;
+  font: 700 13px/1.2 "Arial Cyr", Arial, sans-serif;
+}
+
+#actionModal.modal--legacy-certificate-print .icon-button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #3a3a3a;
+  font: 400 22px/20px "Arial Cyr", Arial, sans-serif;
+}
+
+#actionModal.modal--legacy-certificate-print .login-card {
+  padding: 8px 10px 10px;
+  background: #e6e6e6;
+}
+
 .driver-print-classic {
   color: #1f2933;
   font: 700 13px/1.2 "Arial Cyr", Arial, sans-serif;
@@ -3944,6 +3979,82 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   display: block;
   width: 188px;
   margin: 0 auto 9px;
+}
+
+.driver-print-classic__button--right {
+  text-align: right;
+  padding-right: 14px;
+}
+
+.driver-print-classic--legacy-certificate {
+  color: #202020;
+  font: 700 12px/1.2 "Arial Cyr", Arial, sans-serif;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__fio {
+  height: 66px;
+  margin-bottom: 13px;
+  border: 2px inset #f5f5f5;
+  border-radius: 0;
+  background: #e9e9e9;
+  font-size: 21px;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__caption {
+  margin: 0 0 8px 4px;
+  color: #202020;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__lookup {
+  grid-template-columns: 72px 108px 138px;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__input {
+  height: 38px;
+  border: 2px inset #f5f5f5;
+  border-radius: 0;
+  background: #f4f4f4;
+  box-shadow: none;
+  color: #202020;
+  font-size: 18px;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__button {
+  border: 2px outset #f0f0f0;
+  border-radius: 0;
+  background: #e6e6e6;
+  box-shadow: none;
+  color: #202020;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__button:active:not(:disabled) {
+  border-style: inset;
+  background: #dcdcdc;
+  box-shadow: none;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__button--duplicate {
+  width: 145px;
+  margin: 0 0 8px 4px;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__primary {
+  grid-template-columns: 62px 114px 104px;
+  gap: 9px;
+  margin: 0 0 46px 56px;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__actions--driver {
+  display: block;
+  margin: 0;
+}
+
+.driver-print-classic--legacy-certificate .driver-print-classic__button--wide {
+  width: 100%;
+  min-height: 42px;
+  margin: 0 0 10px;
 }
 
 .chairman-print-results .driver-print-classic__fio {

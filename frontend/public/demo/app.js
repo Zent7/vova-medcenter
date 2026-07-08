@@ -8136,7 +8136,7 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
         ? {
             preselectedSeries: numberedCertificateSeries,
             selectedCertificateType: printType || "",
-            compactCertificateFlow: true,
+            legacyCertificateFlow: true,
           }
         : {}),
     });
@@ -8439,6 +8439,20 @@ function isNumberedCertificatePrintSeries(series) {
   return isNumberedCertificatePrintType(getDriverPrintCertificateType(series));
 }
 
+function getNumberedCertificateLookupSeriesForType(type) {
+  const normalizedType = String(type || "").toLowerCase();
+  if (normalizedType === "086") return `086${String.fromCharCode(1059)}`;
+  if (normalizedType === "095") return `095${String.fromCharCode(1059)}`;
+  return "";
+}
+
+function getNumberedCertificateDisplaySeries(series, certificateType = "") {
+  const normalizedType = String(certificateType || getDriverPrintCertificateType(series) || "").toLowerCase();
+  if (normalizedType === "086") return "086";
+  if (normalizedType === "095") return "095";
+  return normalizeBlankSeries(series);
+}
+
 function resolveNumberedCertificateLookupSeries(selectedSeries, certificateType, seriesOptions = []) {
   const normalizedSelected = normalizeBlankSeries(selectedSeries).toLowerCase();
   const normalizedType = String(certificateType || "").toLowerCase();
@@ -8446,14 +8460,18 @@ function resolveNumberedCertificateLookupSeries(selectedSeries, certificateType,
     .map((item) => normalizeBlankSeries(item?.series || item))
     .filter(Boolean);
 
-  const exact = options.find((series) => series.toLowerCase() === normalizedSelected);
-  if (exact) return exact;
-
   if (isNumberedCertificatePrintType(normalizedType)) {
     const marker = normalizedType === "086" ? "086" : "095";
-    const matching = options.find((series) => series.toLowerCase().includes(marker));
+    const matching = options.find((series) => {
+      const normalizedSeries = series.toLowerCase();
+      return normalizedSeries.includes(marker) && normalizedSeries !== marker;
+    });
     if (matching) return matching;
+    return getNumberedCertificateLookupSeriesForType(normalizedType);
   }
+
+  const exact = options.find((series) => series.toLowerCase() === normalizedSelected);
+  if (exact) return exact;
 
   return normalizeBlankSeries(selectedSeries);
 }
@@ -8753,6 +8771,7 @@ async function openDriverPrintFlow(options = {}) {
     ? options.certificateTypes.map((type) => String(type || "").toLowerCase()).filter(Boolean)
     : [];
   const compactCertificateFlow = Boolean(options.compactCertificateFlow);
+  const legacyCertificateFlow = Boolean(options.legacyCertificateFlow);
   const preselectedCertificateType = getDriverPrintCertificateType(preselectedSeries);
   const isOrdinaryDriverFlow = !preselectedCertificateType && !requestedCertificateTypes.length;
   const template = pickDocumentTemplate("driver", visit, client);
@@ -8847,6 +8866,7 @@ async function openDriverPrintFlow(options = {}) {
     selectedCertificateType: "",
     certificateTypes: requestedCertificateTypes,
     compactCertificateFlow,
+    legacyCertificateFlow,
     currentBlank: normalizeDriverPrintBlank(fallbackBlank),
     loading: false,
     error: "",
@@ -8921,6 +8941,7 @@ async function openDriverPrintFlow(options = {}) {
       certificateTypes: flowState.certificateTypes,
       selectedCertificateType: flowState.selectedCertificateType,
       compactCertificateFlow: flowState.compactCertificateFlow,
+      legacyCertificateFlow: flowState.legacyCertificateFlow,
     });
   };
 
@@ -9064,16 +9085,24 @@ async function openDriverPrintFlow(options = {}) {
   const renderFlow = () => {
     const blankParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
     const findButtonDisabled = flowState.loading;
+    const visibleSeries = flowState.legacyCertificateFlow
+      ? getNumberedCertificateDisplaySeries(flowState.selectedSeries, flowState.selectedCertificateType)
+      : flowState.selectedSeries;
+    const visiblePrimarySeries = flowState.legacyCertificateFlow
+      ? getNumberedCertificateDisplaySeries(blankParts.series || flowState.selectedSeries, flowState.selectedCertificateType)
+      : blankParts.series;
+    const visibleCertificateType = flowState.selectedCertificateType || getDriverPrintCertificateType(flowState.selectedSeries);
+    const certificatePrintDisabled = flowState.loading || !flowState.currentBlank?.id || !visibleCertificateType;
 
     openActionModal(
       "Печать результатов:",
       `
-        <div class="driver-print-classic">
+        <div class="driver-print-classic${flowState.legacyCertificateFlow ? " driver-print-classic--legacy-certificate" : ""}">
           <input class="driver-print-classic__fio" value="${escapeHtml(client.fullName || "Клиент")}" readonly />
 
           <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
           <div class="driver-print-classic__lookup">
-            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(flowState.selectedSeries)}" readonly />
+            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" readonly />
             <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(blankParts.number)}" readonly />
             <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
           </div>
@@ -9090,8 +9119,8 @@ async function openDriverPrintFlow(options = {}) {
               : `
                 <div class="driver-print-classic__caption driver-print-classic__caption--primary">Серия, номер, дата первоначального бланка:</div>
                 <div class="driver-print-classic__primary">
-                  <input class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(blankParts.series)}" readonly />
-                  <input class="driver-print-classic__input" value="${escapeHtml(blankParts.fullNumber || blankParts.number)}" readonly />
+                  <input class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visiblePrimarySeries)}" readonly />
+                  <input class="driver-print-classic__input" value="${escapeHtml(blankParts.number || blankParts.fullNumber)}" readonly />
                   <input class="driver-print-classic__input driver-print-classic__input--date" value="${escapeHtml(blankParts.primaryDate)}" readonly />
                 </div>
               `
@@ -9100,17 +9129,29 @@ async function openDriverPrintFlow(options = {}) {
           ${flowState.error ? `<div class="driver-print-classic__error">${escapeHtml(flowState.error)}</div>` : ""}
 
           <div class="driver-print-classic__actions driver-print-classic__actions--driver">
-            ${renderPrintActions()}
+            ${
+              flowState.legacyCertificateFlow
+                ? `
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-selected-certificate="${escapeHtml(visibleCertificateType)}" ${certificatePrintDisabled ? "disabled" : ""}>${escapeHtml(getCertificatePrintTypeLabel(visibleCertificateType))}</button>
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" disabled>Амб. Карта 25У</button>
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--wide driver-print-classic__button--right" disabled>Результат ЭКГ</button>
+                `
+                : renderPrintActions()
+            }
           </div>
         </div>
       `,
-      "modal--driver-print",
+      flowState.legacyCertificateFlow ? "modal--driver-print modal--legacy-certificate-print" : "modal--driver-print",
     );
 
     const seriesInput = document.getElementById("driverBlankSeries");
     const selectSeries = (value) => {
-      flowState.selectedSeries = normalizeBlankSeries(value);
-      flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries);
+      const normalizedSeries = normalizeBlankSeries(value);
+      const nextCertificateType = getDriverPrintCertificateType(normalizedSeries);
+      flowState.selectedCertificateType = nextCertificateType || (flowState.legacyCertificateFlow ? flowState.selectedCertificateType : "");
+      flowState.selectedSeries = flowState.legacyCertificateFlow
+        ? getNumberedCertificateDisplaySeries(normalizedSeries, flowState.selectedCertificateType)
+        : normalizedSeries;
       setStoredDriverPrintSeries(flowState.selectedSeries);
       flowState.currentBlank = null;
       flowState.error = "";
@@ -9154,18 +9195,23 @@ async function openDriverPrintFlow(options = {}) {
           return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         };
         const shouldAutoCreateImmediately =
-          !isPreenteredBlankSeries(requestedSeries) && !canAutoCreateChairmanBlankSeries(requestedSeries);
+          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
+          !isPreenteredBlankSeries(requestedSeries) &&
+          !canAutoCreateChairmanBlankSeries(requestedSeries);
         try {
           flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
         } catch (error) {
-          if (!canAutoCreateChairmanBlankSeries(requestedSeries)) {
+          if (isNumberedCertificatePrintType(flowState.selectedCertificateType) || !canAutoCreateChairmanBlankSeries(requestedSeries)) {
             throw error;
           }
           flowState.currentBlank = await fetchNextBlank(true);
         }
         if (flowState.currentBlank?.series) {
-          flowState.selectedSeries = normalizeBlankSeries(flowState.currentBlank.series);
-          flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries) || flowState.selectedCertificateType;
+          const resolvedSeries = normalizeBlankSeries(flowState.currentBlank.series);
+          flowState.selectedCertificateType = getDriverPrintCertificateType(resolvedSeries) || flowState.selectedCertificateType;
+          flowState.selectedSeries = flowState.legacyCertificateFlow
+            ? getNumberedCertificateDisplaySeries(resolvedSeries, flowState.selectedCertificateType)
+            : resolvedSeries;
           setStoredDriverPrintSeries(flowState.selectedSeries);
         }
       } catch (error) {
@@ -9646,7 +9692,7 @@ function openActionModal(title, html, className = "") {
   if (!actionModalTitle || !actionModalContent || !actionModal) return;
   actionModal.className = "modal hidden";
   if (className) {
-    actionModal.classList.add(className);
+    className.trim().split(/\s+/).filter(Boolean).forEach((item) => actionModal.classList.add(item));
   }
   actionModalTitle.textContent = repairDemoText(title);
   actionModalContent.innerHTML = repairDemoText(html);
@@ -10985,7 +11031,7 @@ function bindContentEvents() {
             ? {
                 preselectedSeries: numberedCertificateSeries,
                 selectedCertificateType: printType || "",
-                compactCertificateFlow: true,
+                legacyCertificateFlow: true,
               }
             : {}),
         });
