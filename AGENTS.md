@@ -114,6 +114,7 @@ When the user asks to change the site, assume the change must be reflected on th
 - Deploy PR: https://github.com/ravilushqa/homelab/pull/261
 
 Default workflow for site changes:
+- User preference for all future chats in this repository: publish site/demo changes to the live demo immediately after local verification, unless the user explicitly says local-only.
 - Make the change in this repository, usually under `frontend/public/demo/` for UI behavior and styling.
 - Verify locally with the relevant checks for the touched files.
 - After implementation and verification, prepare the repo changes for delivery and use the existing deploy workflow/PR above so the live demo receives the update.
