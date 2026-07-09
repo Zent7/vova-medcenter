@@ -772,22 +772,47 @@ function renderCopyableValue(value, label, options = {}) {
   `;
 }
 
-function resolveAdmissionCategoryValue(categoryValue, services) {
+function formatCertificate086SeriesForSex(options = {}) {
+  const sexKey = options.sexKey || (options.client && getClientSexKey(options.client));
+  if (sexKey === "female") return "086у (Ж)";
+  if (sexKey === "male") return "086у (М)";
+  return "086у";
+}
+
+function formatAdmissionServiceSeriesList(services, options = {}) {
+  const serviceNames = Array.isArray(services)
+    ? services.map((service) => String(service || "").trim()).filter(Boolean)
+    : [];
+  return serviceNames
+    .map((name) => {
+      const service =
+        (typeof getServerServiceByName === "function" && getServerServiceByName(name)) ||
+        (typeof structuredServices !== "undefined" &&
+          Array.isArray(structuredServices) &&
+          structuredServices.find((item) => item.name === name)) ||
+        { name };
+      return buildServiceSeriesAbbreviation(service, options);
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function resolveAdmissionCategoryValue(categoryValue, services, options = {}) {
   const directValue = String(categoryValue || "").trim();
   const serviceNames = Array.isArray(services)
     ? services.map((service) => String(service || "").trim()).filter(Boolean)
     : [];
   if (directValue && !(hasGuardCertificateServiceName(serviceNames) && /^0?71у?$/i.test(directValue))) return directValue;
   if (hasGuardCertificateServiceName(serviceNames)) return "4026";
-  return serviceNames.join(", ");
+  return formatAdmissionServiceSeriesList(serviceNames, options) || serviceNames.join(", ");
 }
 
-function resolveDashboardAdmissionCategoryValue(categoryValue, services) {
+function resolveDashboardAdmissionCategoryValue(categoryValue, services, options = {}) {
   const directValue = String(categoryValue || "").trim();
   if (hasGuardCertificateServiceName(services) || directValue === "4026") {
     return GUARD_CERTIFICATE_DISPLAY_NAME;
   }
-  return resolveAdmissionCategoryValue(categoryValue, services);
+  return resolveAdmissionCategoryValue(categoryValue, services, options);
 }
 
 function getVisitServiceNamesForDisplay(visit) {
@@ -806,7 +831,7 @@ function getVisitServiceNamesForDisplay(visit) {
 
 function resolveDashboardAdmissionCategory(client, visit = null) {
   const clientServiceNames = getClientAdmissionServiceNames(client);
-  if (!visit) return resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames);
+  if (!visit) return resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames, { client });
 
   const services = getServicesForVisit(visit);
   const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit), clientServiceNames);
@@ -817,10 +842,11 @@ function resolveDashboardAdmissionCategory(client, visit = null) {
     const driverCategories = normalizeDriverCategories(
       driverDetail.categories || visit.admissionCategory || client?.admissionCategory || client?.category,
     );
-    return resolveDashboardAdmissionCategoryValue(driverCategories.join(", "), serviceNames);
+    return resolveDashboardAdmissionCategoryValue(driverCategories.join(", "), serviceNames, { client });
   }
 
-  return resolveDashboardAdmissionCategoryValue("", serviceNames) || resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames);
+  return resolveDashboardAdmissionCategoryValue("", serviceNames, { client }) ||
+    resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames, { client });
 }
 
 function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
@@ -2063,7 +2089,7 @@ function mapApiClient(client) {
     services,
     registration: client.registration_text || client.address_text || "",
     admissionCategory: client.admission_category || "",
-    category: resolveAdmissionCategoryValue(client.admission_category, admissionServices),
+    category: resolveAdmissionCategoryValue(client.admission_category, admissionServices, { client }),
     referenceNumber: client.reference_number || "",
     gynecologist: client.doctor_gynecologist || "",
     stomatologist: client.doctor_stomatologist || "",
@@ -4068,7 +4094,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
     mkb10: chairmanMedicalRecordData.mkb10 || String(raw.mkb10 || "").trim() || null,
   };
 
-  client.category = resolveAdmissionCategoryValue(nextRaw.admission_category, client.services);
+  client.category = resolveAdmissionCategoryValue(nextRaw.admission_category, client.services, { client });
   client.admissionCategory = nextRaw.admission_category || "";
   client.mkb10 = nextRaw.mkb10 || "";
   client.rawApiClient = nextRaw;
@@ -8383,31 +8409,31 @@ const BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate";
 const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
 const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
-  ["071у", "071У"],
+  ["071у", "071у"],
   ["профосмотр", "29Н"],
   ["первичный профосмотр 29н", "29Н"],
-  ["санаторно-курортная карта", "072У"],
-  ["санаторно-курортная карта 072у", "072У"],
-  ["справка для получения путевки 070у", "070У"],
-  ["справка 001 гсу для работы на госслужбе", "001 ГСУ"],
-  ["справка формы 001 гсу", "001 ГСУ"],
+  ["санаторно-курортная карта", "072 у СКК"],
+  ["санаторно-курортная карта 072у", "072 у СКК"],
+  ["справка для получения путевки 070у", "070у"],
+  ["справка 001 гсу для работы на госслужбе", "ГС"],
+  ["справка формы 001 гсу", "ГС"],
   ["справка 002 чод (для охраны)", "4026"],
   ["справка в бассейн", "БАСС"],
   ["справка для посещения бассейна", "БАСС"],
-  ["справка выезжающих за границу 082у", "082У"],
-  ["справка для выезжающих за границу 082у", "082У"],
-  ["справка гостайна, форма 989н", "989Н"],
-  ["справка для работы с гостайной формы 989н", "989Н"],
-  ["справка 342н (псих. освид.)", "342Н"],
+  ["справка выезжающих за границу 082у", "082у"],
+  ["справка для выезжающих за границу 082у", "082у"],
+  ["справка гостайна, форма 989н", "ГТ"],
+  ["справка для работы с гостайной формы 989н", "ГТ"],
+  ["справка 342н (псих. освид.)", "342н псих осв"],
   ["справка гто 1144", "ГТО"],
-  ["справка для поступления 086у", "086У"],
-  ["справка формы 086у", "086У"],
-  ["086", "086"],
-  ["086у", "086"],
-  ["справка по форме 095у", "095У"],
-  ["справка 095/у о временной нетрудоспособности", "095У"],
-  ["095у", "095"],
-  ["095", "095У"],
+  ["справка для поступления 086у", "086у"],
+  ["справка формы 086у", "086у"],
+  ["086", "086у"],
+  ["086у", "086у"],
+  ["справка по форме 095у", "095у"],
+  ["справка 095/у о временной нетрудоспособности", "095у"],
+  ["095у", "095у"],
+  ["095", "095у"],
   ["справка для участия в соревнованиях", "СПОРТ"],
   ["справка спорт + экг", "СПОРТ"],
   ["спорт", "СПОРТ"],
@@ -8551,7 +8577,7 @@ function isPreenteredBlankSeries(series) {
   return PREENTERED_BLANK_SERIES_SET.has(normalizeBlankSeries(series).toLowerCase());
 }
 
-function buildServiceSeriesAbbreviation(service) {
+function buildServiceSeriesAbbreviation(service, options = {}) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
   if (!name) return "";
@@ -8568,7 +8594,8 @@ function buildServiceSeriesAbbreviation(service) {
     return "";
   }
   if (SERVICE_SERIES_OVERRIDES.has(normalizedName)) {
-    return SERVICE_SERIES_OVERRIDES.get(normalizedName);
+    const series = SERVICE_SERIES_OVERRIDES.get(normalizedName);
+    return series === "086у" ? formatCertificate086SeriesForSex(options) : series;
   }
 
   const words = name

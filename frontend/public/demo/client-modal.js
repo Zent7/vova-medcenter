@@ -1,6 +1,7 @@
 ﻿let clientModalSelectedServices = new Set();
 let clientModalServiceDetails = {};
 let clientModalSubmitAction = "save";
+let clientModalSexKey = "";
 
 const CLIENT_DRIVER_DEFAULT_CATEGORIES = ["A", "B", "C", "D", "BE", "M"];
 const CLIENT_DRIVER_CATEGORY_ROWS = [
@@ -43,6 +44,17 @@ const CLIENT_ADDRESS_PRESETS = [
   { city: "Колпино", subject: "Санкт-Петербург", district: "Колпинский район" },
   { city: "Петергоф", subject: "Санкт-Петербург", district: "Петродворцовый район" },
 ];
+
+function resolveClientModalSexKey(value = "") {
+  const sex = String(value || "").trim().toLowerCase();
+  if (/^(f|female|woman|ж|жен|женский)$/.test(sex) || sex.includes("жен")) return "female";
+  if (/^(m|male|man|м|муж|мужской)$/.test(sex) || sex.includes("муж")) return "male";
+  return "";
+}
+
+function getClientModalSexKey() {
+  return resolveClientModalSexKey(actionModalContent?.querySelector('[name="gender"]')?.value) || clientModalSexKey;
+}
 
 function formatClientNameInputValue(value = "") {
   return String(value || "").replace(/[^\s-]+/gu, (part) => {
@@ -878,8 +890,12 @@ function renderClientServiceSelector(selectedServices = []) {
         ${
           visibleServices.length
             ? visibleServices
-                .map(
-                  (service) => `
+                .map(
+                  (service) => {
+                    const serviceSeries = typeof buildServiceSeriesAbbreviation === "function"
+                      ? buildServiceSeriesAbbreviation(service, { sexKey: getClientModalSexKey() })
+                      : "";
+                    return `
                     <label class="${selectedSet.has(service.name) ? "client-service-chip client-service-chip--active" : "client-service-chip"}">
                       <input
                         type="checkbox"
@@ -887,11 +903,15 @@ function renderClientServiceSelector(selectedServices = []) {
                         value="${escapeHtml(service.name)}"
                         ${selectedSet.has(service.name) ? "checked" : ""}
                       />
-                      <span>${escapeHtml(service.name)}</span>
+                      <span class="client-service-chip__text">
+                        <span>${escapeHtml(service.name)}</span>
+                        ${serviceSeries ? `<small>${escapeHtml(serviceSeries)}</small>` : ""}
+                      </span>
                       ${selectedSet.has(service.name) ? '<span class="client-service-chip__check" aria-hidden="true"></span>' : ""}
                     </label>
-                  `,
-                )
+                  `;
+                  },
+                )
                 .join("")
             : '<div class="muted">В этой группе услуг пока нет</div>'
         }
@@ -972,6 +992,7 @@ function openClientModal(clientId = null, options = {}) {
     : (editingClient ? "Редактирование" : "Создание");
   const primarySubmitLabel = encounterMode ? "Сохранить обращение" : "ОК";
   const defaultGender = editingClient?.gender || editingClient?.sex || editingClient?.rawApiClient?.sex || "";
+  clientModalSexKey = resolveClientModalSexKey(defaultGender);
   const rawClientDocument = editingClient?.rawApiClient || {};
   const initialDocumentType =
     rawClientDocument.document_type ||
@@ -1213,6 +1234,15 @@ function openClientModal(clientId = null, options = {}) {
     });
     bindClientNameCapitalization(form);
     bindClientAddressAutocomplete(form, { defaultCountry: Boolean(editingClient) });
+    form.elements.gender?.addEventListener("change", () => {
+      clientModalSexKey = resolveClientModalSexKey(form.elements.gender?.value);
+      const selectedNow = getClientModalSelectedServicesFromDom();
+      const container = document.getElementById("serviceSelectorContainer");
+      if (container) {
+        container.outerHTML = `<div id="serviceSelectorContainer">${renderClientServiceSelector(selectedNow)}</div>`;
+        bindClientServiceGroupButtons();
+      }
+    });
 
     form.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) {
