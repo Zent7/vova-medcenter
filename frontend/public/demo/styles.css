@@ -35,6 +35,8 @@
   --excel-col-cardNumber: clamp(78px, 5vw, 104px);
   --excel-col-organization: clamp(116px, 7.4vw, 160px);
   --excel-col-agent: clamp(110px, 7vw, 150px);
+  --dashboard-shell-sticky-top: 44px;
+  --dashboard-doctors-sticky-height: 43px;
   --dashboard-sticky-offset: 0px;
   --excel-col-serviceId: 72px;
   --excel-col-serviceName: 340px;
@@ -2005,16 +2007,29 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   overflow: visible;
 }
 
-.dashboard-sticky-controls {
+.dashboard-doctors-sticky {
   position: sticky;
-  top: 0;
-  z-index: 40;
+  top: var(--dashboard-shell-sticky-top);
+  z-index: 60;
   min-width: 0;
   max-width: 100%;
   margin: -14px -14px 0;
-  padding: 8px 10px 8px;
+  padding: 8px 10px 6px;
   border-bottom: 1px solid rgba(14, 31, 53, 0.1);
   border-radius: 18px 18px 0 0;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(30, 50, 70, 0.1);
+}
+
+.dashboard-sticky-controls {
+  position: sticky;
+  top: calc(var(--dashboard-shell-sticky-top) + var(--dashboard-doctors-sticky-height));
+  z-index: 40;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 -14px 0;
+  padding: 8px 10px 8px;
+  border-bottom: 1px solid rgba(14, 31, 53, 0.1);
   background: #ffffff;
   box-shadow: 0 12px 22px rgba(15, 31, 56, 0.08);
 }
@@ -5724,13 +5739,12 @@ body[data-page="dashboard"] .topbar-actions .primary-button {
 }
 
 body[data-page="dashboard"] .dashboard-sticky-controls {
-  margin: -14px -14px 0;
+  margin: 0 -14px 0;
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
-  border-radius: 18px 18px 0 0;
   box-shadow: 0 10px 24px rgba(30, 50, 70, 0.08);
   position: sticky;
-  top: 0;
+  top: calc(var(--dashboard-shell-sticky-top) + var(--dashboard-doctors-sticky-height));
   z-index: 40;
 }
 

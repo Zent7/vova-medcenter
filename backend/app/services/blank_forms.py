@@ -584,8 +584,8 @@ def issue_next_blank(
     form: BlankForm | None = db.execute(query).scalar_one_or_none()
     if form is None:
         raise NoFreeBlankError(
-            "Нет свободных бланков для медицинского заключения "
-            "водительского удостоверения. Добавьте новую партию в разделе «Бланки»."
+            f"Нет свободных бланков для типа «{blank_type_record.name}». "
+            "Добавьте новую партию в разделе «Бланки»."
         )
 
     form.status = BLANK_STATUS_ISSUED

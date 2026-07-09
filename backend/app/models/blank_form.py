@@ -24,8 +24,24 @@ BLANK_STATUS_SPOILED = "spoiled"
 BLANK_STATUS_CANCELLED = "cancelled"
 BLANK_STATUSES = (BLANK_STATUS_FREE, BLANK_STATUS_ISSUED, BLANK_STATUS_SPOILED, BLANK_STATUS_CANCELLED)
 
-# Стартовый набор типов номерных бланков. На текущий момент один.
+# Стартовый набор типов номерных бланков.
 BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate"
+BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate"
+BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate"
+NUMBERED_BLANK_TYPES = (
+    (
+        BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+        "Медицинское заключение для водительского удостоверения",
+    ),
+    (
+        BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
+        "Справка для управления самоходными машинами",
+    ),
+    (
+        BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+        "Справка 002 ЧОД (для охраны)",
+    ),
+)
 
 
 class BlankType(TimestampMixin, Base):

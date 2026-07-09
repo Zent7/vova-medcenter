@@ -45,6 +45,10 @@ def template_visit_type_code(template_name: str) -> str | None:
     normalized = template_name.lower()
     if "вод" in normalized or "driver" in normalized:
         return "driver"
+    if "трактор" in normalized or "tractor" in normalized or "071" in normalized:
+        return "tractor"
+    if "охран" in normalized or "guard" in normalized or "чод" in normalized or "002" in normalized:
+        return "guard"
     if "лмк" in normalized:
         return "lmk_new"
     if "086" in normalized:
@@ -53,6 +57,8 @@ def template_visit_type_code(template_name: str) -> str | None:
         return "prof"
     if "гимс" in normalized:
         return "gims"
+    if "082" in normalized or "095" in normalized:
+        return "other"
     if any(keyword in normalized for keyword in ("070", "072", "санатор", "морск", "marine", "seafar", "драг", "drug", "alcohol")):
         return "other"
     return None
@@ -61,7 +67,11 @@ def template_visit_type_code(template_name: str) -> str | None:
 def sync_document_template_catalog(db) -> int:
     from sqlalchemy import select
 
-    from app.models.blank_form import BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
+    from app.models.blank_form import (
+        BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+        BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+        BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
+    )
     from app.models.document_template import DocumentTemplate
     from app.models.visit_type import VisitType
 
@@ -114,7 +124,13 @@ def sync_document_template_catalog(db) -> int:
         template.blank_type = None
 
         haystack = " ".join([item["code"], item["name"], item["file_name"]]).lower()
-        if ("вод" in haystack) or ("driver" in haystack):
+        if "охран" in haystack or "guard" in haystack or "чод" in haystack or "002" in haystack:
+            template.requires_numbered_blank = True
+            template.blank_type = BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE
+        elif "трактор" in haystack or "tractor" in haystack or "071" in haystack:
+            template.requires_numbered_blank = True
+            template.blank_type = BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE
+        elif ("вод" in haystack) or ("driver" in haystack):
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
 

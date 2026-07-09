@@ -287,6 +287,8 @@ function decodeEarlyLatin1Utf8Mojibake(value) {
   }
 }
 
+const GUARD_CERTIFICATE_DISPLAY_NAME = "Справка 002 ЧОД (для охраны)";
+
 function normalizeGuardCertificateServiceName(name) {
   const raw = String(name || "").trim();
   return `${raw} ${decodeEarlyLatin1Utf8Mojibake(raw)}`.toLowerCase();
@@ -332,7 +334,7 @@ function getGuardCertificateFallbackService() {
   const certificateGroupId = serviceGroups.find((group) => String(group?.name || "").toLowerCase().includes("справ"))?.id;
   const base = fallbackService || {
     id: fallbackId,
-    name: "Справка 002 ЧОД (для охраны)",
+    name: GUARD_CERTIFICATE_DISPLAY_NAME,
     groupId: certificateGroupId || 7,
     price: 3500,
     notes: "",
@@ -780,6 +782,14 @@ function resolveAdmissionCategoryValue(categoryValue, services) {
   return serviceNames.join(", ");
 }
 
+function resolveDashboardAdmissionCategoryValue(categoryValue, services) {
+  const directValue = String(categoryValue || "").trim();
+  if (hasGuardCertificateServiceName(services) || directValue === "4026") {
+    return GUARD_CERTIFICATE_DISPLAY_NAME;
+  }
+  return resolveAdmissionCategoryValue(categoryValue, services);
+}
+
 function getVisitServiceNamesForDisplay(visit) {
   if (!visit) return [];
 
@@ -796,21 +806,21 @@ function getVisitServiceNamesForDisplay(visit) {
 
 function resolveDashboardAdmissionCategory(client, visit = null) {
   const clientServiceNames = getClientAdmissionServiceNames(client);
-  if (!visit) return resolveAdmissionCategoryValue(client?.category, clientServiceNames);
+  if (!visit) return resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames);
 
   const services = getServicesForVisit(visit);
   const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit), clientServiceNames);
-  if (hasGuardCertificateServiceName(serviceNames)) return "4026";
+  if (hasGuardCertificateServiceName(serviceNames)) return GUARD_CERTIFICATE_DISPLAY_NAME;
   const hasDriverService = services.some(isDriverService);
   if (hasDriverService) {
     const driverDetail = getDriverDetailFromVisit(visit);
     const driverCategories = normalizeDriverCategories(
       driverDetail.categories || visit.admissionCategory || client?.admissionCategory || client?.category,
     );
-    return resolveAdmissionCategoryValue(driverCategories.join(", "), serviceNames);
+    return resolveDashboardAdmissionCategoryValue(driverCategories.join(", "), serviceNames);
   }
 
-  return resolveAdmissionCategoryValue("", serviceNames) || resolveAdmissionCategoryValue(client?.category, clientServiceNames);
+  return resolveDashboardAdmissionCategoryValue("", serviceNames) || resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames);
 }
 
 function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
@@ -2504,6 +2514,26 @@ async function fetchAuthorizedFileObjectUrl(url) {
   return URL.createObjectURL(await response.blob());
 }
 
+async function downloadAuthorizedFileUrl(url, fileName = "") {
+  if (!url) return false;
+  let objectUrl = "";
+  try {
+    objectUrl = await fetchAuthorizedFileObjectUrl(url);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName || "";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    return true;
+  } catch (error) {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
 async function openAuthorizedFileUrl(url, { print = false } = {}) {
   if (!url) return false;
   let objectUrl = "";
@@ -2800,8 +2830,7 @@ function buildWordProtocolUrl(fileUrl) {
 }
 
 function openDocumentFileUrl(fileUrl, documentItem = null, targetWindow = null) {
-  const isWordDocument = isWordDocumentFile(documentItem?.fileName || documentItem?.file_name || fileUrl);
-  const destinationUrl = isWordDocument ? buildWordProtocolUrl(fileUrl) : fileUrl;
+  const destinationUrl = fileUrl;
   if (targetWindow && !targetWindow.closed) {
     targetWindow.location.href = destinationUrl;
     return true;
@@ -2838,6 +2867,14 @@ async function openGeneratedDocumentInBrowser(documentItem) {
   if (!inlineUrl) return false;
 
   return openAuthorizedFileUrl(inlineUrl);
+}
+
+async function downloadGeneratedDocument(documentItem) {
+  const fileName = documentItem?.fileName || documentItem?.file_name || "";
+  if (!fileName) {
+    throw new Error("Не найден файл документа для скачивания");
+  }
+  return downloadAuthorizedFileUrl(buildGeneratedDocumentUrl(fileName), fileName);
 }
 
 async function openGeneratedDocumentManually(documentItem, options = {}) {
@@ -3208,15 +3245,23 @@ function todayRuDate() {
   return new Date().toLocaleDateString("ru-RU", RU_DATE_FORMAT_OPTIONS);
 }
 
-function buildChairmanAutoEkgConclusion(date) {
+const CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX =
+  "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей";
+const GUARD_CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX =
+  "Ритм синусовый, ЧСС, ЭОС нормальное положение, ЭКГ без особенностей";
+
+function buildChairmanAutoEkgConclusion(date, formType = "") {
   const finalDate = extractRuDate(date) || todayRuDate();
-  return `Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей от ${finalDate}`;
+  if (formType === "guard") {
+    return `${GUARD_CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
+  }
+  return `${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
 }
 
 function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
   const formType = getChairmanFormTypeForVisit(visit);
-  const defaults = CHAIRMAN_CERTIFICATE_DEFAULTS[formType];
-  if (!defaults) return fields;
+  const defaults = CHAIRMAN_CERTIFICATE_DEFAULTS[formType] || {};
+  if (!CHAIRMAN_CERTIFICATE_DEFAULTS[formType] && formType !== "guard") return fields;
 
   const result = { ...fields };
   const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
@@ -3235,10 +3280,13 @@ function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
 
   setIfBlank("examDate", visitDate);
   setIfBlank("ekg", `Медицинский центр ООО "ЦМО "ЮЛМЕД", ЭКГ от ${visitDate}`);
-  setIfBlank("ekgConclusion", buildChairmanAutoEkgConclusion(visitDate));
+  if (formType === "guard" && String(result.ekgConclusion ?? "").trim().startsWith(`${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `)) {
+    result.ekgConclusion = "";
+  }
+  setIfBlank("ekgConclusion", buildChairmanAutoEkgConclusion(visitDate, formType));
   setIfBlank("fluorography", `от ${visitDate} ОГК б.п.`);
   if (defaults.medicalRequirements) setIfBlank("medicalRequirements", defaults.medicalRequirements);
-  setIfBlank("diagnosis", defaults.diagnosis);
+  if (Object.prototype.hasOwnProperty.call(defaults, "diagnosis")) setIfBlank("diagnosis", defaults.diagnosis);
   if (defaults.conclusionText) setIfBlank("conclusionText", defaults.conclusionText);
   setIfBlank("conclusion", "Годен");
   setIfBlank("validity", defaults.validity || "1 год");
@@ -5174,13 +5222,13 @@ function renderSketchHome() {
     <section class="sketch-layout">
       <div class="sketch-main sketch-main--full">
         <article class="sketch-panel sketch-panel--dashboard">
-          <div class="dashboard-sticky-controls">
-            <div class="sketch-doctors-block">
-              <div class="sketch-doctors sketch-doctors--top">
-                ${doctorButtons.map((label) => renderDoctorButton(label, selectedClient)).join("")}
-              </div>
+          <div class="dashboard-doctors-sticky">
+            <div class="sketch-doctors sketch-doctors--top">
+              ${doctorButtons.map((label) => renderDoctorButton(label, selectedClient)).join("")}
             </div>
+          </div>
 
+          <div class="dashboard-sticky-controls">
             <div class="sketch-toolbar">
               <label class="field sketch-search">
                 <span></span>
@@ -8331,6 +8379,9 @@ const CERTIFICATE_PRINT_TYPE_LABELS = {
   "13082": "13082",
   "13098": "13098",
 };
+const BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate";
+const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
+const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071У"],
   ["профосмотр", "29Н"],
@@ -8421,6 +8472,26 @@ function getDriverPrintCertificateType(series) {
   if (normalized.includes("морск") || normalized.includes("marine") || normalized.includes("seafar")) return "marine";
   if (normalized === "13082" || normalized === "13098") return normalized;
   return "";
+}
+
+function getBlankTypeForCertificatePrintType(type) {
+  const normalizedType = String(type || "").toLowerCase();
+  if (normalizedType === "071") return BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE;
+  if (normalizedType === "guard" || normalizedType === "chod") return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE;
+  return "";
+}
+
+function resolveDriverPrintBlankType(options = {}) {
+  const candidates = [
+    options.selectedCertificateType,
+    getDriverPrintCertificateType(options.selectedSeries),
+    ...(Array.isArray(options.certificateTypes) ? options.certificateTypes : []),
+  ];
+  for (const candidate of candidates) {
+    const blankType = getBlankTypeForCertificatePrintType(candidate);
+    if (blankType) return blankType;
+  }
+  return options.template?.blank_type || BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE;
 }
 
 function getCertificatePrintTypeLabel(type) {
@@ -8782,7 +8853,12 @@ async function openDriverPrintFlow(options = {}) {
 
   const clientId = client.backendId || client.id;
   const centerId = await resolveCenterIdForVisit(visit, client);
-  const blankType = template?.blank_type || "driver_medical_certificate";
+  const blankType = resolveDriverPrintBlankType({
+    template,
+    selectedSeries: preselectedSeries,
+    selectedCertificateType: options.selectedCertificateType || preselectedCertificateType,
+    certificateTypes: requestedCertificateTypes,
+  });
 
   let seriesOptions = [];
   let fallbackBlank = options.preselectedBlank || null;
@@ -9152,6 +9228,12 @@ async function openDriverPrintFlow(options = {}) {
       flowState.selectedSeries = flowState.legacyCertificateFlow
         ? getNumberedCertificateDisplaySeries(normalizedSeries, flowState.selectedCertificateType)
         : normalizedSeries;
+      flowState.blankType = resolveDriverPrintBlankType({
+        template: flowState.template,
+        selectedSeries: normalizedSeries,
+        selectedCertificateType: flowState.selectedCertificateType,
+        certificateTypes: flowState.certificateTypes,
+      });
       setStoredDriverPrintSeries(flowState.selectedSeries);
       flowState.currentBlank = null;
       flowState.error = "";
@@ -9212,6 +9294,12 @@ async function openDriverPrintFlow(options = {}) {
           flowState.selectedSeries = flowState.legacyCertificateFlow
             ? getNumberedCertificateDisplaySeries(resolvedSeries, flowState.selectedCertificateType)
             : resolvedSeries;
+          flowState.blankType = resolveDriverPrintBlankType({
+            template: flowState.template,
+            selectedSeries: resolvedSeries,
+            selectedCertificateType: flowState.selectedCertificateType,
+            certificateTypes: flowState.certificateTypes,
+          });
           setStoredDriverPrintSeries(flowState.selectedSeries);
         }
       } catch (error) {
@@ -9324,6 +9412,16 @@ async function openDemoDocument(typeOrId, options = {}) {
     return;
   }
 
+  if (documentItem.downloadUrl && (forceGenerate || autoOpenFile)) {
+    try {
+      await downloadGeneratedDocument(documentItem);
+      showToast(`Документ скачивается: ${documentItem.title}`);
+      return;
+    } catch (error) {
+      showToast(humanizeApiError(error, "Не удалось скачать документ"));
+    }
+  }
+
   if (documentItem.downloadUrl && (autoOpenFile || isContractDocument(documentItem))) {
     try {
       if (await openGeneratedDocumentInBrowser(documentItem)) {
@@ -9343,12 +9441,22 @@ async function openDemoDocument(typeOrId, options = {}) {
         <p>${escapeHtml(documentItem.content || "Документ сформирован на сервере.")}</p>
       </div>
       <div class="client-create-actions">
-        ${documentItem.downloadUrl ? '<button type="button" class="primary-button" id="printDocumentPreview">Открыть Word</button>' : ""}
-        ${documentItem.downloadUrl ? '<button type="button" class="ghost-button" id="openDocumentPreview">Открыть без печати</button>' : ""}
+        ${documentItem.downloadUrl ? '<button type="button" class="primary-button" id="downloadDocumentPreview">Скачать</button>' : ""}
+        ${documentItem.downloadUrl ? '<button type="button" class="ghost-button" id="printDocumentPreview">Открыть</button>' : ""}
+        ${documentItem.downloadUrl ? '<button type="button" class="ghost-button" id="openDocumentPreview">Открыть в браузере</button>' : ""}
         <button type="button" class="primary-button" id="closeDocumentPreview">ОК</button>
       </div>
     `,
   );
+
+  document.getElementById("downloadDocumentPreview")?.addEventListener("click", async () => {
+    try {
+      await downloadGeneratedDocument(documentItem);
+      showToast("Документ скачивается");
+    } catch (error) {
+      showToast(humanizeApiError(error, "Не удалось скачать документ"));
+    }
+  });
 
   document.getElementById("printDocumentPreview")?.addEventListener("click", async () => {
     const targetWindow = window.open("about:blank", "_blank");
@@ -9923,18 +10031,28 @@ function focusClientSearch() {
 
 function updateDashboardStickyOffset() {
   if (appState.page !== "dashboard") {
+    document.documentElement.style.removeProperty("--dashboard-shell-sticky-top");
+    document.documentElement.style.removeProperty("--dashboard-doctors-sticky-height");
     document.documentElement.style.removeProperty("--dashboard-sticky-offset");
     return;
   }
 
   const controls = contentRoot?.querySelector(".dashboard-sticky-controls");
+  const doctors = contentRoot?.querySelector(".dashboard-doctors-sticky");
   if (!controls) {
+    document.documentElement.style.removeProperty("--dashboard-shell-sticky-top");
+    document.documentElement.style.removeProperty("--dashboard-doctors-sticky-height");
     document.documentElement.style.removeProperty("--dashboard-sticky-offset");
     return;
   }
 
-  const height = Math.ceil(controls.getBoundingClientRect().height);
-  document.documentElement.style.setProperty("--dashboard-sticky-offset", `${height}px`);
+  const shellHeader = document.querySelector(".sidebar");
+  const shellTop = shellHeader ? Math.ceil(shellHeader.getBoundingClientRect().height) : 0;
+  const doctorsHeight = doctors ? Math.ceil(doctors.getBoundingClientRect().height) : 0;
+  const controlsHeight = Math.ceil(controls.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--dashboard-shell-sticky-top", `${shellTop}px`);
+  document.documentElement.style.setProperty("--dashboard-doctors-sticky-height", `${doctorsHeight}px`);
+  document.documentElement.style.setProperty("--dashboard-sticky-offset", `${doctorsHeight + controlsHeight}px`);
 }
 
 function bindDashboardTableScrollSync() {

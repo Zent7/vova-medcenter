@@ -1,6 +1,11 @@
 from app.db.base import Base
 from app.db.session import engine, SessionLocal
-from app.models.blank_form import BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
+from app.models.blank_form import (
+    BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
+    NUMBERED_BLANK_TYPES,
+)
 from app.models import *  # noqa: F401,F403
 from app.services.seed import seed_reference_data
 from sqlalchemy import inspect, select, text
@@ -266,24 +271,61 @@ def ensure_document_template_blank_columns() -> None:
             "blank_type",
         )
 
-        connection.execute(
-            text(
+        blank_type_updates = [
+            (
+                BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
                 """
-                UPDATE document_templates
-                SET requires_numbered_blank = TRUE,
-                    blank_type = :blank_type
-                WHERE (
-                    lower(coalesce(name, '')) LIKE '%вод%'
-                    OR lower(coalesce(file_name, '')) LIKE '%вод%'
-                    OR lower(coalesce(code, '')) LIKE '%driver%'
-                    OR lower(coalesce(name, '')) LIKE '%driver%'
-                    OR lower(coalesce(file_name, '')) LIKE '%driver%'
-                )
-                AND coalesce(requires_numbered_blank, FALSE) = FALSE
-                """
+                lower(coalesce(name, '')) LIKE '%вод%'
+                OR lower(coalesce(file_name, '')) LIKE '%вод%'
+                OR lower(coalesce(code, '')) LIKE '%driver%'
+                OR lower(coalesce(name, '')) LIKE '%driver%'
+                OR lower(coalesce(file_name, '')) LIKE '%driver%'
+                """,
             ),
-            {"blank_type": BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE},
-        )
+            (
+                BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%трактор%'
+                OR lower(coalesce(file_name, '')) LIKE '%трактор%'
+                OR lower(coalesce(code, '')) LIKE '%tractor%'
+                OR lower(coalesce(name, '')) LIKE '%tractor%'
+                OR lower(coalesce(file_name, '')) LIKE '%tractor%'
+                OR lower(coalesce(name, '')) LIKE '%071%'
+                OR lower(coalesce(file_name, '')) LIKE '%071%'
+                """,
+            ),
+            (
+                BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%охран%'
+                OR lower(coalesce(file_name, '')) LIKE '%охран%'
+                OR lower(coalesce(code, '')) LIKE '%guard%'
+                OR lower(coalesce(name, '')) LIKE '%guard%'
+                OR lower(coalesce(file_name, '')) LIKE '%guard%'
+                OR lower(coalesce(name, '')) LIKE '%чод%'
+                OR lower(coalesce(file_name, '')) LIKE '%чод%'
+                OR lower(coalesce(name, '')) LIKE '%002%'
+                OR lower(coalesce(file_name, '')) LIKE '%002%'
+                """,
+            ),
+        ]
+        for blank_type, predicate in blank_type_updates:
+            connection.execute(
+                text(
+                    f"""
+                    UPDATE document_templates
+                    SET requires_numbered_blank = TRUE,
+                        blank_type = :blank_type
+                    WHERE ({predicate})
+                    AND (
+                        coalesce(requires_numbered_blank, FALSE) = FALSE
+                        OR blank_type IS NULL
+                        OR blank_type = ''
+                    )
+                    """
+                ),
+                {"blank_type": blank_type},
+            )
 
 
 def seed_blank_types() -> None:
@@ -291,16 +333,14 @@ def seed_blank_types() -> None:
         return
 
     with SessionLocal() as db:
-        existing = db.execute(select(BlankType).where(BlankType.code == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE)).scalar_one_or_none()
-        if existing is None:
-            db.add(
-                BlankType(
-                    code=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
-                    name="Медицинское заключение для водительского удостоверения",
-                    is_active=True,
-                )
-            )
-            db.commit()
+        for code, name in NUMBERED_BLANK_TYPES:
+            existing = db.execute(select(BlankType).where(BlankType.code == code)).scalar_one_or_none()
+            if existing is None:
+                db.add(BlankType(code=code, name=name, is_active=True))
+            else:
+                existing.name = name
+                existing.is_active = True
+        db.commit()
 
 
 def seed_sport_conclusion_phrases() -> None:
