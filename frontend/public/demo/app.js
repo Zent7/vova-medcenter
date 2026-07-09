@@ -5174,13 +5174,13 @@ function renderSketchHome() {
     <section class="sketch-layout">
       <div class="sketch-main sketch-main--full">
         <article class="sketch-panel sketch-panel--dashboard">
-          <div class="dashboard-sticky-controls">
-            <div class="sketch-doctors-block">
-              <div class="sketch-doctors sketch-doctors--top">
-                ${doctorButtons.map((label) => renderDoctorButton(label, selectedClient)).join("")}
-              </div>
+          <div class="dashboard-doctors-sticky">
+            <div class="sketch-doctors sketch-doctors--top">
+              ${doctorButtons.map((label) => renderDoctorButton(label, selectedClient)).join("")}
             </div>
+          </div>
 
+          <div class="dashboard-sticky-controls">
             <div class="sketch-toolbar">
               <label class="field sketch-search">
                 <span></span>
@@ -9923,18 +9923,28 @@ function focusClientSearch() {
 
 function updateDashboardStickyOffset() {
   if (appState.page !== "dashboard") {
+    document.documentElement.style.removeProperty("--dashboard-shell-sticky-top");
+    document.documentElement.style.removeProperty("--dashboard-doctors-sticky-height");
     document.documentElement.style.removeProperty("--dashboard-sticky-offset");
     return;
   }
 
   const controls = contentRoot?.querySelector(".dashboard-sticky-controls");
+  const doctors = contentRoot?.querySelector(".dashboard-doctors-sticky");
   if (!controls) {
+    document.documentElement.style.removeProperty("--dashboard-shell-sticky-top");
+    document.documentElement.style.removeProperty("--dashboard-doctors-sticky-height");
     document.documentElement.style.removeProperty("--dashboard-sticky-offset");
     return;
   }
 
-  const height = Math.ceil(controls.getBoundingClientRect().height);
-  document.documentElement.style.setProperty("--dashboard-sticky-offset", `${height}px`);
+  const shellHeader = document.querySelector(".sidebar");
+  const shellTop = shellHeader ? Math.ceil(shellHeader.getBoundingClientRect().height) : 0;
+  const doctorsHeight = doctors ? Math.ceil(doctors.getBoundingClientRect().height) : 0;
+  const controlsHeight = Math.ceil(controls.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--dashboard-shell-sticky-top", `${shellTop}px`);
+  document.documentElement.style.setProperty("--dashboard-doctors-sticky-height", `${doctorsHeight}px`);
+  document.documentElement.style.setProperty("--dashboard-sticky-offset", `${doctorsHeight + controlsHeight}px`);
 }
 
 function bindDashboardTableScrollSync() {
