@@ -921,7 +921,7 @@
               <div class="chairman-top-left">
                 <div class="chairman-mini-row">
                   <label class="chairman-mini-label">дата рождения</label>
-                  <input class="doctor-classic-input" type="text" name="birthDate" value="${escapeHtml(birthDate)}" />
+                  <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
                 </div>
               </div>
 
@@ -1710,22 +1710,28 @@
       if (!["lmk", "prof"].includes(form.dataset.chairmanFormType || "")) {
         const syncAutoEkgConclusion = () => {
           const chairmanType = form.dataset.chairmanFormType || "";
-          const conclusionInput = form.elements.ekgConclusion;
+          const conclusionInput = getFirstNamedControl(form.elements.ekgConclusion);
           if (!conclusionInput) return;
           const currentValue = String(conclusionInput.value || "").trim();
           if (currentValue && !isAutoEkgConclusion(currentValue, chairmanType)) return;
+          const ekgInput = getFirstNamedControl(form.elements.ekg);
+          const examDateInput = getFirstNamedControl(form.elements.examDate);
           const ekgDate =
-            extractRuDate(form.elements.ekg?.value) ||
-            extractRuDate(form.elements.examDate?.value);
+            extractRuDate(ekgInput?.value) ||
+            extractRuDate(examDateInput?.value);
           conclusionInput.value = buildAutoEkgConclusion(ekgDate, chairmanType);
         };
-        form.elements.examDate?.addEventListener("input", syncAutoEkgConclusion);
-        form.elements.examDate?.addEventListener("change", syncAutoEkgConclusion);
-        form.elements.ekg?.addEventListener("input", syncAutoEkgConclusion);
-        form.elements.ekg?.addEventListener("change", syncAutoEkgConclusion);
+        const examDateInput = getFirstNamedControl(form.elements.examDate);
+        const ekgInput = getFirstNamedControl(form.elements.ekg);
+        examDateInput?.addEventListener("input", syncAutoEkgConclusion);
+        examDateInput?.addEventListener("change", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("input", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("change", syncAutoEkgConclusion);
       }
 
     }
+
+    window.attachDateMask?.(form);
 
     const saveDraftFromCurrentForm = () => {
       const examId = form.dataset.examId;

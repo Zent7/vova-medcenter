@@ -35,6 +35,12 @@
     return String(value ?? "").trim().startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `);
   }
 
+  function getFirstNamedControl(elements) {
+    if (!elements) return null;
+    if (elements.length && elements.tagName === undefined) return elements[0] || null;
+    return elements;
+  }
+
   // ----- Определение типа карточки по услуге --------------------------------
   // driver — открывается уже существующая карточка председателя.
   // sport  — новая карточка спортивной справки.
@@ -554,20 +560,24 @@
       const form = card.querySelector("[data-sport-card-form]");
       if (form) {
         const syncAutoEkgConclusion = () => {
-          const conclusionInput = form.elements.ekgConclusion;
+          const conclusionInput = getFirstNamedControl(form.elements.ekgConclusion);
           if (!conclusionInput) return;
           const currentValue = String(conclusionInput.value || "").trim();
           if (currentValue && !isAutoEkgConclusion(currentValue)) return;
+          const ekgInput = getFirstNamedControl(form.elements.ekg);
+          const examDateInput = getFirstNamedControl(form.elements.examDate);
           const ekgDate =
-            extractRuDate(form.elements.ekg?.value) ||
-            extractRuDate(form.elements.examDate?.value) ||
+            extractRuDate(ekgInput?.value) ||
+            extractRuDate(examDateInput?.value) ||
             todayRuDate();
           conclusionInput.value = buildAutoEkgConclusion(ekgDate);
         };
-        form.elements.examDate?.addEventListener("input", syncAutoEkgConclusion);
-        form.elements.examDate?.addEventListener("change", syncAutoEkgConclusion);
-        form.elements.ekg?.addEventListener("input", syncAutoEkgConclusion);
-        form.elements.ekg?.addEventListener("change", syncAutoEkgConclusion);
+        const examDateInput = getFirstNamedControl(form.elements.examDate);
+        const ekgInput = getFirstNamedControl(form.elements.ekg);
+        examDateInput?.addEventListener("input", syncAutoEkgConclusion);
+        examDateInput?.addEventListener("change", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("input", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("change", syncAutoEkgConclusion);
 
         form.addEventListener("submit", async (event) => {
           event.preventDefault();

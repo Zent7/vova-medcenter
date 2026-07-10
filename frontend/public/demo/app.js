@@ -3267,6 +3267,65 @@ function extractRuDate(value) {
   return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{4}|\d{2})\b/)?.[0] || "";
 }
 
+function extractDemoDate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const ruDate = extractRuDate(text);
+  if (ruDate) return ruDate;
+  if (/^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(text)) return formatApiDate(text);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toLocaleDateString("ru-RU", RU_DATE_FORMAT_OPTIONS);
+  }
+  return "";
+}
+
+function firstFilledValueFromObjects(objects = [], keys = []) {
+  for (const source of objects) {
+    if (!source || typeof source !== "object") continue;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const value = source[key];
+      if (String(value ?? "").trim()) return value;
+    }
+  }
+  return "";
+}
+
+const CHAIRMAN_EKG_DATE_KEYS = [
+  "ekgDate",
+  "ekg_date",
+  "ecgDate",
+  "ecg_date",
+  "ekg",
+  "ecg",
+  "EKG",
+  "ECG",
+  "ЭКГ",
+  "Дата ЭКГ",
+  "instrumentalStudyDate",
+];
+
+const CHAIRMAN_FLUOROGRAPHY_DATE_KEYS = [
+  "fluorographyDate",
+  "fluorography_date",
+  "fluorography",
+  "fluoroDate",
+  "fluoro_date",
+  "fluoro",
+  "flg",
+  "FLG",
+  "ФЛГ",
+  "Флюорография",
+  "Дата флюорографии",
+];
+
+function getChairmanInitialDate(client, visit, keys) {
+  const raw = client?.rawApiClient || {};
+  const legacy = raw.legacy_payload_json || client?.legacy_payload_json || {};
+  const details = Object.values(getVisitServiceDetails(visit)).filter((detail) => detail && typeof detail === "object");
+  return extractDemoDate(firstFilledValueFromObjects([client, raw, legacy, getDriverDetailFromVisit(visit), ...details], keys));
+}
+
 function todayRuDate() {
   return new Date().toLocaleDateString("ru-RU", RU_DATE_FORMAT_OPTIONS);
 }
@@ -3284,17 +3343,49 @@ function buildChairmanAutoEkgConclusion(date, formType = "") {
   return `${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
 }
 
+function buildChairmanAutoEkgText(date) {
+  return `Медицинский центр ООО "ЦМО "ЮЛМЕД", ЭКГ от ${extractRuDate(date) || todayRuDate()}`;
+}
+
+function buildChairmanAutoFluorographyText(date) {
+  return `от ${extractRuDate(date) || todayRuDate()} ОГК б.п.`;
+}
+
+function isChairmanAutoEkgText(value) {
+  const text = String(value ?? "").trim();
+  return text.includes("ЭКГ от ") && text.startsWith('Медицинский центр ООО "ЦМО "ЮЛМЕД"');
+}
+
+function isChairmanAutoFluorographyText(value) {
+  return /^от \d{2}\.\d{2}\.(?:\d{4}|\d{2}) ОГК б\.п\.$/.test(String(value ?? "").trim());
+}
+
+function isChairmanAutoEkgConclusionText(value, formType = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  if (text.startsWith(`${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `)) return true;
+  return formType === "guard" && text.startsWith(`${GUARD_CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `);
+}
+
 function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
   const formType = getChairmanFormTypeForVisit(visit);
   const defaults = CHAIRMAN_CERTIFICATE_DEFAULTS[formType] || {};
-  if (!CHAIRMAN_CERTIFICATE_DEFAULTS[formType] && formType !== "guard") return fields;
+  const usesDriverBaseDefaults = formType === "driver" || formType === "default";
+  if (!CHAIRMAN_CERTIFICATE_DEFAULTS[formType] && formType !== "guard" && !usesDriverBaseDefaults) return fields;
 
   const result = { ...fields };
   const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
   const visitDate = extractRuDate(visit?.visitDate) || extractRuDate(visit?.createdAt) || todayRuDate();
+  const ekgDate = getChairmanInitialDate(client, visit, CHAIRMAN_EKG_DATE_KEYS) || visitDate;
+  const fluorographyDate = getChairmanInitialDate(client, visit, CHAIRMAN_FLUOROGRAPHY_DATE_KEYS) || visitDate;
   const resolveDefault = (value) => (typeof value === "function" ? value(client, visit, result) : value);
   const setIfBlank = (key, value) => {
     if (String(result[key] ?? "").trim()) return;
+    result[key] = resolveDefault(value);
+  };
+  const setIfBlankOrAuto = (key, value, isAutoValue) => {
+    const currentValue = String(result[key] ?? "").trim();
+    if (currentValue && !isAutoValue(currentValue)) return;
     result[key] = resolveDefault(value);
   };
 
@@ -3304,13 +3395,16 @@ function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
     });
   }
 
+  setIfBlank("birthDate", client?.birthDate || formatApiDate(client?.rawApiClient?.birth_date) || "");
   setIfBlank("examDate", visitDate);
-  setIfBlank("ekg", `Медицинский центр ООО "ЦМО "ЮЛМЕД", ЭКГ от ${visitDate}`);
+  setIfBlankOrAuto("ekg", buildChairmanAutoEkgText(ekgDate), isChairmanAutoEkgText);
   if (formType === "guard" && String(result.ekgConclusion ?? "").trim().startsWith(`${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `)) {
     result.ekgConclusion = "";
   }
-  setIfBlank("ekgConclusion", buildChairmanAutoEkgConclusion(visitDate, formType));
-  setIfBlank("fluorography", `от ${visitDate} ОГК б.п.`);
+  setIfBlankOrAuto("ekgConclusion", buildChairmanAutoEkgConclusion(ekgDate, formType), (value) =>
+    isChairmanAutoEkgConclusionText(value, formType),
+  );
+  setIfBlankOrAuto("fluorography", buildChairmanAutoFluorographyText(fluorographyDate), isChairmanAutoFluorographyText);
   if (defaults.medicalRequirements) setIfBlank("medicalRequirements", defaults.medicalRequirements);
   if (Object.prototype.hasOwnProperty.call(defaults, "diagnosis")) setIfBlank("diagnosis", defaults.diagnosis);
   if (defaults.conclusionText) setIfBlank("conclusionText", defaults.conclusionText);
@@ -9852,6 +9946,8 @@ function attachDateMask(root) {
     });
   });
 }
+
+window.attachDateMask = attachDateMask;
 
 let activeDatePicker = null;
 let activeDatePickerInput = null;
