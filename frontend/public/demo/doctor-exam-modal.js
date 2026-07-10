@@ -1725,19 +1725,20 @@
         form.elements.ekg?.addEventListener("change", syncAutoEkgConclusion);
       }
 
-      form.querySelectorAll("input, textarea, select").forEach((field) => {
-        const saveChairmanDraft = (event) => {
-          event.stopPropagation();
-          const examId = form.dataset.examId;
-          const template = window.getDoctorTemplate(form.dataset.doctorRoleId);
-          if (!examId || !template) return;
-          const values = collectFormData(form, template);
-          window.saveDoctorExamDraft?.(examId, values);
-        };
-        field.addEventListener("input", saveChairmanDraft);
-        field.addEventListener("change", saveChairmanDraft);
-      });
     }
+
+    const saveDraftFromCurrentForm = () => {
+      const examId = form.dataset.examId;
+      const template = window.getDoctorTemplate(form.dataset.doctorRoleId);
+      if (!examId || !template) return;
+      const values = collectFormData(form, template);
+      window.saveDoctorExamDraft?.(examId, values);
+    };
+
+    form.querySelectorAll("input, textarea, select").forEach((field) => {
+      field.addEventListener("input", saveDraftFromCurrentForm);
+      field.addEventListener("change", saveDraftFromCurrentForm);
+    });
 
     form.querySelectorAll('button[type="submit"]').forEach((button) => {
       button.addEventListener("click", (event) => {
