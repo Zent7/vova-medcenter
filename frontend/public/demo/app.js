@@ -8373,6 +8373,55 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
   return documentItem;
 }
 
+function hasAvailableXmlDocumentForVisit(visit) {
+  if (!visit) return false;
+  const encounterId = visit.backendId || null;
+  return (data.generatedDocuments || []).some((documentItem) => {
+    if (!isXmlGeneratedDocument(documentItem) || documentItem.fileDeletedAt) return false;
+    if (encounterId) return String(documentItem.encounterId || "") === String(encounterId);
+    return String(documentItem.visitId || "") === String(visit.id || "");
+  });
+}
+
+async function ensureXmlDocumentForVisit(client, visit) {
+  if (!client || !visit) return null;
+  if (!data.documentTemplatesLoaded) {
+    await loadDocumentTemplatesFromBackend();
+  }
+  if (!pickDocumentTemplate("xml", visit, client)) {
+    return null;
+  }
+  if (!data.workflowDataLoading) {
+    await loadWorkflowData({
+      clientId: client.backendId || client.id || null,
+      encounterId: visit.backendId || null,
+    });
+  }
+  if (hasAvailableXmlDocumentForVisit(visit)) {
+    return null;
+  }
+  return createDocumentForVisit("xml", client, visit);
+}
+
+async function ensureXmlAfterDriverCertificate(client, visit) {
+  try {
+    const xmlDocument = await ensureXmlDocumentForVisit(client, visit);
+    if (xmlDocument) {
+      showToast(`XML-файл сформирован: ${xmlDocument.fileName || xmlDocument.title}`);
+    }
+    return xmlDocument;
+  } catch (error) {
+    console.warn("Не удалось автоматически сформировать XML", error);
+    showToast(humanizeApiError(error, "Справка сформирована, но XML автоматически не создался"));
+    return null;
+  }
+}
+
+function shouldAutoGenerateXmlForCertificate(type) {
+  const normalizedType = String(type || "").toLowerCase();
+  return ["driver", "tractor", "guard", "chod"].includes(normalizedType);
+}
+
 async function printDocumentForVisit(type, client, visit, options = {}) {
   const normalizedType = String(type || "").toLowerCase();
   const printOptions = { ...options };
@@ -9290,6 +9339,7 @@ async function openDriverPrintFlow(options = {}) {
         await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
         actionModal.classList.add("hidden");
         showToast(`Печать подтверждена: ${printedDocument.blankNumber || printedDocument.title}`);
+        await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit);
       } catch (error) {
         showToast(humanizeApiError(error, "Не удалось подтвердить печать"));
       }
@@ -9350,6 +9400,7 @@ async function openDriverPrintFlow(options = {}) {
           await markPrintedDocument(result.generated_document_id, true);
           actionModal.classList.add("hidden");
           showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
+          await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit);
         } catch (error) {
           showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
@@ -9390,6 +9441,9 @@ async function openDriverPrintFlow(options = {}) {
       const documentItem = await createDocumentForVisit(finalCertificateType, client, visit, { ...printOptions, print: true });
       await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
       showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
+      if (shouldAutoGenerateXmlForCertificate(finalCertificateType)) {
+        await ensureXmlAfterDriverCertificate(client, visit);
+      }
     } catch (error) {
       if (options.targetWindow && !options.targetWindow.closed) {
         options.targetWindow.close();
