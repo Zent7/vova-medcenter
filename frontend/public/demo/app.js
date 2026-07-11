@@ -2561,15 +2561,18 @@ async function downloadAuthorizedFileUrl(url, fileName = "") {
   }
 }
 
-async function openAuthorizedFileUrl(url, { print = false } = {}) {
+async function openAuthorizedFileUrl(url, { print = false, targetWindow = null } = {}) {
   if (!url) return false;
   let objectUrl = "";
   try {
     objectUrl = await fetchAuthorizedFileObjectUrl(url);
-    const fileWindow = window.open(objectUrl, "_blank");
+    const fileWindow = targetWindow && !targetWindow.closed ? targetWindow : window.open(objectUrl, "_blank");
     if (!fileWindow) {
       URL.revokeObjectURL(objectUrl);
       return false;
+    }
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = objectUrl;
     }
 
     if (print) {
@@ -2867,7 +2870,8 @@ function buildWordProtocolUrl(fileUrl) {
 }
 
 function openDocumentFileUrl(fileUrl, documentItem = null, targetWindow = null) {
-  const destinationUrl = fileUrl;
+  const fileName = documentItem?.fileName || documentItem?.file_name || fileUrl;
+  const destinationUrl = isWordDocumentFile(fileName) ? buildWordProtocolUrl(fileUrl) : fileUrl;
   if (targetWindow && !targetWindow.closed) {
     targetWindow.location.href = destinationUrl;
     return true;
@@ -2963,6 +2967,15 @@ async function openGeneratedDocumentDirectly(documentItem, options = {}) {
     const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
     return openDocumentFileUrl(ticket.file_url, documentItem, targetWindow);
   } catch (error) {
+    console.warn("Не удалось открыть документ по временной ссылке, пробуем авторизованное открытие", error);
+    try {
+      const inlineUrl = buildGeneratedDocumentUrl(documentItem?.fileName, { inline: true });
+      if (await openAuthorizedFileUrl(inlineUrl, { targetWindow })) {
+        return true;
+      }
+    } catch (fallbackError) {
+      console.warn("Не удалось открыть документ через авторизованную ссылку", fallbackError);
+    }
     if (targetWindow && !targetWindow.closed) {
       targetWindow.close();
     }
@@ -8074,7 +8087,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   }
 
   if (normalizedType === "contract") {
-    return findDocx(["договор_шаблон_2", "договор"]) || null;
+    return findDocxSafely(["договор_шаблон_2", "договор шаблон 2"], ["договор"], []) || null;
   }
 
   if (normalizedType === "xml") {
