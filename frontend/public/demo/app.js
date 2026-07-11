@@ -4908,7 +4908,7 @@ function renderNav() {
       if (page === "reports" && !data.reportLoading) {
         loadReportsSummary();
       }
-      if ((page === "blanks" || page === "chart") && !data.workflowDataLoading) {
+      if ((page === "blanks" || page === "chart" || page === "xml") && !data.workflowDataLoading) {
         loadWorkflowData();
       }
       if (page === "blanks" && typeof window.loadBlanksData === "function" && !data.blanksLoading) {
@@ -7684,6 +7684,19 @@ function renderXmlExportDaysPanel() {
   `;
 }
 
+function renderXmlPage() {
+  const xmlDocuments = (data.generatedDocuments || []).filter(isXmlGeneratedDocument);
+  return `
+    ${renderWorkflowLoadState()}
+    <section class="card">
+      <h3>XML</h3>
+      <p class="muted">Дневные XML-пачки для ручной загрузки на госсайт. XML сохраняются по датам, их можно скачать ZIP-архивом или удалить из хранилища.</p>
+    </section>
+    ${renderXmlExportDaysPanel()}
+    ${renderGeneratedDocumentsTable(xmlDocuments)}
+  `;
+}
+
 function renderDocumentJournalsTable() {
   const journals = Array.isArray(data.documentJournals) ? data.documentJournals : [];
   return `
@@ -10008,6 +10021,7 @@ function renderContent() {
   if (appState.page === "chart") return renderAmbulatoryCardPage();
   if (appState.page === "services" && window.renderServicesPage) return window.renderServicesPage();
   if (appState.page === "calendar") return renderRecallCalendarPage();
+  if (appState.page === "xml") return renderXmlPage();
   if (appState.page === "upload") return renderClientImportPage();
   if (appState.page === "doctors") return renderDoctorsPage();
   if (appState.page === "templates") return renderTemplatesPage();
@@ -11707,5 +11721,8 @@ window.renderApp = renderApp;
 window.openDriverPrintFlow = openDriverPrintFlow;
 
 renderApp();
+if ((appState.page === "blanks" || appState.page === "chart" || appState.page === "xml") && !data.workflowDataLoading) {
+  loadWorkflowData();
+}
 Promise.allSettled([loadClientsFromBackend(appState.clientSearch), loadServicesFromBackend(), loadDocumentTemplatesFromBackend()])
   .then(() => restoreWorkplaceSelection());
