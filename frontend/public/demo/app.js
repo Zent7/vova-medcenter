@@ -5357,6 +5357,15 @@ function renderSketchHome() {
               <div class="sketch-toolbar__actions">
                 <button class="primary-button" id="addClientButton" type="button">Добавить</button>
                 <button
+                  class="primary-button"
+                  id="printSelectedClientContractButton"
+                  type="button"
+                  ${hasSelectedClient ? "" : "disabled"}
+                  title="${hasSelectedClient ? "Распечатать договор для выбранного клиента" : "Сначала выберите клиента в таблице"}"
+                >
+                  Печать договора
+                </button>
+                <button
                   class="secondary-button dashboard-new-visit-button"
                   id="createVisitFromDashboardButton"
                   type="button"
@@ -5429,7 +5438,7 @@ function renderSketchHome() {
                 ? excelRows
                     .map(
                       (row) => `
-                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Двойной клик откроет амбулаторную карту">
+                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Выбрать клиента">
                           <span>${escapeHtml(row.encounterDate)}</span>
                           <span class="sketch-table__fio">${escapeHtml(displayTableValue(row.fullName))}</span>
                           <span>${escapeHtml(row.birthDate)}</span>
@@ -10342,20 +10351,46 @@ async function saveOperatorVisitForm({ recalculate = false, close = false, skipA
   return visit;
 }
 
-async function printContractForCurrentVisit() {
+async function prepareContractPrintContext() {
+  const initialClient = getSelectedClient();
+  if (!initialClient) return { client: null, visit: null };
+
+  const client = await ensureFullClientLoaded(initialClient) || initialClient;
+  appState.selectedClientId = client.id;
+
+  const form = document.getElementById("operatorVisitForm");
+  const visit = form
+    ? await saveOperatorVisitForm({ skipAutoDocuments: true })
+    : await (async () => {
+        await loadEncountersForClient(client);
+        const draftVisit = getOrCreateDraftVisit(client.id);
+        if (draftVisit) {
+          await syncVisitToBackend(draftVisit, client);
+        }
+        return draftVisit;
+      })();
+
+  if (visit) {
+    appState.activeVisitId = visit.id;
+    persistDemoState();
+  }
+
+  return { client, visit };
+}
+
+async function printContractForCurrentVisit({ rerender = true } = {}) {
   const targetWindow = window.open("about:blank", "_blank");
   try {
-    const visit = await saveOperatorVisitForm({ skipAutoDocuments: true });
-    const selectedClient = getSelectedClient();
-    if (!selectedClient || !visit) {
+    const { client, visit } = await prepareContractPrintContext();
+    if (!client || !visit) {
       if (targetWindow && !targetWindow.closed) targetWindow.close();
       showToast("Сначала выбери клиента и обращение");
       return;
     }
 
-    const documentItem = await printDocumentForVisit("contract", selectedClient, visit, { targetWindow });
+    const documentItem = await printDocumentForVisit("contract", client, visit, { targetWindow });
     showToast(`Договор открыт: ${documentItem?.title || "документ"}`);
-    renderApp();
+    if (rerender) renderApp();
   } catch (error) {
     if (targetWindow && !targetWindow.closed) targetWindow.close();
     console.error(error);
@@ -10515,6 +10550,20 @@ function bindContentEvents() {
     createVisitFromDashboardButton.addEventListener("click", async () => {
       const selectedClient = getSelectedClient();
       await createVisitAndOpenEditor(selectedClient);
+    });
+  }
+
+  const printSelectedClientContractButton = document.getElementById("printSelectedClientContractButton");
+  if (printSelectedClientContractButton) {
+    printSelectedClientContractButton.addEventListener("click", async () => {
+      printSelectedClientContractButton.disabled = true;
+      try {
+        await printContractForCurrentVisit();
+      } finally {
+        if (printSelectedClientContractButton.isConnected) {
+          printSelectedClientContractButton.disabled = false;
+        }
+      }
     });
   }
 
@@ -10887,27 +10936,6 @@ function bindContentEvents() {
   });
 
   contentRoot.querySelectorAll("[data-client-id]").forEach((button) => {
-    button.addEventListener("dblclick", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (clientRowClickTimer) {
-        window.clearTimeout(clientRowClickTimer);
-        clientRowClickTimer = null;
-      }
-      const nextClientId = Number(button.dataset.clientId);
-      appState.selectedClientId = nextClientId;
-      appState.activeVisitId = getCurrentVisitForClient(appState.selectedClientId)?.id || null;
-      persistDemoState();
-      let selectedClient = getSelectedClient();
-      try {
-        selectedClient = await ensureFullClientLoaded(selectedClient);
-      } catch (error) {
-        showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
-        return;
-      }
-      if (selectedClient) await openAmbulatoryCardForCurrentClient();
-    });
-
     button.addEventListener("click", async (event) => {
       event.preventDefault();
       const doctorCell = event.target.closest("[data-row-doctor-role-id]");
