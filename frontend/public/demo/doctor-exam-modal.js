@@ -94,9 +94,20 @@
     return elements;
   }
 
+  function getNamedControls(elements) {
+    if (!elements) return [];
+    if (elements.length && elements.tagName === undefined) return Array.from(elements);
+    return [elements];
+  }
+
   function dispatchPresetFieldEvents(element) {
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function escapeCssAttributeValue(value) {
+    if (window.CSS?.escape) return window.CSS.escape(String(value));
+    return String(value).replace(/["\\]/g, "\\$&");
   }
 
   function applyPresetFieldValue(form, fieldKey, value) {
@@ -845,7 +856,7 @@
   function renderChairmanClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = fields.birthDate || client?.birthDate || "";
+    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
     const emptyLegacyValue = (value, legacyValues = []) => {
       const normalized = String(value ?? "");
       return legacyValues.includes(normalized) ? "" : normalized;
@@ -1579,6 +1590,7 @@
 
   function collectFormData(form, template) {
     const result = {};
+    const missingControl = Symbol("missingControl");
     const readInputValue = (input) => {
       if (!input) return "";
       if (input.type === "radio") {
@@ -1590,18 +1602,23 @@
       }
       return input.value ?? "";
     };
+    const readNamedValue = (name, fieldType = "") => {
+      const controls = getNamedControls(form.elements[name]).filter(Boolean);
+      if (!controls.length) return missingControl;
+      if (fieldType === "radio") {
+        return form.querySelector(`input[name="${escapeCssAttributeValue(name)}"]:checked`)?.value || "";
+      }
+      if (fieldType === "checkbox") {
+        return controls.length > 1
+          ? controls.filter((input) => input.checked).map((input) => input.value)
+          : Boolean(controls[0].checked);
+      }
+      return readInputValue(controls[0]);
+    };
 
     (template.fields || []).forEach((field) => {
-      if (field.type === "radio") {
-        const checked = form.querySelector(`input[name="${field.key}"]:checked`);
-        result[field.key] = checked ? checked.value : "";
-      } else if (field.type === "checkbox") {
-        const input = form.elements[field.key];
-        result[field.key] = !!input?.checked;
-      } else {
-        const input = form.elements[field.key];
-        result[field.key] = input ? input.value : "";
-      }
+      const value = readNamedValue(field.key, field.type);
+      if (value !== missingControl) result[field.key] = value;
     });
 
     form.querySelectorAll("input[name], textarea[name], select[name]").forEach((input) => {

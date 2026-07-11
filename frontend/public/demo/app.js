@@ -3329,12 +3329,20 @@ function extractDemoDate(value) {
   return "";
 }
 
+function getObjectValueByKey(source, key) {
+  if (!source || typeof source !== "object") return "";
+  if (Object.prototype.hasOwnProperty.call(source, key)) return source[key];
+  const normalizedKey = String(key || "").trim().toLowerCase();
+  if (!normalizedKey) return "";
+  const matchedKey = Object.keys(source).find((sourceKey) => String(sourceKey || "").trim().toLowerCase() === normalizedKey);
+  return matchedKey ? source[matchedKey] : "";
+}
+
 function firstFilledValueFromObjects(objects = [], keys = []) {
   for (const source of objects) {
     if (!source || typeof source !== "object") continue;
     for (const key of keys) {
-      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-      const value = source[key];
+      const value = getObjectValueByKey(source, key);
       if (String(value ?? "").trim()) return value;
     }
   }
@@ -3350,6 +3358,12 @@ const CHAIRMAN_EKG_DATE_KEYS = [
   "ecg",
   "EKG",
   "ECG",
+  "DateEKG",
+  "EKGDate",
+  "ECGDate",
+  "qdfMain.EKG",
+  "qdfMain.EKGDate",
+  "instrumental_study_date",
   "ЭКГ",
   "Дата ЭКГ",
   "instrumentalStudyDate",
@@ -3363,7 +3377,13 @@ const CHAIRMAN_FLUOROGRAPHY_DATE_KEYS = [
   "fluoro_date",
   "fluoro",
   "flg",
+  "flg_date",
   "FLG",
+  "FLGDate",
+  "DateFLG",
+  "qdfMain.flg",
+  "qdfMain.FLG",
+  "qdfMain.Fluorography",
   "ФЛГ",
   "Флюорография",
   "Дата флюорографии",
