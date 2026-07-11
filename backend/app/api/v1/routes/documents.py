@@ -36,6 +36,7 @@ _TEMPLATE_FILE_ACCESS_ROLES = {"admin", "chairman"}
 _DOCUMENT_MEDIA_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xml": "application/xml",
 }
 _PRINT_TICKET_TTL_SECONDS = 120
@@ -185,13 +186,18 @@ def replace_document_template(
     target_path = _resolve_template_file(template) or Path(template.file_path).resolve()
     source_suffix = Path(file.filename or "").suffix.lower()
     target_suffix = target_path.suffix.lower()
+    is_excel_upgrade = target_suffix == ".xls" and source_suffix == ".xlsx"
     if source_suffix not in SUPPORTED_TEMPLATE_EXTENSIONS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только .docx, .xml и .xls")
-    if source_suffix != target_suffix:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только .docx, .xml, .xls и .xlsx")
+    if source_suffix != target_suffix and not is_excel_upgrade:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Тип файла должен остаться {target_suffix}. Создайте новый шаблон отдельным файлом, если нужен другой тип.",
         )
+
+    if is_excel_upgrade:
+        target_path = target_path.with_suffix(source_suffix)
+        target_suffix = source_suffix
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target_path.with_name(f"{target_path.name}.uploading")
@@ -207,6 +213,7 @@ def replace_document_template(
             temp_path.unlink(missing_ok=True)
 
     template.file_path = str(target_path)
+    template.file_name = target_path.name
     template.template_type = target_suffix.lstrip(".")
     template.output_format = target_suffix.lstrip(".")
     template.is_active = True

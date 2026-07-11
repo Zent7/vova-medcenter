@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from xml.sax.saxutils import escape as escape_xml_text
 from xml.etree.ElementTree import ParseError
 
+from openpyxl import load_workbook
+from openpyxl.cell.cell import MergedCell
+from openpyxl.utils import get_column_letter
 import xlrd
 import xlwt
 from sqlalchemy import select
@@ -497,7 +500,140 @@ def _xml_export_date_folder() -> str:
     return datetime.now(tzinfo).date().isoformat()
 
 
+class _XlsxSheetAdapter:
+    def __init__(self, worksheet):
+        self.worksheet = worksheet
+        self.name = worksheet.title
+
+    @property
+    def nrows(self) -> int:
+        return self.worksheet.max_row
+
+    @property
+    def ncols(self) -> int:
+        return self.worksheet.max_column
+
+    @property
+    def merged_cells(self) -> list[tuple[int, int, int, int]]:
+        return [
+            (cell_range.min_row - 1, cell_range.max_row, cell_range.min_col - 1, cell_range.max_col)
+            for cell_range in self.worksheet.merged_cells.ranges
+        ]
+
+    def cell_value(self, row_index: int, col_index: int):
+        value = self.worksheet.cell(row=row_index + 1, column=col_index + 1).value
+        return "" if value is None else value
+
+    def _writable_cell(self, row_index: int, col_index: int):
+        row = row_index + 1
+        column = col_index + 1
+        cell = self.worksheet.cell(row=row, column=column)
+        if not isinstance(cell, MergedCell):
+            return cell
+        for cell_range in self.worksheet.merged_cells.ranges:
+            if cell.coordinate in cell_range:
+                return self.worksheet.cell(row=cell_range.min_row, column=cell_range.min_col)
+        return cell
+
+    def write_cell(self, row_index: int, col_index: int, value: object) -> None:
+        cell = self._writable_cell(row_index, col_index)
+        if isinstance(cell, MergedCell):
+            return
+        cell.value = value
+
+    def write(self, row_index: int, col_index: int, value: object, style=None) -> None:
+        self.write_cell(row_index, col_index, value)
+
+    def write_merge(
+        self,
+        start_row: int,
+        end_row: int,
+        start_col: int,
+        end_col: int,
+        value: object,
+        style=None,
+    ) -> None:
+        start = f"{get_column_letter(start_col + 1)}{start_row + 1}"
+        end = f"{get_column_letter(end_col + 1)}{end_row + 1}"
+        range_name = f"{start}:{end}"
+        if not any(str(cell_range) == range_name for cell_range in self.worksheet.merged_cells.ranges):
+            self.worksheet.merge_cells(range_name)
+        self.write_cell(start_row, start_col, value)
+
+
+class _XlsxBookAdapter:
+    is_xlsx = True
+
+    def __init__(self, workbook):
+        self.workbook = workbook
+
+    def sheet_names(self) -> list[str]:
+        return list(self.workbook.sheetnames)
+
+    def sheets(self) -> list[_XlsxSheetAdapter]:
+        return [_XlsxSheetAdapter(sheet) for sheet in self.workbook.worksheets]
+
+    def sheet_by_index(self, index: int) -> _XlsxSheetAdapter:
+        return _XlsxSheetAdapter(self.workbook.worksheets[index])
+
+    def get_sheet(self, index: int) -> _XlsxSheetAdapter:
+        return self.sheet_by_index(index)
+
+    def save(self, output_path: str | Path) -> None:
+        self.workbook.save(output_path)
+
+    def keep_only_sheets(self, target_sheet_names: tuple[str, ...]) -> None:
+        kept_sheet = next((self.workbook[name] for name in target_sheet_names if name in self.workbook.sheetnames), None)
+        if kept_sheet is None:
+            raise ValueError(f"В шаблоне не найден лист для печати: {target_sheet_names[0]}")
+        for sheet in list(self.workbook.worksheets):
+            if sheet is not kept_sheet:
+                self.workbook.remove(sheet)
+        self.workbook.active = 0
+
+    def iter_auto_markers(self) -> list[tuple[int, object, int, int, str]]:
+        markers: list[tuple[int, object, int, int, str]] = []
+        for sheet_index, worksheet in enumerate(self.workbook.worksheets):
+            source_sheet = _XlsxSheetAdapter(worksheet)
+            seen_merges: set[str] = set()
+            for row in worksheet.iter_rows():
+                for cell in row:
+                    if not _xlsx_cell_is_yellow(cell):
+                        continue
+                    row_index = cell.row - 1
+                    col_index = cell.column - 1
+                    merge = next((cell_range for cell_range in worksheet.merged_cells.ranges if cell.coordinate in cell_range), None)
+                    if merge is not None:
+                        merge_key = str(merge)
+                        if merge_key in seen_merges:
+                            continue
+                        seen_merges.add(merge_key)
+                        row_index = merge.min_row - 1
+                        col_index = merge.min_col - 1
+                    label = _normalize_xls_auto_label(source_sheet.cell_value(row_index, col_index))
+                    if "авто" in label:
+                        markers.append((sheet_index, source_sheet, row_index, col_index, label))
+        return markers
+
+
+def _xlsx_cell_is_yellow(cell) -> bool:
+    fill = cell.fill
+    if fill is None or fill.fill_type in (None, "none"):
+        return False
+    color = fill.fgColor
+    if color is None:
+        return False
+    if color.type == "indexed":
+        return color.indexed == 13
+    rgb = str(color.rgb or "").upper()
+    return rgb in {"FFFFFF00", "FFFF00"}
+
+
 def _write_xls_cell(target_sheet, source_sheet, row_index: int, col_index: int, value: object, style=None) -> None:
+    if hasattr(target_sheet, "write_cell"):
+        target_sheet.write_cell(row_index, col_index, value)
+        return
+
     existing_xf_idx = None
     existing_row = target_sheet._Worksheet__rows.get(row_index)
     if existing_row is not None:
@@ -536,6 +672,9 @@ def _xls_cell_style(
     shrink_to_fit: bool | None = None,
     num_format_str: str | None = None,
 ):
+    if getattr(source_book, "is_xlsx", False):
+        return None
+
     xf = source_book.xf_list[source_sheet.cell_xf_index(row_index, col_index)]
     style = xlwt.XFStyle()
 
@@ -613,6 +752,9 @@ def _xls_shrink_to_fit_style(source_book, source_sheet, row_index: int, col_inde
 
 
 def _copy_xls_target_cell_style(target_sheet, target_row: int, target_col: int, source_row: int, source_col: int) -> None:
+    if hasattr(target_sheet, "write_cell"):
+        return
+
     target_row_obj = target_sheet._Worksheet__rows.get(target_row)
     if target_row_obj is None:
         return
@@ -919,6 +1061,9 @@ def _normalize_xls_auto_label(value: object) -> str:
 
 
 def _iter_xls_auto_markers(source_book) -> list[tuple[int, object, int, int, str]]:
+    if hasattr(source_book, "iter_auto_markers"):
+        return source_book.iter_auto_markers()
+
     markers: list[tuple[int, object, int, int, str]] = []
     for sheet_index, source_sheet in enumerate(source_book.sheets()):
         seen_merges: set[tuple[int, int, int, int]] = set()
@@ -1546,6 +1691,9 @@ def _driver_category_marks(context: dict[str, str], client: Client, exams_by_rol
 
 
 def _driver_marker_style(source_book, source_sheet, row_index: int, col_index: int):
+    if getattr(source_book, "is_xlsx", False):
+        return None
+
     xf = source_book.xf_list[source_sheet.cell_xf_index(row_index, col_index)]
     source_border = xf.border
 
@@ -1912,6 +2060,107 @@ def _generate_prof_amb_xls(
     target_book.save(str(output_path))
 
 
+def _generate_prof_amb_xlsx(
+    template_path: Path,
+    output_path: Path,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams: list[DoctorExam],
+    print_variant: str | None = None,
+) -> None:
+    source_book = _XlsxBookAdapter(load_workbook(template_path, data_only=False))
+    amb_index = _find_prof_amb_sheet_index(source_book)
+    if amb_index is None:
+        raise ValueError("В шаблоне не найден лист амбулаторной карты")
+
+    target_book = _XlsxBookAdapter(load_workbook(template_path, data_only=False))
+    source_sheet = source_book.sheet_by_index(amb_index)
+    target_sheet = target_book.get_sheet(amb_index)
+
+    exams_by_role = _exam_map(exams)
+    _fill_driver_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
+
+    address = context.get("AddressCalc", "")
+    city = context.get("CityCalc", "")
+    district = context.get("DistrictCalc", "")
+    street = context.get("StreetCalc", "") or address
+    oms_series, oms_number = _split_policy(context.get("PolisOMS", ""))
+    passport_series, passport_number = _split_document(context.get("DocumentSeries", ""), context.get("DocumentNumber", ""))
+    visit_date = encounter.encounter_date if encounter else None
+    work_place = ", ".join(part for part in [context.get("CompanyName", ""), context.get("Post", "")] if part and part != "не указано")
+
+    header_values: list[tuple[tuple[int, int], object]] = [
+        ((15, 54), context.get("ReferenceNumber", "")),
+        ((16, 47), _xls_excel_date(visit_date)),
+        ((17, 43), context.get("ClientCalc", "")),
+        ((18, 35), context.get("SexCalc", "")),
+        ((18, 48), _xls_excel_date(client.birth_date)),
+        ((19, 54), context.get("SubjectCalc", "")),
+        ((20, 35), district),
+        ((20, 50), city),
+        ((21, 40), city),
+        ((22, 35), street),
+        ((22, 56), context.get("Phone", "")),
+        ((23, 48), 2 if _is_rural_address(address, city, district) else 1),
+        ((24, 35), oms_series),
+        ((24, 46), oms_number),
+        ((24, 55), context.get("SNILS", "")),
+        ((26, 48), "Паспорт РФ" if passport_series or passport_number else ""),
+        ((26, 56), passport_series),
+        ((26, 59), passport_number),
+        ((38, 44), work_place),
+        ((47, 40), context.get("BloodGroup", "")),
+        ((47, 54), context.get("RhFactor", "") or context.get("RhesusFactor", "")),
+        ((48, 44), context.get("Allergies", "")),
+    ]
+    for (row_index, col_index), value in header_values:
+        _write_xls_cell(target_sheet, source_sheet, row_index, col_index, value)
+
+    _clear_xls_cells(
+        target_sheet,
+        source_sheet,
+        [
+            (30, 1),
+            (31, 14),
+            (33, 1),
+            (40, 1),
+            (43, 1),
+            (45, 18),
+            (45, 26),
+            (47, 18),
+            (47, 26),
+            (49, 18),
+            (49, 26),
+        ],
+    )
+
+    empty_exam_block = {
+        "date": "",
+        "title": "",
+        "complaints": "",
+        "anamnesis": "",
+        "objective": "",
+        "diagnosis": "",
+        "doctor": "",
+    }
+    for block in PROF_AMB_EXAM_BLOCKS:
+        _fill_exam_block(target_sheet, source_sheet, empty_exam_block, source_book=source_book, **block)
+    exam_block_values = _prof_amb_exam_block_values(exams_by_role, encounter, client)
+    for block in PROF_AMB_EXAM_BLOCKS[len(exam_block_values) :]:
+        _clear_prof_amb_exam_block(target_sheet, source_sheet, block)
+    for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, exam_block_values):
+        _fill_exam_block(target_sheet, source_sheet, exam_data, source_book=source_book, **block)
+
+    pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
+    if pz2_source and pz2_target:
+        _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
+
+    _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
+    _apply_print_variant_to_xls_workbook(target_book, print_variant)
+    target_book.save(output_path)
+
+
 def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None) -> None:
     variant = str(print_variant or "").strip().lower()
     if not variant:
@@ -1942,6 +2191,10 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
     target_sheet_names = sheets_by_variant.get(variant)
     if not target_sheet_names:
         raise ValueError(f"Неизвестный вариант печати: {print_variant}")
+
+    if hasattr(target_book, "keep_only_sheets"):
+        target_book.keep_only_sheets(target_sheet_names)
+        return
 
     worksheets = list(getattr(target_book, "_Workbook__worksheets", []) or [])
     if not worksheets:
@@ -2027,6 +2280,56 @@ def _generate_runtime_xls(
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
     target_book.save(str(output_path))
+
+
+def _generate_runtime_xlsx(
+    template_path: Path,
+    output_path: Path,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    runtime_values: dict[str, object],
+    print_variant: str | None = None,
+) -> None:
+    source_book = _XlsxBookAdapter(load_workbook(template_path, data_only=False))
+    exams = list(runtime_values.get("exams", []))
+    if _find_prof_amb_sheet_index(source_book) is not None:
+        _generate_prof_amb_xlsx(template_path, output_path, context, client, encounter, exams, print_variant=print_variant)
+        return
+
+    target_book = _XlsxBookAdapter(load_workbook(template_path, data_only=False))
+    exams_by_role = _exam_map(exams)
+
+    contract_source, contract_target, _ = _sheet_pair(source_book, target_book, "Договор !")
+    if contract_source and contract_target:
+        _fill_contract_xls_sheet(contract_source, contract_target, context, client, encounter, runtime_values)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "086")
+    if source_sheet and target_sheet:
+        _fill_086_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "ЭЭГ")
+    if source_sheet and target_sheet:
+        _fill_eeg_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "ЧОД")
+    if source_sheet and target_sheet:
+        _fill_chod_xls_sheet(source_sheet, target_sheet, context, encounter)
+
+    _fill_driver_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
+    _fill_tractor_xls_sheets(source_book, target_book, exams_by_role)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "АмбОПО !")
+    if source_sheet and target_sheet:
+        _fill_amb_opo_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "Журн344")
+    if source_sheet and target_sheet:
+        _fill_journal_344_sheet(source_sheet, target_sheet, context, client, encounter)
+
+    _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
+    _apply_print_variant_to_xls_workbook(target_book, print_variant)
+    target_book.save(output_path)
 
 
 def _first_field_value(fields: dict, *keys: str) -> str:
@@ -2615,6 +2918,16 @@ def generate_document(
             _generate_xml(template_path, output_path, xml_context)
         elif template.template_type == "xls":
             _generate_runtime_xls(
+                template_path,
+                output_path,
+                context,
+                client,
+                encounter,
+                runtime_values,
+                print_variant=print_variant,
+            )
+        elif template.template_type == "xlsx":
+            _generate_runtime_xlsx(
                 template_path,
                 output_path,
                 context,

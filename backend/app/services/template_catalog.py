@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 
 
-SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls"}
+SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
 
 
 def get_templates_root() -> Path:
@@ -21,8 +21,15 @@ def load_template_catalog() -> list[dict[str, str]]:
     if not root.exists():
         return []
 
+    paths = [
+        path
+        for path in sorted(root.iterdir(), key=lambda item: item.name.lower())
+        if path.is_file() and path.suffix.lower() in SUPPORTED_TEMPLATE_EXTENSIONS
+    ]
+    xlsx_stems = {path.stem for path in paths if path.suffix.lower() == ".xlsx"}
+
     catalog: list[dict[str, str]] = []
-    for index, path in enumerate(sorted(root.iterdir(), key=lambda item: item.name.lower()), start=1):
+    for index, path in enumerate(paths, start=1):
         if not path.is_file():
             continue
         if path.suffix.lower() not in SUPPORTED_TEMPLATE_EXTENSIONS:
@@ -36,6 +43,7 @@ def load_template_catalog() -> list[dict[str, str]]:
                 "file_path": str(path),
                 "description": f"Подключенный шаблон {path.suffix.lower().lstrip('.')}",
                 "template_type": path.suffix.lower().lstrip("."),
+                "preferred_xlsx_available": path.suffix.lower() == ".xls" and path.stem in xlsx_stems,
             }
         )
     return catalog
@@ -119,7 +127,7 @@ def sync_document_template_catalog(db) -> int:
         template.description = item["description"]
         template.template_type = item["template_type"]
         template.output_format = item["template_type"]
-        template.is_active = True
+        template.is_active = not item.get("preferred_xlsx_available", False)
         template.requires_numbered_blank = False
         template.blank_type = None
 
@@ -145,13 +153,20 @@ def sync_document_template_catalog(db) -> int:
 
     amb_docx = existing_by_file_name.get("АМБ_карты_профосмотр_шаблон.docx")
     amb_xls = existing_by_file_name.get("АМБ_карты_профосмотр_шаблон.xls")
-    if amb_xls is not None:
+    amb_xlsx = existing_by_file_name.get("АМБ_карты_профосмотр_шаблон.xlsx")
+    if amb_xlsx is not None:
+        amb_xlsx.is_active = True
+        amb_xlsx.template_type = "xlsx"
+        amb_xlsx.output_format = "xlsx"
+        prof_visit_type = visit_type_by_code.get("prof")
+        amb_xlsx.visit_type_id = prof_visit_type.id if prof_visit_type is not None else None
+    if amb_xls is not None and amb_xlsx is None:
         amb_xls.is_active = True
         amb_xls.template_type = "xls"
         amb_xls.output_format = "xls"
         prof_visit_type = visit_type_by_code.get("prof")
         amb_xls.visit_type_id = prof_visit_type.id if prof_visit_type is not None else None
-    if amb_docx is not None and amb_xls is not None:
+    if amb_docx is not None and (amb_xls is not None or amb_xlsx is not None):
         amb_docx.is_active = False
 
     return len(catalog)

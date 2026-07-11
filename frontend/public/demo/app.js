@@ -6722,7 +6722,7 @@ function renderTemplatesPage() {
   return `
     <section class="card">
       <div class="template-page-head">
-        <p class="muted">${canManageTemplates ? "Файловые шаблоны можно посмотреть, заменить новым файлом и перечитать из папки." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} Желтые ячейки с подписью “авто” заполняются системой.</p>
+        <p class="muted">${canManageTemplates ? "Файловые шаблоны можно посмотреть, заменить новым файлом и перечитать из папки." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} Для Excel-правок используйте .xlsx; .xls оставлен для старых шаблонов. Желтые ячейки с подписью “авто” заполняются системой.</p>
         ${canManageTemplates ? '<button class="primary-button" type="button" data-refresh-document-templates>Перечитать папку</button>' : ""}
       </div>
       ${data.templateOperationStatus ? `<div class="template-status">${escapeHtml(data.templateOperationStatus)}</div>` : ""}
@@ -6753,7 +6753,7 @@ function renderTemplatesPage() {
             : `<div class="empty-state">Файловые шаблоны еще не загружены с backend.</div>`
         }
       </div>
-      <input class="hidden" id="documentTemplateUploadInput" type="file" accept=".docx,.xml,.xls" />
+      <input class="hidden" id="documentTemplateUploadInput" type="file" accept=".docx,.xml,.xls,.xlsx" />
     </section>
 
     <section class="card">
@@ -8008,7 +8008,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   const normalizeTemplateKey = (value) =>
     String(value || "")
       .toLowerCase()
-      .replace(/\.(docx|xml|xls)$/i, "")
+      .replace(/\.(docx|xml|xlsx|xls)$/i, "")
       .replace(/ё/g, "е")
       .replace(/[c]/g, "с")
       .replace(/[a]/g, "а")
@@ -8032,7 +8032,9 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     return keywords.some((keyword) => text.includes(keyword));
   };
   const docxTemplates = usableTemplates.filter((template) => template.template_type === "docx");
-  const xlsTemplates = usableTemplates.filter((template) => template.template_type === "xls");
+  const xlsTemplates = usableTemplates
+    .filter((template) => ["xlsx", "xls"].includes(template.template_type))
+    .sort((left, right) => (right.template_type === "xlsx") - (left.template_type === "xlsx"));
   const xmlTemplates = usableTemplates.filter((template) => template.template_type === "xml");
   const findDocx = (keywords) => docxTemplates.find((template) => matchesAny(template, keywords)) || null;
   const findXls = (keywords) => xlsTemplates.find((template) => matchesAny(template, keywords)) || null;
