@@ -8370,6 +8370,9 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
 
   const documentItem = registerGeneratedDocument(result, type, client, visit);
   await refreshDocumentWorkflowState(clientId, visit.backendId || null);
+  if (shouldAutoGenerateXmlForCertificate(type) && options.autoXml !== false) {
+    await ensureXmlAfterDriverCertificate(client, visit);
+  }
   return documentItem;
 }
 
@@ -9395,6 +9398,7 @@ async function openDriverPrintFlow(options = {}) {
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
       await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
+      await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit);
       if (skipConfirmation) {
         try {
           await markPrintedDocument(result.generated_document_id, true);
