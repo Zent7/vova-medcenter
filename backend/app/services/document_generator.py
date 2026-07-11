@@ -6,6 +6,7 @@ import re
 import shutil
 import xml.etree.ElementTree as ET
 import zipfile
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from xml.sax.saxutils import escape as escape_xml_text
 from xml.etree.ElementTree import ParseError
 
@@ -486,6 +487,14 @@ def _generate_xml(template_path: Path, output_path: Path, context: dict[str, str
     for key, value in context.items():
         xml_text = xml_text.replace(f"{{{{{key}}}}}", value)
     output_path.write_text(xml_text, encoding="utf-8")
+
+
+def _xml_export_date_folder() -> str:
+    try:
+        tzinfo = ZoneInfo(settings.xml_exports_timezone)
+    except ZoneInfoNotFoundError:
+        tzinfo = ZoneInfo("Europe/Moscow")
+    return datetime.now(tzinfo).date().isoformat()
 
 
 def _write_xls_cell(target_sheet, source_sheet, row_index: int, col_index: int, value: object, style=None) -> None:
@@ -2456,7 +2465,9 @@ def generate_document(
 
     template_path = Path(template.file_path)
     output_dir = Path(settings.generated_documents_dir)
-    if _is_contract_template(template):
+    if template.template_type == "xml":
+        output_dir = output_dir / "xml" / _xml_export_date_folder()
+    elif _is_contract_template(template):
         output_dir = output_dir / "contracts"
     output_dir.mkdir(parents=True, exist_ok=True)
 

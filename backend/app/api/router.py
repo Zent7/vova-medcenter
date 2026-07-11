@@ -27,6 +27,7 @@ from app.api.v1.routes.staff import router as staff_router
 from app.api.v1.routes.service_categories import router as service_categories_router
 from app.api.v1.routes.template_phrases import router as template_phrases_router
 from app.api.v1.routes.visit_types import router as visit_types_router
+from app.api.v1.routes.xml_exports import router as xml_exports_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
@@ -49,6 +50,7 @@ api_router.include_router(blanks_router, prefix="/blanks", tags=["blanks"])
 api_router.include_router(doctor_roles_router, prefix="/doctor-roles", tags=["doctor-roles"])
 api_router.include_router(documents_router, prefix="/documents", tags=["documents"])
 api_router.include_router(generated_documents_router, prefix="/generated-documents", tags=["generated-documents"])
+api_router.include_router(xml_exports_router, prefix="/xml-exports", tags=["xml-exports"])
 api_router.include_router(document_journals_router, prefix="/document-journals", tags=["document-journals"])
 api_router.include_router(medical_records_router, prefix="/medical-records", tags=["medical-records"])
 api_router.include_router(patient_consents_router, prefix="/patient-consents", tags=["patient-consents"])

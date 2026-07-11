@@ -128,6 +128,7 @@ const data = {
   documentTemplates: [],
   documentTemplatesLoaded: false,
   generatedDocuments: [],
+  xmlExportDays: [],
   documentJournals: [],
   spoiledBlanks: [],
   blanksTypes: [],
@@ -2838,6 +2839,10 @@ function buildGeneratedDocumentUrl(fileName, { inline = false } = {}) {
   return `${API_BASE_URL}/documents/generated/${encodeURIComponent(fileName)}${query}`;
 }
 
+function buildXmlExportArchiveUrl(exportDate) {
+  return `${API_BASE_URL}/xml-exports/days/${encodeURIComponent(exportDate)}/archive`;
+}
+
 function resolveApiUrl(url) {
   if (!url) return "";
   try {
@@ -2849,6 +2854,12 @@ function resolveApiUrl(url) {
 
 function isWordDocumentFile(fileName = "") {
   return String(fileName || "").toLowerCase().endsWith(".docx");
+}
+
+function isXmlGeneratedDocument(documentItem) {
+  const type = String(documentItem?.type || documentItem?.templateType || "").toLowerCase();
+  const fileName = String(documentItem?.fileName || documentItem?.file_name || "").toLowerCase();
+  return type === "xml" || fileName.endsWith(".xml");
 }
 
 function buildWordProtocolUrl(fileUrl) {
@@ -2903,6 +2914,22 @@ async function downloadGeneratedDocument(documentItem) {
   return downloadAuthorizedFileUrl(buildGeneratedDocumentUrl(fileName), fileName);
 }
 
+async function downloadXmlExportDayArchive(exportDate) {
+  return downloadAuthorizedFileUrl(buildXmlExportArchiveUrl(exportDate), `xml-export-${exportDate}.zip`);
+}
+
+async function deleteXmlExportDay(exportDate) {
+  await apiRequest(`/xml-exports/days/${encodeURIComponent(exportDate)}`, { method: "DELETE" });
+  await loadWorkflowData();
+}
+
+async function deleteXmlGeneratedDocument(documentItem) {
+  const documentId = documentItem?.backendId || documentItem?.id;
+  if (!documentId || !isXmlGeneratedDocument(documentItem)) return;
+  await apiRequest(`/xml-exports/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" });
+  await loadWorkflowData();
+}
+
 async function openGeneratedDocumentManually(documentItem, options = {}) {
   try {
     const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
@@ -2948,6 +2975,8 @@ function mapGeneratedDocument(item) {
   return {
     id: item.id,
     backendId: item.id,
+    type: template?.template_type || "",
+    templateType: template?.template_type || "",
     templateId: item.template_id,
     clientId: item.client_id,
     encounterId: item.encounter_id,
@@ -2959,6 +2988,8 @@ function mapGeneratedDocument(item) {
     blankNumber: item.blank_number_snapshot || "",
     cancelledAt: item.cancelled_at || null,
     cancelledReason: item.cancelled_reason || "",
+    fileDeletedAt: item.file_deleted_at || null,
+    fileDeleteReason: item.file_delete_reason || "",
     createdAt: item.generated_at,
     downloadUrl: buildGeneratedDocumentUrl(item.file_name),
   };
@@ -2981,15 +3012,21 @@ async function loadWorkflowData(options = {}) {
       spoiledBlanks,
       patientConsents,
       medicalRecords,
+      xmlExportDays,
     ] = await Promise.all([
       apiRequest(`/generated-documents${clientEncounterQuery}`),
       apiRequest(`/document-journals${clientQuery}`),
       apiRequest("/document-journals/spoiled-blanks"),
       apiRequest(`/patient-consents${clientEncounterQuery}`),
       apiRequest(`/medical-records${clientQuery}`),
+      apiRequest("/xml-exports/days").catch((error) => {
+        console.warn("Failed to load XML export days", error);
+        return [];
+      }),
     ]);
 
     data.generatedDocuments = Array.isArray(generatedDocuments) ? generatedDocuments.map(mapGeneratedDocument) : [];
+    data.xmlExportDays = Array.isArray(xmlExportDays) ? xmlExportDays : [];
     data.documentJournals = Array.isArray(documentJournals) ? documentJournals : [];
     data.spoiledBlanks = Array.isArray(spoiledBlanks) ? spoiledBlanks : [];
     data.patientConsents = Array.isArray(patientConsents) ? patientConsents : [];
@@ -7576,22 +7613,72 @@ function renderGeneratedDocumentsTable(items = data.generatedDocuments) {
             <div class="chart-list">
               ${documents
                 .map(
-                  (item) => `
-                    <div class="chart-list__row">
-                      <div>
-                        <strong>${escapeHtml(item.title || item.fileName || "Документ")}</strong>
-                        <small>${escapeHtml(formatDateTime(item.createdAt))}</small>
-                        <small>${escapeHtml([item.series, item.number].filter(Boolean).join(" ") || item.fileName || "")}</small>
-                        ${item.blankNumber ? `<small class="blank-badge">№ бланка: ${escapeHtml(item.blankNumber)}</small>` : ""}
+                  (item) => {
+                    const isDeleted = Boolean(item.fileDeletedAt);
+                    const canDeleteXml = !isDeleted && item.backendId && isXmlGeneratedDocument(item);
+                    return `
+                      <div class="chart-list__row">
+                        <div>
+                          <strong>${escapeHtml(item.title || item.fileName || "Документ")}</strong>
+                          <small>${escapeHtml(formatDateTime(item.createdAt))}</small>
+                          <small>${escapeHtml([item.series, item.number].filter(Boolean).join(" ") || item.fileName || "")}</small>
+                          ${item.blankNumber ? `<small class="blank-badge">№ бланка: ${escapeHtml(item.blankNumber)}</small>` : ""}
+                          ${isDeleted ? `<small class="blank-badge">XML-файл удален${item.fileDeleteReason ? `: ${escapeHtml(item.fileDeleteReason)}` : ""}</small>` : ""}
+                        </div>
+                        <div class="document-actions">
+                          ${isDeleted ? "" : `<button class="ghost-button" data-open-document-id="${escapeHtml(item.id)}">Открыть</button>`}
+                          ${canDeleteXml ? `<button class="ghost-button danger-button" data-delete-xml-document-id="${escapeHtml(item.id)}">Удалить XML</button>` : ""}
+                        </div>
                       </div>
-                      <button class="ghost-button" data-open-document-id="${escapeHtml(item.id)}">Открыть</button>
-                    </div>
-                  `,
+                    `;
+                  },
                 )
                 .join("")}
             </div>
           `
           : `<p class="muted">Пока нет документов, выданных через backend. Сформируй договор, справку или XML по обращению.</p>`
+      }
+    </article>
+  `;
+}
+
+function renderXmlExportDaysPanel() {
+  const days = Array.isArray(data.xmlExportDays) ? data.xmlExportDays : [];
+  return `
+    <article class="card">
+      <h3>XML-выгрузка за день</h3>
+      ${
+        days.length
+          ? `
+            <div class="chart-list">
+              ${days
+                .map((day) => {
+                  const exportDate = day.date || "";
+                  const availableCount = Number(day.available_count || 0);
+                  const totalCount = Number(day.total_count || 0);
+                  const deletedCount = Number(day.deleted_count || 0);
+                  return `
+                    <div class="chart-list__row">
+                      <div>
+                        <strong>${escapeHtml(formatApiDate(exportDate) || exportDate)}</strong>
+                        <small>${escapeHtml(`XML: ${availableCount} доступно из ${totalCount}`)}</small>
+                        ${deletedCount ? `<small class="blank-badge">Удалено: ${escapeHtml(deletedCount)}</small>` : ""}
+                      </div>
+                      <div class="document-actions">
+                        ${
+                          availableCount
+                            ? `<button class="ghost-button" data-download-xml-export-day="${escapeHtml(exportDate)}">Скачать ZIP</button>
+                               <button class="ghost-button danger-button" data-delete-xml-export-day="${escapeHtml(exportDate)}">Удалить день</button>`
+                            : `<span class="calendar-status calendar-status--done">Файлы удалены</span>`
+                        }
+                      </div>
+                    </div>
+                  `;
+                })
+                .join("")}
+            </div>
+          `
+          : `<p class="muted">XML-файлы за дни пока не сформированы.</p>`
       }
     </article>
   `;
@@ -9512,6 +9599,7 @@ function renderDocumentsPage() {
           : `<p class="muted">Сначала на главной найди клиента и создай обращение. После этого здесь появится генерация документов по выбранному обращению.</p>`
       }
     </section>
+    ${renderXmlExportDaysPanel()}
     <div class="two-col chart-main-grid">
       ${renderGeneratedDocumentsTable(visibleGeneratedDocuments)}
       ${renderDocumentJournalsTable()}
@@ -9540,6 +9628,11 @@ async function openDemoDocument(typeOrId, options = {}) {
 
   if (!documentItem) {
     showToast("Сначала выбери клиента и обращение");
+    return;
+  }
+
+  if (documentItem.fileDeletedAt) {
+    showToast("XML-файл уже удален из хранилища");
     return;
   }
 
@@ -10919,6 +11012,56 @@ function bindContentEvents() {
   contentRoot.querySelectorAll("[data-open-document-id]").forEach((button) => {
     button.addEventListener("click", () => {
       openDemoDocument(button.dataset.openDocumentId);
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-download-xml-export-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const exportDate = button.dataset.downloadXmlExportDay || "";
+      if (!exportDate) return;
+      button.disabled = true;
+      try {
+        await downloadXmlExportDayArchive(exportDate);
+        showToast("XML-архив скачивается");
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось скачать XML-архив"));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-delete-xml-export-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const exportDate = button.dataset.deleteXmlExportDay || "";
+      if (!exportDate) return;
+      if (!window.confirm(`Удалить XML-файлы за ${formatApiDate(exportDate) || exportDate}?`)) return;
+      button.disabled = true;
+      try {
+        await deleteXmlExportDay(exportDate);
+        showToast("XML-файлы за день удалены");
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось удалить XML-файлы за день"));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-delete-xml-document-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const documentItem = data.generatedDocuments?.find((item) => String(item.id) === String(button.dataset.deleteXmlDocumentId));
+      if (!documentItem) return;
+      if (!window.confirm(`Удалить XML-файл "${documentItem.fileName || documentItem.title}"?`)) return;
+      button.disabled = true;
+      try {
+        await deleteXmlGeneratedDocument(documentItem);
+        showToast("XML-файл удален");
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось удалить XML-файл"));
+      } finally {
+        button.disabled = false;
+      }
     });
   });
 

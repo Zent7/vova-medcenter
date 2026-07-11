@@ -226,6 +226,10 @@ def ensure_blank_form_tables() -> None:
                 add_integer_column_if_missing(connection, dialect, "generated_documents", "cancelled_by_user_id")
             if "cancelled_reason" not in generated_columns:
                 add_column_if_missing(connection, dialect, "generated_documents", "cancelled_reason", "VARCHAR(500)")
+            if "file_deleted_at" not in generated_columns:
+                add_column_if_missing(connection, dialect, "generated_documents", "file_deleted_at", "TIMESTAMP WITH TIME ZONE")
+            if "file_delete_reason" not in generated_columns:
+                add_column_if_missing(connection, dialect, "generated_documents", "file_delete_reason", "VARCHAR(500)")
             create_index_if_possible(connection, dialect, "ix_generated_documents_blank_form_id", "generated_documents", "blank_form_id")
             create_index_if_possible(connection, dialect, "ix_generated_documents_blank_number_snapshot", "generated_documents", "blank_number_snapshot")
 
