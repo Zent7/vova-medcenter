@@ -262,8 +262,20 @@ def build_document_context(
     contract_date = visit_date or _date(date.today())
     total_amount = _text(encounter.total_amount) if encounter else ""
     notes = _text(encounter.comment) if encounter else _text(client.notes)
-    sex = _text(client.sex).upper()
-    sex_label = {"M": "муж", "MALE": "муж", "F": "жен", "FEMALE": "жен"}.get(sex, _text(client.sex))
+    sex = _text(client.sex).strip().upper()
+    sex_label = {
+        "M": "муж",
+        "MALE": "муж",
+        "М": "муж",
+        "МУЖ": "муж",
+        "МУЖСКОЙ": "муж",
+        "F": "жен",
+        "FEMALE": "жен",
+        "Ж": "жен",
+        "ЖЕН": "жен",
+        "ЖЕНСКИЙ": "жен",
+    }.get(sex, _text(client.sex))
+    sex_full_label = {"муж": "мужской", "жен": "женский"}.get(sex_label.lower(), sex_label)
     organization = _text(client.organization) or _first_legacy_value(client, "Организация", "organization", "CompanyName")
     work_place = _text(client.work_place) or organization or _first_legacy_value(client, "Место работы", "WorkPlace", "qdfMain.WorkPlace")
     post = _text(client.profession) or _first_legacy_value(client, "Должность", "Post", "qdfMain.Post") or "не указано"
@@ -355,6 +367,13 @@ def build_document_context(
         "ApartmentNumberCalc1": address_parts["apartment"],
         "Sex": sex_label,
         "SexCalc": sex_label,
+        "SexFull": sex_full_label,
+        "Gender": sex_label,
+        "GenderCalc": sex_label,
+        "GenderFull": sex_full_label,
+        "Пол": sex_label,
+        "ПолCalc": sex_label,
+        "ПолПолный": sex_full_label,
         "Age": age,
         "AgeCalc": age,
         "RegistrType": "постоянная",
