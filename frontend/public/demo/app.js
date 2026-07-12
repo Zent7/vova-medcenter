@@ -11256,6 +11256,40 @@ function bindContentEvents() {
         });
       }
     });
+
+    button.addEventListener("dblclick", async (event) => {
+      if (
+        event.target.closest("[data-row-doctor-role-id]") ||
+        event.target.closest("[data-copy-value]") ||
+        event.target.closest("a, input, select, textarea")
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (clientRowClickTimer) {
+        window.clearTimeout(clientRowClickTimer);
+        clientRowClickTimer = null;
+      }
+
+      const nextClientId = Number(button.dataset.clientId);
+      appState.selectedClientId = nextClientId;
+      appState.activeVisitId = getCurrentVisitForClient(nextClientId)?.id || null;
+      persistDemoState();
+
+      let selectedClient = getSelectedClient();
+      try {
+        selectedClient = await ensureFullClientLoaded(selectedClient);
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
+        return;
+      }
+
+      if (selectedClient && window.openClientModal) {
+        window.openClientModal(selectedClient.id);
+      }
+    });
   });
 
   contentRoot.querySelectorAll("[data-doctor-role-id]").forEach((button) => {
