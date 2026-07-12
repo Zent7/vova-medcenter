@@ -585,6 +585,13 @@ const CHAIRMAN_FORM_CONFIGS = {
     printMode: "document",
     note: "Подтягивается шаблон справки 095у.",
   },
+  semt196: {
+    type: "semt196",
+    label: "Председатель: справка СЭМТ-196",
+    templateType: "semt196",
+    printMode: "document",
+    note: "Подтягивается шаблон справки СЭМТ-196.",
+  },
   gsu: {
     type: "gsu",
     label: "Председатель: справка 001 ГСУ",
@@ -1610,6 +1617,7 @@ function getChairmanFormTypeForVisit(visit) {
   if (serviceText.includes("082") || serviceText.includes("границ")) return "certificate082";
   if (serviceText.includes("086")) return "certificate086";
   if (serviceText.includes("095")) return "certificate095";
+  if (serviceText.includes("сэмт") || serviceText.includes("semt") || serviceText.includes("196")) return "semt196";
   if (serviceText.includes("001") || serviceText.includes("гсу") || serviceText.includes("госслуж")) return "gsu";
   if (serviceText.includes("989") || serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return "gostaina";
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return "psych342";
@@ -8124,6 +8132,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "082") return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
   if (normalizedType === "086") return find086Template();
   if (normalizedType === "095") return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
+  if (normalizedType === "semt196") return findDocxSafely(["сэмт196_шаблон", "сэмт-196_шаблон"], ["сэмт", "196"], []);
   if (normalizedType === "gsu") return findDocxSafely(["гсу001_шаблон"], ["гсу001", "001"], []);
   if (normalizedType === "gostaina") return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гостайн", "гос.тайн", "989"], []);
   if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);
@@ -8198,6 +8207,9 @@ function pickDocumentTemplate(type, visit = null, client = null) {
 
 function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   const config = getChairmanFormConfigForVisit(visit);
+  if (String(printKind || "").endsWith("_certificate")) {
+    return String(printKind).replace(/_certificate$/, "");
+  }
   const fixedPrintTypes = {
     sport_certificate: "sport",
     pool_certificate: "pool",
@@ -8216,7 +8228,7 @@ function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
 
 function shouldOpenChairmanResultsPrintMenu(visit) {
   const formType = getChairmanFormConfigForVisit(visit).type;
-  return ["lmk", "prof", "sport", "pool", "gto"].includes(formType);
+  return formType === "lmk" || formType === "prof" || CHAIRMAN_CERTIFICATE_PRINT_GROUPS.has(formType);
 }
 
 function getChairmanPrintActionForVisit(visit) {
@@ -8239,13 +8251,37 @@ const CHAIRMAN_CERTIFICATE_PRINT_SERIES = new Map([
   ["pool", "БАСС"],
   ["sport", "СПОРТ"],
   ["gto", "ГТО"],
+  ["gostaina", "ГТ"],
+  ["gsu", "ГС"],
+  ["072", "072у"],
+  ["070", "070у"],
+  ["095", "095у"],
+  ["semt196", "СЭМТ-196"],
 ]);
+
+const CHAIRMAN_CERTIFICATE_PRINT_GROUPS = new Map([
+  ["sport", { currentType: "sport", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
+  ["pool", { currentType: "pool", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
+  ["gto", { currentType: "gto", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
+  ["gostaina", { currentType: "gostaina", items: [["gostaina", "ГТ (гостайна)"], ["gsu", "ГС (госслужба)"]] }],
+  ["gsu", { currentType: "gsu", items: [["gostaina", "ГТ (гостайна)"], ["gsu", "ГС (госслужба)"]] }],
+  ["certificate072", { currentType: "072", items: [["072", "Справка 072у"], ["070", "Справка 070у"]] }],
+  ["certificate070", { currentType: "070", items: [["072", "Справка 072у"], ["070", "Справка 070у"]] }],
+  ["certificate095", { currentType: "095", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+  ["certificate086", { currentType: "086", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+  ["semt196", { currentType: "semt196", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+]);
+
+function getChairmanCertificatePrintSeries(type, client = null) {
+  if (String(type || "").toLowerCase() === "086") return formatCertificate086SeriesForSex({ client });
+  return CHAIRMAN_CERTIFICATE_PRINT_SERIES.get(String(type || "").toLowerCase()) || "";
+}
 
 function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
 
-const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО"]);
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "СЭМТ-196"]);
 
 function canAutoCreateChairmanBlankSeries(series) {
   return CHAIRMAN_AUTO_CREATE_BLANK_SERIES.has(normalizeBlankSeries(series).toUpperCase());
@@ -11485,9 +11521,10 @@ function bindContentEvents() {
         client?.rawApiClient?.reference_number ||
         "";
       const selectedPrintBlanks = new Map();
-      const certificateTemplateMenu = ["sport", "pool", "gto"].includes(getChairmanFormConfigForVisit(visit).type);
-      let selectedCertificateType = certificateTemplateMenu ? getChairmanFormConfigForVisit(visit).type : "";
-      const getSelectedCertificateSeries = () => CHAIRMAN_CERTIFICATE_PRINT_SERIES.get(selectedCertificateType) || "";
+      const certificatePrintGroup = CHAIRMAN_CERTIFICATE_PRINT_GROUPS.get(getChairmanFormConfigForVisit(visit).type) || null;
+      const certificateTemplateMenu = Boolean(certificatePrintGroup);
+      let selectedCertificateType = certificatePrintGroup?.currentType || "";
+      const getSelectedCertificateSeries = () => getChairmanCertificatePrintSeries(selectedCertificateType, client);
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
         findBlank: async () => null,
@@ -11515,7 +11552,9 @@ function bindContentEvents() {
         }) || null;
       };
       if (certificateTemplateMenu) {
-        CHAIRMAN_CERTIFICATE_PRINT_SERIES.forEach((series, certificateType) => {
+        certificatePrintGroup.items.forEach(([certificateType]) => {
+          const series = getChairmanCertificatePrintSeries(certificateType, client);
+          if (!series) return;
           const previousDocument = findLatestCertificateDocument(certificateType);
           if (previousDocument?.blankFormId) {
             selectedPrintBlanks.set(series, {
@@ -11544,9 +11583,7 @@ function bindContentEvents() {
               <button type="button" class="driver-print-classic__button" data-chairman-print-current-certificate>Печать справки</button>
               <button type="button" class="driver-print-classic__button" data-chairman-print-certificate-duplicate>Печать дубликата</button>
             </div>
-            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="pool_certificate">Справка для бассейна</button>
-            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="sport_certificate">Справка Спорт</button>
-            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="gto_certificate">Справка ГТО</button>
+            ${certificatePrintGroup.items.map(([type, label]) => `<button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="${escapeHtml(type)}_certificate">${escapeHtml(label)}</button>`).join("")}
           </div>
         `
           : `
@@ -11582,7 +11619,8 @@ function bindContentEvents() {
       ]);
 
       const selectCertificateType = (certificateType) => {
-        if (!CHAIRMAN_CERTIFICATE_PRINT_SERIES.has(certificateType)) return;
+        if (!certificatePrintGroup?.items.some(([type]) => type === certificateType)) return;
+        if (!getChairmanCertificatePrintSeries(certificateType, client)) return;
         selectedCertificateType = certificateType;
         const series = getSelectedCertificateSeries();
         const blank = selectedPrintBlanks.get(series);
@@ -11732,7 +11770,7 @@ function bindContentEvents() {
       }
 
       const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
-      const isExplicitCertificateTemplate = ["sport_certificate", "pool_certificate", "gto_certificate"].includes(printKind);
+      const isExplicitCertificateTemplate = String(printKind || "").endsWith("_certificate");
       const certificatePrintFlowOptions = isExplicitCertificateTemplate ? null : getChairmanCertificatePrintFlowOptions(printType);
 
       if (numberedCertificateSeries || certificatePrintFlowOptions) {
@@ -11757,7 +11795,7 @@ function bindContentEvents() {
           const printOptions = { targetWindow };
           const certificateType = isExplicitCertificateTemplate ? printType : "";
           const requiredBlankSeries = certificateType
-            ? CHAIRMAN_CERTIFICATE_PRINT_SERIES.get(certificateType)
+            ? getChairmanCertificatePrintSeries(certificateType, client)
             : getChairmanBlankSeriesForPrintKind(printKind);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
