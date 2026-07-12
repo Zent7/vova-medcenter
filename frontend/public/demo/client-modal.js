@@ -651,10 +651,19 @@ function syncClientPaymentRowsFromDom() {
 function getClientServiceDraftDetail(service) {
   const key = getClientServiceDetailKey(service);
   const existing = clientModalServiceDetails[key] || {};
-  const defaultUnitPrice = getDefaultServiceUnitPrice(service);
+  const defaultUnitPrice = getDefaultServiceUnitPrice(service);
+
+  const existingUnitPrice = Number(existing.unitPrice);
+
+  const shouldRefreshSemtPrice = Number(service?.legacySourceId ?? service?.legacy_source_id) === 43
+    && existing.unitPrice !== undefined
+    && existingUnitPrice === 0
+    && defaultUnitPrice > 0;
   return {
     ...existing,
-    unitPrice: Number(existing.unitPrice ?? defaultUnitPrice ?? 0),
+    unitPrice: shouldRefreshSemtPrice
+      ? defaultUnitPrice
+      : Number(existing.unitPrice ?? defaultUnitPrice ?? 0),
     paymentType: existing.paymentType || "cash",
     comment: existing.comment || "",
   };
