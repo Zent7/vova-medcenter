@@ -8245,7 +8245,7 @@ function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
 
-const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н"]);
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО"]);
 
 function canAutoCreateChairmanBlankSeries(series) {
   return CHAIRMAN_AUTO_CREATE_BLANK_SERIES.has(normalizeBlankSeries(series).toUpperCase());
