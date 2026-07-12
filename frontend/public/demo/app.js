@@ -8235,6 +8235,12 @@ const CHAIRMAN_PRINT_BLANK_SERIES = new Map([
   ["ambulatory_card", "29Н"],
 ]);
 
+const CHAIRMAN_CERTIFICATE_PRINT_SERIES = new Map([
+  ["pool", "БАСС"],
+  ["sport", "СПОРТ"],
+  ["gto", "ГТО"],
+]);
+
 function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
@@ -11480,6 +11486,8 @@ function bindContentEvents() {
         "";
       const selectedPrintBlanks = new Map();
       const certificateTemplateMenu = ["sport", "pool", "gto"].includes(getChairmanFormConfigForVisit(visit).type);
+      let selectedCertificateType = certificateTemplateMenu ? getChairmanFormConfigForVisit(visit).type : "";
+      const getSelectedCertificateSeries = () => CHAIRMAN_CERTIFICATE_PRINT_SERIES.get(selectedCertificateType) || "";
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
         findBlank: async () => null,
@@ -11495,15 +11503,49 @@ function bindContentEvents() {
           ? fullNumber.slice(normalizedSeries.length).trim()
           : fullNumber;
       };
+      const findLatestCertificateDocument = (certificateType) => {
+        if (!visit) return null;
+        const template = pickDocumentTemplate(certificateType, visit, client);
+        const templateName = String(template?.name || "").toLowerCase();
+        const templateFileName = String(template?.file_name || "").toLowerCase();
+        return getDocumentsForVisit(visit.id).find((item) => {
+          if (template?.id && String(item.templateId || "") === String(template.id)) return true;
+          const haystack = `${item.title || ""} ${item.fileName || ""}`.toLowerCase();
+          return (templateName && haystack.includes(templateName)) || (templateFileName && haystack.includes(templateFileName));
+        }) || null;
+      };
+      if (certificateTemplateMenu) {
+        CHAIRMAN_CERTIFICATE_PRINT_SERIES.forEach((series, certificateType) => {
+          const previousDocument = findLatestCertificateDocument(certificateType);
+          if (previousDocument?.blankFormId) {
+            selectedPrintBlanks.set(series, {
+              id: previousDocument.blankFormId,
+              series,
+              full_number: previousDocument.blankNumber || "",
+            });
+          }
+        });
+      }
       openActionModal(
         "Печать результатов:",
         certificateTemplateMenu
           ? `
           <div class="driver-print-classic chairman-print-results chairman-print-results--certificates">
             <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
-            <div class="driver-print-classic__caption">Выберите шаблон справки:</div>
-            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="sport_certificate">Спортивная справка</button>
-            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="pool_certificate">Справка в бассейн</button>
+
+            <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
+            <div class="driver-print-classic__lookup">
+              <input id="chairmanCertificateBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(getSelectedCertificateSeries())}" readonly />
+              <input id="chairmanCertificateBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(getSelectedCertificateSeries()))}" readonly />
+              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-certificate-find-blank>Найти номер</button>
+            </div>
+
+            <div class="chairman-print-results__row chairman-print-results__row--top">
+              <button type="button" class="driver-print-classic__button" data-chairman-print-current-certificate>Печать справки</button>
+              <button type="button" class="driver-print-classic__button" data-chairman-print-certificate-duplicate>Печать дубликата</button>
+            </div>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="pool_certificate">Справка для бассейна</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="sport_certificate">Справка Спорт</button>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="gto_certificate">Справка ГТО</button>
           </div>
         `
@@ -11539,9 +11581,23 @@ function bindContentEvents() {
         ["ЛМК", document.getElementById("chairmanPrintBlankNumberLmk")],
       ]);
 
+      const selectCertificateType = (certificateType) => {
+        if (!CHAIRMAN_CERTIFICATE_PRINT_SERIES.has(certificateType)) return;
+        selectedCertificateType = certificateType;
+        const series = getSelectedCertificateSeries();
+        const blank = selectedPrintBlanks.get(series);
+        const blankParts = blank ? getDriverPrintBlankParts(blank, series) : null;
+        const seriesInput = document.getElementById("chairmanCertificateBlankSeries");
+        const numberInput = document.getElementById("chairmanCertificateBlankNumber");
+        if (seriesInput) seriesInput.value = series;
+        if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(series);
+      };
+
       const findChairmanBlank = async (series, button = null) => {
         const normalizedSeries = normalizeBlankSeries(series);
-        const input = blankInputBySeries.get(normalizedSeries);
+        const input = certificateTemplateMenu
+          ? document.getElementById("chairmanCertificateBlankNumber")
+          : blankInputBySeries.get(normalizedSeries);
         if (!client || !visit) {
           showToast("Сначала выбери клиента и обращение");
           return null;
@@ -11588,13 +11644,45 @@ function bindContentEvents() {
         });
       });
 
+      actionModalContent?.querySelector("[data-chairman-certificate-find-blank]")?.addEventListener("click", async (event) => {
+        await findChairmanBlank(getSelectedCertificateSeries(), event.currentTarget);
+      });
+
+      actionModalContent?.querySelector("[data-chairman-print-current-certificate]")?.addEventListener("click", async (event) => {
+        const targetWindow = window.open("about:blank", "_blank");
+        await runChairmanPrint(`${selectedCertificateType}_certificate`, "справку", event.currentTarget, targetWindow);
+      });
+
+      actionModalContent?.querySelector("[data-chairman-print-certificate-duplicate]")?.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const targetWindow = window.open("about:blank", "_blank");
+        const latestDocument = findLatestCertificateDocument(selectedCertificateType);
+        if (!latestDocument) {
+          if (targetWindow && !targetWindow.closed) targetWindow.close();
+          showToast("Для этой справки еще нет напечатанного документа");
+          return;
+        }
+        try {
+          await openGeneratedDocumentDirectly(latestDocument, { targetWindow });
+          showToast(`Дубликат открыт: ${latestDocument.title || getCertificatePrintTypeLabel(selectedCertificateType)}`);
+        } catch (error) {
+          if (targetWindow && !targetWindow.closed) targetWindow.close();
+          showToast(humanizeApiError(error, "Не удалось открыть дубликат"));
+        }
+      });
+
       actionModalContent?.querySelectorAll("[data-chairman-print-menu-kind]").forEach((button) => {
         button.addEventListener("click", async (event) => {
           event.preventDefault();
           event.stopPropagation();
+          const printKind = button.dataset.chairmanPrintMenuKind || "conclusion";
+          const certificateType = printKind.endsWith("_certificate") ? printKind.replace(/_certificate$/, "") : "";
+          if (certificateTemplateMenu && certificateType) {
+            selectCertificateType(certificateType);
+          }
           const targetWindow = window.open("about:blank", "_blank");
           await runChairmanPrint(
-            button.dataset.chairmanPrintMenuKind || "conclusion",
+            printKind,
             button.textContent?.trim() || "документ",
             button,
             targetWindow,
@@ -11667,13 +11755,15 @@ function bindContentEvents() {
         try {
           const directPrintType = printType === "driver" ? "medical" : printType;
           const printOptions = { targetWindow };
-          const requiredBlankSeries = getChairmanBlankSeriesForPrintKind(printKind);
+          const certificateType = isExplicitCertificateTemplate ? printType : "";
+          const requiredBlankSeries = certificateType
+            ? CHAIRMAN_CERTIFICATE_PRINT_SERIES.get(certificateType)
+            : getChairmanBlankSeriesForPrintKind(printKind);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (!selectedBlank?.id) {
-              selectedBlank = await chairmanPrintBlankState.findBlank(requiredBlankSeries);
-            }
-            if (!selectedBlank?.id) {
+              if (targetWindow && !targetWindow.closed) targetWindow.close();
+              showToast(`Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}`);
               if (currentButton) currentButton.disabled = false;
               return;
             }
