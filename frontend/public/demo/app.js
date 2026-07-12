@@ -4120,7 +4120,7 @@ function openDoctorExamCard({ clientId, visitId, doctorRoleId }) {
   const chairmanFormType = getChairmanFormTypeForVisit(visit);
   if (
     doctorRoleId === "chairman" &&
-    (chairmanFormType === "sport" || chairmanFormType === "ekg") &&
+    chairmanFormType === "ekg" &&
     typeof window.openSportCard === "function"
   ) {
     const cardService = getServicesForVisit(visit).find((service) =>
@@ -8199,6 +8199,9 @@ function pickDocumentTemplate(type, visit = null, client = null) {
 function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   const config = getChairmanFormConfigForVisit(visit);
   const fixedPrintTypes = {
+    sport_certificate: "sport",
+    pool_certificate: "pool",
+    gto_certificate: "gto",
     lmk_title: "lmk_title",
     lmk_certificate: "lmk",
     prof_conclusion: "prof",
@@ -8213,7 +8216,7 @@ function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
 
 function shouldOpenChairmanResultsPrintMenu(visit) {
   const formType = getChairmanFormConfigForVisit(visit).type;
-  return formType === "lmk" || formType === "prof";
+  return ["lmk", "prof", "sport", "pool", "gto"].includes(formType);
 }
 
 function getChairmanPrintActionForVisit(visit) {
@@ -11476,6 +11479,7 @@ function bindContentEvents() {
         client?.rawApiClient?.reference_number ||
         "";
       const selectedPrintBlanks = new Map();
+      const certificateTemplateMenu = ["sport", "pool", "gto"].includes(getChairmanFormConfigForVisit(visit).type);
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
         findBlank: async () => null,
@@ -11493,7 +11497,17 @@ function bindContentEvents() {
       };
       openActionModal(
         "Печать результатов:",
+        certificateTemplateMenu
+          ? `
+          <div class="driver-print-classic chairman-print-results chairman-print-results--certificates">
+            <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
+            <div class="driver-print-classic__caption">Выберите шаблон справки:</div>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="sport_certificate">Спортивная справка</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="pool_certificate">Справка в бассейн</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="gto_certificate">Справка ГТО</button>
+          </div>
         `
+          : `
           <div class="driver-print-classic chairman-print-results">
             <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
 
@@ -11630,7 +11644,8 @@ function bindContentEvents() {
       }
 
       const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
-      const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
+      const isExplicitCertificateTemplate = ["sport_certificate", "pool_certificate", "gto_certificate"].includes(printKind);
+      const certificatePrintFlowOptions = isExplicitCertificateTemplate ? null : getChairmanCertificatePrintFlowOptions(printType);
 
       if (numberedCertificateSeries || certificatePrintFlowOptions) {
         if (targetWindow && !targetWindow.closed) targetWindow.close();

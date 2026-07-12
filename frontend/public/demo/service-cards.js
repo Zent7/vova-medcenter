@@ -43,13 +43,13 @@
 
   // ----- Определение типа карточки по услуге --------------------------------
   // driver — открывается уже существующая карточка председателя.
-  // sport  — новая карточка спортивной справки.
+  // sport/pool/GTO — открываются в общей карточке председателя.
   // прочее — placeholder.
   // Жёсткий whitelist: только для согласованных услуг — своя карточка.
   // Все остальные услуги показывают плейсхолдер «Карточка пока не готова».
   const DRIVER_LEGACY_IDS = new Set([8, 29]);
   const PROF_LEGACY_IDS = new Set([16]);
-  const SPORT_LEGACY_IDS = new Set([4, 5]);
+  const SPORT_LEGACY_IDS = new Set([3, 4, 5]);
   const EKG_LEGACY_IDS = new Set([6, 20, 21, 27]);
 
   function resolveServiceCardKind(service) {
@@ -73,6 +73,9 @@
 
     if (SPORT_LEGACY_IDS.has(legacyId)) return "sport";
     if (
+      name === "справка в бассейн" ||
+      name === "справка гто 1144" ||
+      name === "справка гто" ||
       name === "справка для участия в соревнованиях" ||
       name === "справка спорт + экг" ||
       name === "справка для спорта" ||
@@ -115,17 +118,13 @@
     const visit = window.getOrCreateDraftVisit && window.getOrCreateDraftVisit(client.id);
 
     const kind = resolveServiceCardKind(service);
-    if (kind === "driver" || kind === "prof" || kind === "chairman") {
+    if (kind === "driver" || kind === "prof" || kind === "chairman" || kind === "sport") {
       closeServiceCardOverlays();
       window.openDoctorExamCard({
         clientId: client.id,
         visitId: visit?.id || null,
         doctorRoleId: "chairman",
       });
-      return;
-    }
-    if (kind === "sport") {
-      openSportCard({ clientId: client.id, visitId: visit?.id || null, service, doctorRoleId: "chairman" });
       return;
     }
     if (kind === "ekg") {
