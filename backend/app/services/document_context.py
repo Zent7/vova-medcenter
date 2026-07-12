@@ -374,6 +374,7 @@ def build_document_context(
         "Пол": sex_label,
         "ПолCalc": sex_label,
         "ПолПолный": sex_full_label,
+        "qdfMain.Sex": sex_label,
         "Age": age,
         "AgeCalc": age,
         "RegistrType": "постоянная",
