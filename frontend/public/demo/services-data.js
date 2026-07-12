@@ -316,12 +316,22 @@ window.servicesData = {
     },
     {
       id: 43,
-      name: "СЭМТ-196",
+      name: "СЭМТ-196 без ФЛГ",
       groupId: 7,
-      price: 0,
+      price: 2500,
       notes: "",
       isActive: true,
       sortOrder: 160,
+      doctorRoleIds: [1, 13]
+    },
+    {
+      id: 44,
+      name: "СЭМТ-196 с ФЛГ",
+      groupId: 7,
+      price: 3500,
+      notes: "ФЛГ — флюорография",
+      isActive: true,
+      sortOrder: 170,
       doctorRoleIds: [1, 13]
     },
     {
