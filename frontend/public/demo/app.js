@@ -803,15 +803,15 @@ function resolveAdmissionCategoryValue(categoryValue, services, options = {}) {
   const serviceNames = Array.isArray(services)
     ? services.map((service) => String(service || "").trim()).filter(Boolean)
     : [];
-  if (directValue && !(hasGuardCertificateServiceName(serviceNames) && /^0?71у?$/i.test(directValue))) return directValue;
-  if (hasGuardCertificateServiceName(serviceNames)) return "4026";
+  if (hasGuardCertificateServiceName(serviceNames)) return "002 (чод)";
+  if (directValue) return directValue;
   return formatAdmissionServiceSeriesList(serviceNames, options) || serviceNames.join(", ");
 }
 
 function resolveDashboardAdmissionCategoryValue(categoryValue, services, options = {}) {
   const directValue = String(categoryValue || "").trim();
   if (hasGuardCertificateServiceName(services) || directValue === "4026") {
-    return GUARD_CERTIFICATE_DISPLAY_NAME;
+    return "002 (чод)";
   }
   return resolveAdmissionCategoryValue(categoryValue, services, options);
 }
@@ -836,7 +836,7 @@ function resolveDashboardAdmissionCategory(client, visit = null) {
 
   const services = getServicesForVisit(visit);
   const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit), clientServiceNames);
-  if (hasGuardCertificateServiceName(serviceNames)) return GUARD_CERTIFICATE_DISPLAY_NAME;
+  if (hasGuardCertificateServiceName(serviceNames)) return "002 (чод)";
   const hasDriverService = services.some(isDriverService);
   if (hasDriverService) {
     const driverDetail = getDriverDetailFromVisit(visit);
@@ -8702,13 +8702,13 @@ const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071у"],
   ["профосмотр", "29Н"],
-  ["первичный профосмотр 29н", "29Н"],
+  ["первичный профосмотр 29н", "Проф"],
   ["санаторно-курортная карта", "072 у СКК"],
   ["санаторно-курортная карта 072у", "072 у СКК"],
   ["справка для получения путевки 070у", "070у"],
   ["справка 001 гсу для работы на госслужбе", "ГС"],
   ["справка формы 001 гсу", "ГС"],
-  ["справка 002 чод (для охраны)", "4026"],
+  ["справка 002 чод (для охраны)", "002 (чод)"],
   ["справка в бассейн", "БАСС"],
   ["справка для посещения бассейна", "БАСС"],
   ["справка выезжающих за границу 082у", "082у"],
@@ -8743,6 +8743,31 @@ const SERVICE_SERIES_OVERRIDES = new Map([
   ["экг без расшифровки", "ЭКГ"],
   ["экг при нагрузке с расшифровкой", "ЭКГН"],
   ["экг с расшифровкой", "ЭКГР"],
+]);
+const SERVICE_ABBREVIATION_BY_LEGACY_ID = new Map([
+  [2, "ГС"],
+  [3, "бассейн"],
+  [4, "ГТО"],
+  [5, "спорт"],
+  [7, "071у"],
+  [8, "ВУ (водительская)"],
+  [9, "002 (чод)"],
+  [10, "082у"],
+  [11, "ГТ"],
+  [12, "086у"],
+  [16, "Проф"],
+  [18, "ЛМК-Н"],
+  [19, "ЛМК-ПР"],
+  [24, "072 у СКК"],
+  [29, "ВУ (водительская)"],
+  [30, "095у"],
+  [31, "070у"],
+  [37, "гимс"],
+  [38, "Морская"],
+  [40, "342н псих осв"],
+  [42, "ЛМК справка"],
+  [43, "СЭМТ-196"],
+  [44, "СЭМТ-196"],
 ]);
 
 function getStoredDriverPrintSeries() {
@@ -8874,17 +8899,10 @@ function buildServiceSeriesAbbreviation(service, options = {}) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
   if (!name) return "";
-  if (isGuardCertificateServiceName(name)) {
-    return "4026";
-  }
-  if (
-    isDriverService(service) ||
-    isTractorService(service) ||
-    isGimsService(service) ||
-    isLmkService(service) ||
-    normalizedName.includes("лмк")
-  ) {
-    return "";
+  const legacyId = Number(service?.legacySourceId ?? service?.id);
+  if (SERVICE_ABBREVIATION_BY_LEGACY_ID.has(legacyId)) {
+    const abbreviation = SERVICE_ABBREVIATION_BY_LEGACY_ID.get(legacyId);
+    return abbreviation === "086у" ? formatCertificate086SeriesForSex(options) : abbreviation;
   }
   if (SERVICE_SERIES_OVERRIDES.has(normalizedName)) {
     const series = SERVICE_SERIES_OVERRIDES.get(normalizedName);

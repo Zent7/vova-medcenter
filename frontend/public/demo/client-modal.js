@@ -912,9 +912,8 @@ function renderClientServiceSelector(selectedServices = []) {
                         value="${escapeHtml(service.name)}"
                         ${selectedSet.has(service.name) ? "checked" : ""}
                       />
-                      <span class="client-service-chip__text">
-                        <span>${escapeHtml(service.name)}</span>
-                        ${serviceSeries ? `<small>${escapeHtml(serviceSeries)}</small>` : ""}
+                      <span class="client-service-chip__text" title="${escapeHtml(service.name)}">
+                        <span>${escapeHtml(serviceSeries || service.name)}</span>
                       </span>
                       ${selectedSet.has(service.name) ? '<span class="client-service-chip__check" aria-hidden="true"></span>' : ""}
                     </label>
