@@ -5516,7 +5516,7 @@ function renderSketchHome() {
                 ? excelRows
                     .map(
                       (row) => `
-                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Выбрать клиента">
+                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Один щелчок — выбрать, двойной — изменить клиента">
                           <span>${escapeHtml(row.encounterDate)}</span>
                           <span class="sketch-table__fio">${escapeHtml(displayTableValue(row.fullName))}</span>
                           <span>${escapeHtml(row.birthDate)}</span>
