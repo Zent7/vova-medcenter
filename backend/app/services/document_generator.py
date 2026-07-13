@@ -44,11 +44,20 @@ from app.services.blank_forms import (
     resolve_required_blank_type,
     reuse_blank_for_existing_document,
 )
-from app.services.document_context import build_document_context
+from app.services.document_context import _split_address, build_document_context
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
 ET.register_namespace("w", W_NS)
+
+SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
+MIAC_NS = "http://iac.spb.ru/mb#"
+XMLDSIG_NS = "http://www.w3.org/2000/09/xmldsig#"
+MIAC_DRIVER_TEMPLATE = "Водительская(новая).xml"
+MIAC_GUARD_TEMPLATE = "Чод_новый.xml"
+
+ET.register_namespace("soapenv", SOAP_NS)
+ET.register_namespace("mb", MIAC_NS)
 
 PROF_EXTRACT_DOCTOR_ROWS: tuple[tuple[str, str, int], ...] = (
     ("therapist", "Терапевт", 32),
@@ -490,6 +499,374 @@ def _generate_xml(template_path: Path, output_path: Path, context: dict[str, str
     for key, value in context.items():
         xml_text = xml_text.replace(f"{{{{{key}}}}}", value)
     output_path.write_text(xml_text, encoding="utf-8")
+
+
+def _miac_xml_kind(template: DocumentTemplate) -> str | None:
+    file_name = str(template.file_name or Path(template.file_path or "").name)
+    if file_name.casefold() == MIAC_DRIVER_TEMPLATE.casefold():
+        return "driver"
+    if file_name.casefold() == MIAC_GUARD_TEMPLATE.casefold():
+        return "guard"
+    return None
+
+
+def _miac_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _miac_add(parent: ET.Element, tag: str, value: object = "") -> ET.Element:
+    node = ET.SubElement(parent, tag)
+    node.text = _miac_text(value)
+    return node
+
+
+def _miac_mb_add(parent: ET.Element, tag: str, value: object = "") -> ET.Element:
+    return _miac_add(parent, f"{{{MIAC_NS}}}{tag}", value)
+
+
+def _miac_clean_locality(value: str) -> str:
+    return re.sub(
+        r"^\s*(?:г\.?|гор\.?|город|п\.?|пос\.?|поселок|посёлок|гп\.?|село|деревня)\s*",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
+def _miac_address_parts(address: str) -> dict[str, str]:
+    parsed = _split_address(address)
+    result = {
+        "place": parsed.get("subject", ""),
+        "area": parsed.get("district", ""),
+        "city": _miac_clean_locality(parsed.get("city", "")),
+        "town": "",
+        "street": parsed.get("street", ""),
+        "house": parsed.get("house", ""),
+        "building": parsed.get("body", ""),
+        "flat": parsed.get("apartment", ""),
+    }
+
+    town_pattern = re.compile(
+        r"^\s*(?:п\.?|пос\.?|поселок|посёлок|гп\.?|село|деревня)\s+",
+        re.IGNORECASE,
+    )
+    for part in (item.strip() for item in re.split(r",|\n", address or "")):
+        if town_pattern.search(part):
+            result["town"] = town_pattern.sub("", part).strip()
+            if _miac_clean_locality(parsed.get("city", "")).casefold() == result["town"].casefold():
+                result["city"] = ""
+            break
+
+    normalized = (address or "").casefold().replace("ё", "е")
+    federal_city = ""
+    if "санкт-петербург" in normalized or re.search(r"\bспб\b", normalized):
+        federal_city = "Санкт-Петербург"
+    elif "севастополь" in normalized:
+        federal_city = "Севастополь"
+    elif re.search(r"\bмосква\b", normalized):
+        federal_city = "Москва"
+    if federal_city:
+        result["place"] = federal_city
+        result["city"] = federal_city
+    return result
+
+
+def _miac_completed_chairman(exams: list[DoctorExam]) -> DoctorExam | None:
+    return next(
+        (
+            exam
+            for exam in exams
+            if str(exam.doctor_role_id or "").strip().casefold() == "chairman"
+            and bool(exam.is_completed)
+            and exam.deleted_at is None
+        ),
+        None,
+    )
+
+
+def _miac_chairman_values(exams: list[DoctorExam]) -> tuple[DoctorExam | None, str, date | None, str]:
+    chairman = _miac_completed_chairman(exams)
+    if chairman is None:
+        return None, "", None, ""
+    fields = chairman.fields_json or {}
+    conclusion = _first_non_empty(
+        _exam_field(fields, "conclusionText", "issuedConclusion", "conclusion", "diagnosis"),
+        chairman.result_text,
+        chairman.diagnosis,
+    )
+    conclusion_date = None
+    if chairman.completed_at:
+        completed_at = chairman.completed_at
+        if completed_at.tzinfo is not None:
+            try:
+                completed_at = completed_at.astimezone(ZoneInfo(settings.xml_exports_timezone))
+            except (ZoneInfoNotFoundError, ValueError):
+                pass
+        conclusion_date = completed_at.date()
+    return chairman, conclusion, conclusion_date, _miac_text(chairman.doctor_name)
+
+
+def _validate_miac_values(
+    *,
+    client: Client,
+    blank_form: BlankForm | None,
+    chairman: DoctorExam | None,
+    conclusion: str,
+    conclusion_date: date | None,
+    doctor_name: str,
+) -> None:
+    missing: list[str] = []
+    if blank_form is None or not _miac_text(blank_form.full_number):
+        missing.append("номер выданного бланка")
+    if not _miac_text(client.last_name):
+        missing.append("фамилия пациента")
+    if not _miac_text(client.first_name):
+        missing.append("имя пациента")
+    if client.birth_date is None:
+        missing.append("дата рождения пациента")
+    if chairman is None:
+        missing.append("завершённый осмотр председателя комиссии")
+    if not conclusion:
+        missing.append("заключение председателя комиссии")
+    if conclusion_date is None:
+        missing.append("дата заключения председателя комиссии")
+    if not doctor_name:
+        missing.append("ФИО председателя комиссии")
+    if missing:
+        raise ValueError("Невозможно сформировать XML МИАЦ. Заполните: " + ", ".join(missing))
+
+
+def _miac_exam_result(exam: DoctorExam | None) -> str:
+    if exam is None or not exam.is_completed or exam.deleted_at is not None:
+        return ""
+    data = _build_exam_export(exam)
+    return _first_non_empty(data.get("diagnosis"), data.get("objective"), data.get("title"))
+
+
+def _build_miac_guard_xml(
+    client: Client,
+    blank_form: BlankForm,
+    exams: list[DoctorExam],
+) -> ET.ElementTree:
+    chairman, conclusion, conclusion_date, doctor_name = _miac_chairman_values(exams)
+    _validate_miac_values(
+        client=client,
+        blank_form=blank_form,
+        chairman=chairman,
+        conclusion=conclusion,
+        conclusion_date=conclusion_date,
+        doctor_name=doctor_name,
+    )
+    address = _miac_address_parts(_miac_text(client.registration_text) or _miac_text(client.address_text))
+
+    root = ET.Element("BlankSecurity")
+    request = ET.SubElement(root, "Request")
+    blank_info = ET.SubElement(request, "blankInfo")
+    _miac_add(blank_info, "id", blank_form.full_number)
+    duplicate = ET.SubElement(blank_info, "duplicate")
+    _miac_add(duplicate, "duplicateId")
+    _miac_add(duplicate, "isDuplicated", "false")
+    _miac_add(blank_info, "isSpoiled", "false")
+
+    security_blank = ET.SubElement(root, "SecurityBlank")
+    user_info = ET.SubElement(security_blank, "userInfo")
+    _miac_add(user_info, "surname", client.last_name)
+    _miac_add(user_info, "name", client.first_name)
+    _miac_add(user_info, "patronymic", client.middle_name)
+    _miac_add(user_info, "birthday", client.birth_date.strftime("%d.%m.%Y"))
+    address_node = ET.SubElement(security_blank, "address")
+    for tag in ("place", "area", "city", "town", "street", "house", "building", "flat"):
+        _miac_add(address_node, tag, address[tag])
+    medical = ET.SubElement(security_blank, "medConclusion")
+    _miac_add(medical, "conclusion", conclusion)
+    _miac_add(medical, "dateConclusion", conclusion_date.strftime("%d.%m.%Y"))
+    _miac_add(medical, "fioDoctor", doctor_name)
+    return ET.ElementTree(root)
+
+
+def _build_miac_driver_xml(
+    client: Client,
+    blank_form: BlankForm,
+    exams: list[DoctorExam],
+) -> ET.ElementTree:
+    chairman, conclusion, conclusion_date, doctor_name = _miac_chairman_values(exams)
+    _validate_miac_values(
+        client=client,
+        blank_form=blank_form,
+        chairman=chairman,
+        conclusion=conclusion,
+        conclusion_date=conclusion_date,
+        doctor_name=doctor_name,
+    )
+    fields = chairman.fields_json or {}
+    actual_address = _miac_text(client.address_text)
+    address = _miac_address_parts(actual_address or _miac_text(client.registration_text))
+    address_type = "1" if actual_address else "0"
+
+    root = ET.Element(f"{{{SOAP_NS}}}Envelope", {"xmlns:xd": XMLDSIG_NS})
+    ET.SubElement(root, f"{{{SOAP_NS}}}Header")
+    body = ET.SubElement(root, f"{{{SOAP_NS}}}Body")
+    request = ET.SubElement(body, f"{{{MIAC_NS}}}fillGibddBlankV4Request")
+    blank_info = _miac_mb_add(request, "blankInfo")
+    _miac_mb_add(blank_info, "id", blank_form.full_number)
+    _miac_mb_add(blank_info, "isSpoiled", "false")
+    duplicate = _miac_mb_add(blank_info, "duplicate")
+    _miac_mb_add(duplicate, "isDuplicated", "false")
+    _miac_mb_add(duplicate, "duplicateId")
+
+    client_info = _miac_mb_add(request, "clientInfo")
+    _miac_mb_add(client_info, "surname", client.last_name)
+    _miac_mb_add(client_info, "name", client.first_name)
+    _miac_mb_add(client_info, "patronymic", client.middle_name)
+    _miac_mb_add(client_info, "birthday", client.birth_date.isoformat())
+    address_node = _miac_mb_add(client_info, "address")
+    _miac_mb_add(address_node, "type", address_type)
+    for tag in ("place", "area", "city", "town", "street", "house", "building", "flat"):
+        _miac_mb_add(address_node, tag, address[tag])
+
+    exams_by_role = _exam_map(exams)
+    conclusion_node = _miac_mb_add(request, "conclusion")
+    inspection = _miac_mb_add(conclusion_node, "inspectionResult")
+    inspection_roles = (
+        ("therapist", "therapist"),
+        ("ophthalmologist", "ophthalmologist"),
+        ("psychiatrist", "psychiatrist"),
+        ("narcologist", "psychiatrist-narcologist"),
+        ("neurologist", "neurologist"),
+        ("otorhinolaryngologist", "otolaryngologist"),
+    )
+    for tag, role in inspection_roles:
+        _miac_mb_add(inspection, tag, _miac_exam_result(exams_by_role.get(role)))
+    _miac_mb_add(
+        inspection,
+        "instrumentalResearch",
+        _exam_field(fields, "instrumentalResearch", "ekgConclusion", "ekg"),
+    )
+    _miac_mb_add(
+        inspection,
+        "laboratoryTest",
+        _exam_field(fields, "laboratoryTest", "laboratoryStudy", "laboratoryTests"),
+    )
+
+    indication_keys = (
+        "indicationManual",
+        "indicationAutomatic",
+        "indicationAcoustic",
+        "indicationGlasses",
+        "indicationHearingAid",
+    )
+    restriction_keys = ("restrictionAM", "restrictionBBE", "restrictionCCE")
+    decision = _miac_text(fields.get("conclusion") or conclusion).casefold().replace("ё", "е")
+    medical = _miac_mb_add(conclusion_node, "medConclusion")
+    _miac_mb_add(
+        medical,
+        "contraindication",
+        _bool_text(decision.startswith("не годен") or decision.startswith("негоден")),
+    )
+    _miac_mb_add(medical, "indication", _bool_text(any(_truthy_driver_value(fields.get(key)) for key in indication_keys)))
+    _miac_mb_add(medical, "restriction", _bool_text(any(_truthy_driver_value(fields.get(key)) for key in restriction_keys)))
+    _miac_mb_add(medical, "returnLicence", "false")
+    _miac_mb_add(medical, "dateConclusion", conclusion_date.isoformat())
+    _miac_mb_add(medical, "fioDoctor", doctor_name)
+
+    category_node = _miac_mb_add(request, "category")
+    categories = _miac_mb_add(category_node, "category")
+    category_fields = (
+        ("categoryA", "categoryA"),
+        ("categoryB", "categoryB"),
+        ("categoryC", "categoryC"),
+        ("categoryD", "categoryD"),
+        ("categoryBE", "categoryBE"),
+        ("categoryCE", "categoryCE"),
+        ("categoryDE", "categoryDE"),
+        ("categoryTm", "categoryTram"),
+        ("categoryTb", "categoryTrolleybus"),
+        ("categoryM", "categoryM"),
+        ("cat_tractor", "categoryTractor"),
+    )
+    for tag, field_key in category_fields:
+        _miac_mb_add(categories, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+    _miac_mb_add(categories, "cat_vehicle", "false")
+    _miac_mb_add(categories, "cat_ship", _bool_text(_truthy_driver_value(fields.get("categoryBoat"))))
+
+    subcategories = _miac_mb_add(category_node, "subCategory")
+    for tag, field_key in (
+        ("subCategoryA1", "categoryA1"),
+        ("subCategoryB1", "categoryB1"),
+        ("subCategoryC1", "categoryC1"),
+        ("subCategoryD1", "categoryD1"),
+        ("subCategoryC1E", "categoryC1E"),
+        ("subCategoryD1E", "categoryD1E"),
+    ):
+        _miac_mb_add(subcategories, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+
+    restrictions = _miac_mb_add(request, "restrictions")
+    for tag, field_key in (("catAM", "restrictionAM"), ("catBBE", "restrictionBBE"), ("catCCED", "restrictionCCE")):
+        _miac_mb_add(restrictions, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+    indications = _miac_mb_add(request, "indications")
+    for tag, field_key in (
+        ("manual", "indicationManual"),
+        ("automatic", "indicationAutomatic"),
+        ("parktronic", "indicationAcoustic"),
+        ("correctVision", "indicationGlasses"),
+        ("lossHearing", "indicationHearingAid"),
+    ):
+        _miac_mb_add(indications, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+    return ET.ElementTree(root)
+
+
+def _generate_miac_xml(
+    output_path: Path,
+    *,
+    kind: str,
+    client: Client,
+    blank_form: BlankForm,
+    exams: list[DoctorExam],
+) -> None:
+    tree = (
+        _build_miac_driver_xml(client, blank_form, exams)
+        if kind == "driver"
+        else _build_miac_guard_xml(client, blank_form, exams)
+    )
+    ET.indent(tree, space="   ")
+    tree.write(output_path, encoding="utf-8", xml_declaration=True, short_empty_elements=True)
+
+
+def _resolve_miac_issued_blank(
+    db: Session,
+    *,
+    blank_type: str,
+    client_id: int,
+    encounter_id: int,
+    center_id: int,
+    blank_form_id: int | None,
+) -> BlankForm:
+    if blank_form_id is not None:
+        form = db.get(BlankForm, blank_form_id)
+    else:
+        form = db.execute(
+            select(BlankForm)
+            .where(
+                BlankForm.blank_type == blank_type,
+                BlankForm.client_id == client_id,
+                BlankForm.encounter_id == encounter_id,
+                BlankForm.center_id == center_id,
+                BlankForm.status == BLANK_STATUS_ISSUED,
+            )
+            .order_by(BlankForm.issued_at.desc(), BlankForm.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if form is None:
+        raise ValueError("XML МИАЦ формируется только для уже выданного номерного бланка")
+    if (
+        form.status != BLANK_STATUS_ISSUED
+        or form.blank_type != blank_type
+        or form.client_id != client_id
+        or form.encounter_id != encounter_id
+        or form.center_id != center_id
+    ):
+        raise ValueError("Выбранный бланк не является выданным бланком этого пациента и обращения")
+    return form
 
 
 def _xml_export_date_folder() -> str:
@@ -2756,6 +3133,8 @@ def generate_document(
     if template is None or not template.file_path:
         raise ValueError("Шаблон не найден")
 
+    miac_xml_kind = _miac_xml_kind(template)
+
     client = db.get(Client, client_id)
     if client is None or client.deleted_at is not None:
         raise ValueError("Клиент не найден")
@@ -2790,33 +3169,43 @@ def generate_document(
                     "Сначала оформите обращение в нужном медцентре."
                 )
 
-            blank_form = reuse_blank_for_existing_document(
-                db,
-                blank_type=required_blank_type,
-                client_id=client.id,
-                encounter_id=encounter.id,
-                template_id=template.id,
-            )
-            if blank_form is None:
-                if blank_form_id is not None:
-                    blank_form = issue_specific_blank(
-                        db,
-                        form_id=blank_form_id,
-                        blank_type=required_blank_type,
-                        client_id=client.id,
-                        center_id=encounter.center_id,
-                        encounter_id=encounter.id,
-                        user_id=1,
-                    )
-                else:
-                    blank_form = issue_next_blank(
-                        db,
-                        blank_type=required_blank_type,
-                        client_id=client.id,
-                        center_id=encounter.center_id,
-                        encounter_id=encounter.id,
-                        user_id=1,
-                    )
+            if miac_xml_kind is not None:
+                blank_form = _resolve_miac_issued_blank(
+                    db,
+                    blank_type=required_blank_type,
+                    client_id=client.id,
+                    encounter_id=encounter.id,
+                    center_id=encounter.center_id,
+                    blank_form_id=blank_form_id,
+                )
+            else:
+                blank_form = reuse_blank_for_existing_document(
+                    db,
+                    blank_type=required_blank_type,
+                    client_id=client.id,
+                    encounter_id=encounter.id,
+                    template_id=template.id,
+                )
+                if blank_form is None:
+                    if blank_form_id is not None:
+                        blank_form = issue_specific_blank(
+                            db,
+                            form_id=blank_form_id,
+                            blank_type=required_blank_type,
+                            client_id=client.id,
+                            center_id=encounter.center_id,
+                            encounter_id=encounter.id,
+                            user_id=1,
+                        )
+                    else:
+                        blank_form = issue_next_blank(
+                            db,
+                            blank_type=required_blank_type,
+                            client_id=client.id,
+                            center_id=encounter.center_id,
+                            encounter_id=encounter.id,
+                            user_id=1,
+                        )
 
         elif blank_form_id is not None and not is_side_print:
             if encounter is None or encounter.center_id is None:
@@ -2911,6 +3300,14 @@ def generate_document(
                 context,
                 runtime_values["service_rows"],
                 cleanup_xml=_is_contract_template(template),
+            )
+        elif template.template_type == "xml" and miac_xml_kind is not None:
+            _generate_miac_xml(
+                output_path,
+                kind=miac_xml_kind,
+                client=client,
+                blank_form=blank_form,
+                exams=document_exams,
             )
         elif template.template_type == "xml":
             xml_context = context.copy()

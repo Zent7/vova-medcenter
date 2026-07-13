@@ -8121,9 +8121,11 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   }
 
   if (normalizedType === "xml") {
-    if (serviceText.includes("трактор")) return findXml(["трактор"]) || xmlTemplates[0] || null;
-    if (serviceText.includes("чод") || serviceText.includes("охран")) return findXml(["чод"]) || xmlTemplates[0] || null;
-    return findXml(["водительская_шаблон2", "водительская_шаблон", "водитель"]) || xmlTemplates[0] || null;
+    if (serviceText.includes("трактор")) return null;
+    if (serviceText.includes("чод") || serviceText.includes("охран")) {
+      return findTemplateByPreferredKeys(xmlTemplates, ["чод_новый"]);
+    }
+    return findTemplateByPreferredKeys(xmlTemplates, ["водительская(новая)"]);
   }
 
   if (normalizedType === "070") return findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
@@ -8438,7 +8440,7 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
   const documentItem = registerGeneratedDocument(result, type, client, visit);
   await refreshDocumentWorkflowState(clientId, visit.backendId || null);
   if (shouldAutoGenerateXmlForCertificate(type) && options.autoXml !== false) {
-    await ensureXmlAfterDriverCertificate(client, visit);
+    await ensureXmlAfterDriverCertificate(client, visit, { blankFormId: result.blank_form_id });
   }
   return documentItem;
 }
@@ -8453,7 +8455,7 @@ function hasAvailableXmlDocumentForVisit(visit) {
   });
 }
 
-async function ensureXmlDocumentForVisit(client, visit) {
+async function ensureXmlDocumentForVisit(client, visit, options = {}) {
   if (!client || !visit) return null;
   if (!data.documentTemplatesLoaded) {
     await loadDocumentTemplatesFromBackend();
@@ -8470,12 +8472,15 @@ async function ensureXmlDocumentForVisit(client, visit) {
   if (hasAvailableXmlDocumentForVisit(visit)) {
     return null;
   }
-  return createDocumentForVisit("xml", client, visit);
+  return createDocumentForVisit("xml", client, visit, {
+    blankFormId: options.blankFormId || null,
+    autoXml: false,
+  });
 }
 
-async function ensureXmlAfterDriverCertificate(client, visit) {
+async function ensureXmlAfterDriverCertificate(client, visit, options = {}) {
   try {
-    const xmlDocument = await ensureXmlDocumentForVisit(client, visit);
+    const xmlDocument = await ensureXmlDocumentForVisit(client, visit, options);
     if (xmlDocument) {
       showToast(`XML-файл сформирован: ${xmlDocument.fileName || xmlDocument.title}`);
     }
@@ -8489,7 +8494,7 @@ async function ensureXmlAfterDriverCertificate(client, visit) {
 
 function shouldAutoGenerateXmlForCertificate(type) {
   const normalizedType = String(type || "").toLowerCase();
-  return ["driver", "tractor", "guard", "chod"].includes(normalizedType);
+  return ["driver", "guard", "chod"].includes(normalizedType);
 }
 
 async function printDocumentForVisit(type, client, visit, options = {}) {
@@ -9429,7 +9434,7 @@ async function openDriverPrintFlow(options = {}) {
         await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
         actionModal.classList.add("hidden");
         showToast(`Печать подтверждена: ${printedDocument.blankNumber || printedDocument.title}`);
-        await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit);
+        await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
       } catch (error) {
         showToast(humanizeApiError(error, "Не удалось подтвердить печать"));
       }
@@ -9485,13 +9490,13 @@ async function openDriverPrintFlow(options = {}) {
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
       await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-      await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit);
+      await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
       if (skipConfirmation) {
         try {
           await markPrintedDocument(result.generated_document_id, true);
           actionModal.classList.add("hidden");
           showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
-          await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit);
+          await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
         } catch (error) {
           showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
@@ -9533,7 +9538,7 @@ async function openDriverPrintFlow(options = {}) {
       await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
       showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
       if (shouldAutoGenerateXmlForCertificate(finalCertificateType)) {
-        await ensureXmlAfterDriverCertificate(client, visit);
+        await ensureXmlAfterDriverCertificate(client, visit, { blankFormId: flowState.currentBlank.id });
       }
     } catch (error) {
       if (options.targetWindow && !options.targetWindow.closed) {

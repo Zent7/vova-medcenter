@@ -3,6 +3,14 @@ import re
 
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
+ACTIVE_XML_TEMPLATE_NAMES = {"Водительская(новая).xml", "Чод_новый.xml"}
+
+
+def template_is_active_by_default(file_name: str, *, preferred_xlsx_available: bool = False) -> bool:
+    suffix = Path(file_name).suffix.lower()
+    if suffix == ".xml":
+        return file_name in ACTIVE_XML_TEMPLATE_NAMES
+    return not preferred_xlsx_available
 
 
 def get_templates_root() -> Path:
@@ -127,7 +135,10 @@ def sync_document_template_catalog(db) -> int:
         template.description = item["description"]
         template.template_type = item["template_type"]
         template.output_format = item["template_type"]
-        template.is_active = not item.get("preferred_xlsx_available", False)
+        template.is_active = template_is_active_by_default(
+            item["file_name"],
+            preferred_xlsx_available=bool(item.get("preferred_xlsx_available", False)),
+        )
         template.requires_numbered_blank = False
         template.blank_type = None
 
