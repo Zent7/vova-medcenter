@@ -1724,8 +1724,9 @@ def _fill_chod_xls_sheet(
         [
             ((17, 15), context.get("BlankNumber", "") or context.get("ReferenceNumber", "")),
             ((20, 3), context.get("ClientCalc", "")),
-            ((21, 11), issue_date.day),
-            ((21, 20), issue_date.year),
+            ((21, 11), context.get("BirthDateCalc_DAY", "")),
+            ((21, 16), context.get("BirthDateCalc_MONTH", "")),
+            ((21, 20), context.get("BirthDateCalc_YEAR", "")),
             ((23, 3), context.get("SubjectCalc", "")),
             ((24, 5), context.get("DistrictCalc", "")),
             ((25, 4), context.get("CityCalc", "")),
@@ -2432,6 +2433,10 @@ def _generate_prof_amb_xls(
     if pz2_source and pz2_target:
         _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
 
+    chod_source, chod_target, _ = _sheet_pair(source_book, target_book, "ЧОД")
+    if chod_source and chod_target:
+        _fill_chod_xls_sheet(chod_source, chod_target, context, encounter)
+
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
     target_book.save(str(output_path))
@@ -2532,6 +2537,10 @@ def _generate_prof_amb_xlsx(
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
         _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
+
+    chod_source, chod_target, _ = _sheet_pair(source_book, target_book, "ЧОД")
+    if chod_source and chod_target:
+        _fill_chod_xls_sheet(chod_source, chod_target, context, encounter)
 
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
