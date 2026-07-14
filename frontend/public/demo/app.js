@@ -8066,6 +8066,8 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     null;
   const findDocxSafely = (preferredKeys, fallbackKeywords = [], excludedKeywords = []) =>
     findTemplateSafely(docxTemplates, preferredKeys, fallbackKeywords, excludedKeywords);
+  const findChodXlsTemplate = () =>
+    findTemplateSafely(xlsTemplates, ["все нужные шаблоны"], ["чод"], []);
   const findStandaloneEkgTemplate = () => findDocxSafely(["экг_шаблон", "экг шаблон"], ["экг"], ["спорт"]);
   const getClientSexKey = () => {
     const sex = String(client?.sex || client?.rawApiClient?.sex || client?.gender || client?.rawApiClient?.gender || "").toLowerCase();
@@ -8147,7 +8149,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
   if (normalizedType === "gims") return findDocxSafely(["гимс"], ["гимс"], []);
   if (normalizedType === "chod" || normalizedType === "guard") {
-    return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
+    return findChodXlsTemplate() || findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   }
   if (normalizedType === "prof_extract") {
     return findDocxSafely(["профосмотрвыписка_шаблон", "профосмотр выписка шаблон"], ["профосмотрвыписка", "выписка"], []);
@@ -8185,7 +8187,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гос.тайна"], []);
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
   if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findDocxSafely(["гсу001_шаблон"], ["гсу001"], []);
-  if (serviceText.includes("охран") || serviceText.includes("чод")) return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
+  if (serviceText.includes("охран") || serviceText.includes("чод")) return findChodXlsTemplate() || findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   if (serviceText.includes("трактор")) return findDocx(["трактроная", "трактор"]) || null;
   if (serviceText.includes("спорт")) return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
   if (serviceText.includes("экг")) return findStandaloneEkgTemplate();

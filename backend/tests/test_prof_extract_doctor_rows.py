@@ -511,6 +511,22 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
         self.assertEqual(book.sheet_names(), ["Спорт"])
 
+    def test_guard_print_variant_keeps_only_chod_sheet(self):
+        template_path = next(
+            path
+            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
+            if path.name.startswith("ВСЕ")
+        )
+        output_path = Path(tempfile.gettempdir()) / "chod_print_variant_test.xls"
+        source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
+        target_book = copy_xls_workbook(source_book)
+
+        _apply_print_variant_to_xls_workbook(target_book, "guard")
+        target_book.save(str(output_path))
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["ЧОД"])
+
     def test_generated_amb_sheet_hides_unused_blocks_and_compacts_pz2_rows(self):
         output_path = Path(tempfile.gettempdir()) / "prof_extract_doctor_rows_compact_test.xls"
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
