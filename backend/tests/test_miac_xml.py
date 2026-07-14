@@ -24,6 +24,7 @@ from app.models.blank_form import (  # noqa: E402
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
     BlankBatch,
     BlankForm,
 )
@@ -31,6 +32,7 @@ from app.models.center import Center  # noqa: E402
 from app.models.client import Client  # noqa: E402
 from app.models.encounter import Encounter  # noqa: E402
 from app.services.template_catalog import template_is_active_by_default  # noqa: E402
+from app.services.blank_forms import resolve_required_blank_type  # noqa: E402
 
 
 def make_client(*, address_text="г. Тверь", registration_text=""):
@@ -156,6 +158,23 @@ class MiacBlankReuseTests(unittest.TestCase):
     def tearDown(self):
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
+
+    def test_guard_print_variant_requires_guard_blank_for_shared_xls_template(self):
+        template = SimpleNamespace(
+            name="ВСЕ НУЖНЫЕ ШАБЛОНЫ",
+            requires_numbered_blank=False,
+            blank_type=None,
+        )
+
+        self.assertEqual(
+            resolve_required_blank_type(template, print_variant="guard"),
+            BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+        )
+        self.assertEqual(
+            resolve_required_blank_type(template, print_variant="chod"),
+            BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+        )
+        self.assertIsNone(resolve_required_blank_type(template, print_variant="sport"))
 
     def test_xml_reuses_issued_encounter_blank_without_consuming_free_blank(self):
         with self.Session() as db:

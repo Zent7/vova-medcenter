@@ -3158,7 +3158,11 @@ def generate_document(
     output_path = output_dir / output_file_name
 
     runtime_values = _load_encounter_document_values(db, client, encounter)
-    required_blank_type = None if is_side_print else resolve_required_blank_type(template)
+    required_blank_type = (
+        None
+        if is_side_print
+        else resolve_required_blank_type(template, print_variant=print_variant_value)
+    )
     blank_form = None
 
     try:

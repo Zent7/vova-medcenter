@@ -26,6 +26,7 @@ from app.models.blank_form import (
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_STATUS_SPOILED,
+    BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
     BlankBatch,
     BlankForm,
     BlankType,
@@ -760,7 +761,14 @@ def spoil_for_generated_document(
 
 
 
-def resolve_required_blank_type(template: DocumentTemplate) -> str | None:
+def resolve_required_blank_type(
+    template: DocumentTemplate,
+    *,
+    print_variant: str | None = None,
+) -> str | None:
+    if str(print_variant or "").strip().casefold() in {"guard", "chod"}:
+        return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE
+
     if not template.requires_numbered_blank:
         return None
 
