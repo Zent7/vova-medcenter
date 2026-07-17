@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -15,10 +16,13 @@ from app.services.document_generator import (  # noqa: E402
     MIAC_NS,
     SOAP_NS,
     _build_miac_driver_xml,
+    _build_miac_gims_xml,
     _build_miac_guard_xml,
     _resolve_miac_issued_blank,
+    generate_document,
 )
 import app.models  # noqa: E402,F401
+from app.core.config import settings  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models.blank_form import (  # noqa: E402
     BLANK_STATUS_FREE,
@@ -30,6 +34,8 @@ from app.models.blank_form import (  # noqa: E402
 )
 from app.models.center import Center  # noqa: E402
 from app.models.client import Client  # noqa: E402
+from app.models.doctor_exam import DoctorExam  # noqa: E402
+from app.models.document_template import DocumentTemplate  # noqa: E402
 from app.models.encounter import Encounter  # noqa: E402
 from app.services.template_catalog import template_is_active_by_default  # noqa: E402
 from app.services.blank_forms import resolve_required_blank_type  # noqa: E402
@@ -43,6 +49,7 @@ def make_client(*, address_text="г. Тверь", registration_text=""):
         birth_date=date(1980, 2, 1),
         address_text=address_text,
         registration_text=registration_text,
+        snils="123-456-789 01",
     )
 
 
@@ -137,6 +144,44 @@ class MiacXmlTests(unittest.TestCase):
         self.assertEqual(root.findtext("SecurityBlank/medConclusion/dateConclusion"), "13.07.2026")
         self.assertEqual(root.findtext("SecurityBlank/medConclusion/conclusion"), "Годен & здоров")
 
+    def test_gims_xml_matches_upload_structure_and_uses_patient_data(self):
+        chairman = make_exam(
+            "chairman",
+            fields={
+                "conclusion": "Не годен к управлению",
+                "restrictionOnManagement": True,
+                "reexaminationAfterBan": True,
+            },
+        )
+        tree = _build_miac_gims_xml(
+            make_client(address_text="Санкт-Петербург, Центральный район, Невский проспект, д. 1, кв. 2"),
+            make_blank(),
+            [chairman],
+        )
+        root = tree.getroot()
+        ns = {"mb": MIAC_NS}
+
+        self.assertEqual(root.tag, f"{{{MIAC_NS}}}fillShipBlankRequset")
+        self.assertEqual(root.findtext("mb:blankInfo/mb:id", namespaces=ns), "78 АА 1234567")
+        self.assertEqual(root.findtext("mb:blankInfo/mb:duplicate/mb:isDuplicated", namespaces=ns), "false")
+        self.assertEqual(root.findtext("mb:clientInfo/mb:surname", namespaces=ns), "Иванов & Партнёры")
+        self.assertEqual(root.findtext("mb:clientInfo/mb:birthday", namespaces=ns), "01.02.1980")
+        self.assertEqual(root.findtext("mb:clientInfo/mb:snils", namespaces=ns), "12345678901")
+        self.assertEqual(root.findtext("mb:clientInfo/mb:address/mb:type", namespaces=ns), "1")
+        self.assertEqual(root.findtext("mb:clientInfo/mb:address/mb:town", namespaces=ns), "Санкт-Петербург")
+        medical = root.find("mb:conclusion/mb:medConclusion", ns)
+        self.assertEqual(medical.findtext("mb:contraindicationToManagement", namespaces=ns), "true")
+        self.assertEqual(medical.findtext("mb:restrictionOnManagement", namespaces=ns), "true")
+        self.assertEqual(medical.findtext("mb:reexaminationAfterBan", namespaces=ns), "true")
+        self.assertEqual(medical.findtext("mb:dateConclusion", namespaces=ns), "13.07.2026")
+        self.assertEqual(medical.findtext("mb:fioDoctor", namespaces=ns), "Врач & Партнёр")
+
+    def test_gims_xml_requires_snils(self):
+        client = make_client()
+        client.snils = ""
+        with self.assertRaisesRegex(ValueError, "корректный СНИЛС пациента"):
+            _build_miac_gims_xml(client, make_blank(), [make_exam("chairman", fields={"conclusion": "Годен"})])
+
     def test_missing_completed_chairman_is_rejected_with_field_list(self):
         with self.assertRaisesRegex(ValueError, "завершённый осмотр председателя комиссии"):
             _build_miac_guard_xml(make_client(), make_blank(), [])
@@ -144,6 +189,7 @@ class MiacXmlTests(unittest.TestCase):
     def test_only_canonical_miac_xml_templates_are_active(self):
         self.assertTrue(template_is_active_by_default("Водительская(новая).xml"))
         self.assertTrue(template_is_active_by_default("Чод_новый.xml"))
+        self.assertTrue(template_is_active_by_default("ГИМС_шаблон_для_загрузки_из_файла.xml"))
         self.assertFalse(template_is_active_by_default("Водительская_шаблон.xml"))
         self.assertFalse(template_is_active_by_default("Чод.xml"))
         self.assertTrue(template_is_active_by_default("Охрана_шаблон.docx"))
@@ -233,6 +279,102 @@ class MiacBlankReuseTests(unittest.TestCase):
 
             self.assertEqual(resolved.id, issued.id)
             self.assertEqual(db.get(BlankForm, free.id).status, BLANK_STATUS_FREE)
+
+    def test_gims_generation_issues_selected_free_blank(self):
+        original_generated_dir = settings.generated_documents_dir
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings.generated_documents_dir = temp_dir
+            try:
+                with self.Session() as db:
+                    center = Center(code="center-gims", name="Центр ГИМС")
+                    client = Client(
+                        patient_number=2,
+                        last_name="Иванов",
+                        first_name="Иван",
+                        middle_name="Иванович",
+                        birth_date=date(1980, 2, 1),
+                        snils="123-456-789 01",
+                        address_text="Санкт-Петербург, Невский проспект, д. 1",
+                    )
+                    db.add_all([center, client])
+                    db.flush()
+                    encounter = Encounter(
+                        center_id=center.id,
+                        client_id=client.id,
+                        encounter_date=date(2026, 7, 13),
+                        payment_type="cash",
+                    )
+                    db.add(encounter)
+                    db.flush()
+                    template_path = (
+                        Path(__file__).resolve().parents[2]
+                        / "assets"
+                        / "templates"
+                        / "Templates"
+                        / "ГИМС_шаблон_для_загрузки_из_файла.xml"
+                    )
+                    template = DocumentTemplate(
+                        code="gims-xml-test",
+                        name="ГИМС XML",
+                        file_name=template_path.name,
+                        file_path=str(template_path),
+                        template_type="xml",
+                        output_format="xml",
+                        requires_numbered_blank=True,
+                        blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                        is_active=True,
+                    )
+                    chairman = DoctorExam(
+                        client_id=client.id,
+                        encounter_id=encounter.id,
+                        doctor_role_id="chairman",
+                        doctor_name="Петров Пётр Петрович",
+                        fields_json={"conclusion": "Годен"},
+                        result_text="Годен",
+                        is_completed=True,
+                        completed_at=datetime(2026, 7, 13, 10, 30, tzinfo=timezone.utc),
+                    )
+                    batch = BlankBatch(
+                        center_id=center.id,
+                        blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                        series="ГИМС",
+                        number_from=1,
+                        number_to=1,
+                        number_width=7,
+                        quantity=1,
+                    )
+                    db.add_all([template, chairman, batch])
+                    db.flush()
+                    blank = BlankForm(
+                        batch_id=batch.id,
+                        center_id=center.id,
+                        blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                        series="ГИМС",
+                        number_value=1,
+                        full_number="ГИМС0000001",
+                        status=BLANK_STATUS_FREE,
+                    )
+                    db.add(blank)
+                    db.flush()
+
+                    result = generate_document(
+                        db,
+                        template_id=template.id,
+                        template_code=None,
+                        client_id=client.id,
+                        encounter_id=encounter.id,
+                        blank_form_id=blank.id,
+                    )
+                    db.commit()
+                    db.refresh(blank)
+
+                    self.assertEqual(blank.status, BLANK_STATUS_ISSUED)
+                    self.assertEqual(result.blank_number, "ГИМС0000001")
+                    root = ET.parse(result.output_file_path).getroot()
+                    ns = {"mb": MIAC_NS}
+                    self.assertEqual(root.findtext("mb:blankInfo/mb:id", namespaces=ns), "ГИМС0000001")
+            finally:
+                settings.generated_documents_dir = original_generated_dir
 
 
 if __name__ == "__main__":

@@ -8147,7 +8147,16 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
   if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
   if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
-  if (normalizedType === "gims") return findDocxSafely(["гимс"], ["гимс"], []);
+  if (normalizedType === "gims") {
+    return (
+      findTemplateSafely(
+        xmlTemplates,
+        ["гимс_шаблон_для_загрузки_из_файла", "гимс шаблон для загрузки из файла"],
+        ["гимс"],
+        [],
+      ) || findDocxSafely(["гимс"], ["гимс"], [])
+    );
+  }
   if (normalizedType === "chod" || normalizedType === "guard") {
     return findChodXlsTemplate() || findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   }
@@ -8303,6 +8312,7 @@ function getChairmanNumberedCertificateSeries(printType) {
 const CHAIRMAN_CERTIFICATE_PRINT_FLOWS = new Map([
   ["sport", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "sport" }],
   ["gto", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "gto" }],
+  ["gims", { preselectedSeries: "ГИМС", certificateTypes: ["gims"], selectedCertificateType: "gims", compactCertificateFlow: true }],
 ]);
 
 function getChairmanCertificatePrintFlowOptions(printType) {

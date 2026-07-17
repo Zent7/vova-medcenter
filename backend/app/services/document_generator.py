@@ -55,6 +55,7 @@ MIAC_NS = "http://iac.spb.ru/mb#"
 XMLDSIG_NS = "http://www.w3.org/2000/09/xmldsig#"
 MIAC_DRIVER_TEMPLATE = "Водительская(новая).xml"
 MIAC_GUARD_TEMPLATE = "Чод_новый.xml"
+MIAC_GIMS_TEMPLATE = "ГИМС_шаблон_для_загрузки_из_файла.xml"
 
 ET.register_namespace("soapenv", SOAP_NS)
 ET.register_namespace("mb", MIAC_NS)
@@ -507,6 +508,8 @@ def _miac_xml_kind(template: DocumentTemplate) -> str | None:
         return "driver"
     if file_name.casefold() == MIAC_GUARD_TEMPLATE.casefold():
         return "guard"
+    if file_name.casefold() == MIAC_GIMS_TEMPLATE.casefold():
+        return "gims"
     return None
 
 
@@ -815,6 +818,80 @@ def _build_miac_driver_xml(
     return ET.ElementTree(root)
 
 
+def _build_miac_gims_xml(
+    client: Client,
+    blank_form: BlankForm,
+    exams: list[DoctorExam],
+) -> ET.ElementTree:
+    chairman, conclusion, conclusion_date, doctor_name = _miac_chairman_values(exams)
+    _validate_miac_values(
+        client=client,
+        blank_form=blank_form,
+        chairman=chairman,
+        conclusion=conclusion,
+        conclusion_date=conclusion_date,
+        doctor_name=doctor_name,
+    )
+    snils = "".join(char for char in _miac_text(getattr(client, "snils", "")) if char.isdigit())
+    if len(snils) != 11:
+        raise ValueError("Невозможно сформировать XML МИАЦ. Заполните: корректный СНИЛС пациента (11 цифр)")
+
+    fields = chairman.fields_json or {}
+    actual_address = _miac_text(client.address_text)
+    address = _miac_address_parts(actual_address or _miac_text(client.registration_text))
+    address_type = "1" if actual_address else "0"
+    decision = _miac_text(fields.get("conclusion") or conclusion).casefold().replace("ё", "е")
+    contraindication = decision.startswith("не годен") or decision.startswith("негоден") or "противопоказан" in decision
+    restriction_keys = (
+        "restrictionOnManagement",
+        "restrictionAM",
+        "restrictionBBE",
+        "restrictionCCE",
+        "restrictionNoHands",
+        "restrictionNoLegs",
+    )
+    reexamination_keys = ("reexaminationAfterBan", "returnLicence", "returnLicense")
+
+    root = ET.Element(f"{{{MIAC_NS}}}fillShipBlankRequset")
+    blank_info = _miac_mb_add(root, "blankInfo")
+    _miac_mb_add(blank_info, "id", blank_form.full_number)
+    duplicate = _miac_mb_add(blank_info, "duplicate")
+    _miac_mb_add(duplicate, "isDuplicated", "false")
+    _miac_mb_add(duplicate, "duplicateId")
+    _miac_mb_add(blank_info, "isSpoiled", "false")
+
+    client_info = _miac_mb_add(root, "clientInfo")
+    _miac_mb_add(client_info, "surname", client.last_name)
+    _miac_mb_add(client_info, "name", client.first_name)
+    _miac_mb_add(client_info, "patronymic", client.middle_name)
+    _miac_mb_add(client_info, "birthday", client.birth_date.strftime("%d.%m.%Y"))
+    _miac_mb_add(client_info, "snils", snils)
+    address_node = _miac_mb_add(client_info, "address")
+    _miac_mb_add(address_node, "type", address_type)
+    for tag in ("place", "area"):
+        _miac_mb_add(address_node, tag, address[tag])
+    _miac_mb_add(address_node, "town", address["town"] or address["city"])
+    for tag in ("street", "house", "building", "flat"):
+        _miac_mb_add(address_node, tag, address[tag])
+
+    conclusion_node = _miac_mb_add(root, "conclusion")
+    medical = _miac_mb_add(conclusion_node, "medConclusion")
+    _miac_mb_add(medical, "contraindicationToManagement", _bool_text(contraindication))
+    _miac_mb_add(
+        medical,
+        "restrictionOnManagement",
+        _bool_text(any(_truthy_driver_value(fields.get(key)) for key in restriction_keys)),
+    )
+    _miac_mb_add(
+        medical,
+        "reexaminationAfterBan",
+        _bool_text(any(_truthy_driver_value(fields.get(key)) for key in reexamination_keys)),
+    )
+    _miac_mb_add(medical, "dateConclusion", conclusion_date.strftime("%d.%m.%Y"))
+    _miac_mb_add(medical, "fioDoctor", doctor_name)
+    return ET.ElementTree(root)
+
+
 def _generate_miac_xml(
     output_path: Path,
     *,
@@ -823,11 +900,12 @@ def _generate_miac_xml(
     blank_form: BlankForm,
     exams: list[DoctorExam],
 ) -> None:
-    tree = (
-        _build_miac_driver_xml(client, blank_form, exams)
-        if kind == "driver"
-        else _build_miac_guard_xml(client, blank_form, exams)
-    )
+    if kind == "driver":
+        tree = _build_miac_driver_xml(client, blank_form, exams)
+    elif kind == "gims":
+        tree = _build_miac_gims_xml(client, blank_form, exams)
+    else:
+        tree = _build_miac_guard_xml(client, blank_form, exams)
     ET.indent(tree, space="   ")
     tree.write(output_path, encoding="utf-8", xml_declaration=True, short_empty_elements=True)
 
@@ -3183,14 +3261,26 @@ def generate_document(
                 )
 
             if miac_xml_kind is not None:
-                blank_form = _resolve_miac_issued_blank(
-                    db,
-                    blank_type=required_blank_type,
-                    client_id=client.id,
-                    encounter_id=encounter.id,
-                    center_id=encounter.center_id,
-                    blank_form_id=blank_form_id,
-                )
+                candidate_form = db.get(BlankForm, blank_form_id) if blank_form_id is not None else None
+                if miac_xml_kind == "gims" and candidate_form is not None and candidate_form.status == BLANK_STATUS_FREE:
+                    blank_form = issue_specific_blank(
+                        db,
+                        form_id=candidate_form.id,
+                        blank_type=required_blank_type,
+                        client_id=client.id,
+                        center_id=encounter.center_id,
+                        encounter_id=encounter.id,
+                        user_id=1,
+                    )
+                else:
+                    blank_form = _resolve_miac_issued_blank(
+                        db,
+                        blank_type=required_blank_type,
+                        client_id=client.id,
+                        encounter_id=encounter.id,
+                        center_id=encounter.center_id,
+                        blank_form_id=blank_form_id,
+                    )
             else:
                 blank_form = reuse_blank_for_existing_document(
                     db,

@@ -3,7 +3,11 @@ import re
 
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
-ACTIVE_XML_TEMPLATE_NAMES = {"Водительская(новая).xml", "Чод_новый.xml"}
+ACTIVE_XML_TEMPLATE_NAMES = {
+    "Водительская(новая).xml",
+    "Чод_новый.xml",
+    "ГИМС_шаблон_для_загрузки_из_файла.xml",
+}
 
 
 def template_is_active_by_default(file_name: str, *, preferred_xlsx_available: bool = False) -> bool:
@@ -146,6 +150,9 @@ def sync_document_template_catalog(db) -> int:
         if "охран" in haystack or "guard" in haystack or "чод" in haystack or "002" in haystack:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE
+        elif item["template_type"] == "xml" and ("гимс" in haystack or "gims" in haystack):
+            template.requires_numbered_blank = True
+            template.blank_type = BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
         elif "трактор" in haystack or "tractor" in haystack or "071" in haystack:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE
