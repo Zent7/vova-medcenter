@@ -11541,6 +11541,7 @@ function bindContentEvents() {
       const certificatePrintGroup = CHAIRMAN_CERTIFICATE_PRINT_GROUPS.get(getChairmanFormConfigForVisit(visit).type) || null;
       const certificateTemplateMenu = Boolean(certificatePrintGroup);
       let selectedCertificateType = certificatePrintGroup?.currentType || "";
+      let selectedBlankSeries = getChairmanFormConfigForVisit(visit).type === "prof" ? "29Н" : "ЛМК";
       const getSelectedCertificateSeries = () => getChairmanCertificatePrintSeries(selectedCertificateType, client);
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
@@ -11609,9 +11610,12 @@ function bindContentEvents() {
 
             <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
             <div class="driver-print-classic__lookup">
-              <input class="driver-print-classic__input driver-print-classic__input--series" value="ЛМК" readonly />
-              <input id="chairmanPrintBlankNumberLmk" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber("ЛМК"))}" readonly />
-              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank="ЛМК">Найти номер</button>
+              <select id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" aria-label="Серия бланка">
+                <option value="ЛМК"${selectedBlankSeries === "ЛМК" ? " selected" : ""}>ЛМК</option>
+                <option value="29Н"${selectedBlankSeries === "29Н" ? " selected" : ""}>29Н</option>
+              </select>
+              <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
+              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
             </div>
 
             <div class="chairman-print-results__row chairman-print-results__row--top">
@@ -11631,10 +11635,6 @@ function bindContentEvents() {
         "modal--driver-print",
       );
 
-      const blankInputBySeries = new Map([
-        ["ЛМК", document.getElementById("chairmanPrintBlankNumberLmk")],
-      ]);
-
       const selectCertificateType = (certificateType) => {
         if (!certificatePrintGroup?.items.some(([type]) => type === certificateType)) return;
         if (!getChairmanCertificatePrintSeries(certificateType, client)) return;
@@ -11648,11 +11648,23 @@ function bindContentEvents() {
         if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(series);
       };
 
+      const selectBlankSeries = (series) => {
+        const normalizedSeries = normalizeBlankSeries(series);
+        if (!["ЛМК", "29Н"].includes(normalizedSeries)) return;
+        selectedBlankSeries = normalizedSeries;
+        const seriesInput = document.getElementById("chairmanPrintBlankSeries");
+        const numberInput = document.getElementById("chairmanPrintBlankNumber");
+        const blank = selectedPrintBlanks.get(normalizedSeries);
+        const blankParts = blank ? getDriverPrintBlankParts(blank, normalizedSeries) : null;
+        if (seriesInput) seriesInput.value = normalizedSeries;
+        if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
+      };
+
       const findChairmanBlank = async (series, button = null) => {
         const normalizedSeries = normalizeBlankSeries(series);
         const input = certificateTemplateMenu
           ? document.getElementById("chairmanCertificateBlankNumber")
-          : blankInputBySeries.get(normalizedSeries);
+          : document.getElementById("chairmanPrintBlankNumber");
         if (!client || !visit) {
           showToast("Сначала выбери клиента и обращение");
           return null;
@@ -11695,8 +11707,12 @@ function bindContentEvents() {
 
       actionModalContent?.querySelectorAll("[data-chairman-print-find-blank]").forEach((button) => {
         button.addEventListener("click", async (event) => {
-          await findChairmanBlank(event.currentTarget.dataset.chairmanPrintFindBlank, event.currentTarget);
+          await findChairmanBlank(selectedBlankSeries, event.currentTarget);
         });
+      });
+
+      actionModalContent?.querySelector("#chairmanPrintBlankSeries")?.addEventListener("change", (event) => {
+        selectBlankSeries(event.currentTarget.value);
       });
 
       actionModalContent?.querySelector("[data-chairman-certificate-find-blank]")?.addEventListener("click", async (event) => {
