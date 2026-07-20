@@ -11546,6 +11546,7 @@ function bindContentEvents() {
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
         findBlank: async () => null,
+        selectedSeries: certificateTemplateMenu ? "" : selectedBlankSeries,
       };
       const splitExistingBlankNumber = (series) => {
         const normalizedSeries = normalizeBlankSeries(series);
@@ -11610,10 +11611,7 @@ function bindContentEvents() {
 
             <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
             <div class="driver-print-classic__lookup">
-              <select id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" aria-label="Серия бланка">
-                <option value="ЛМК"${selectedBlankSeries === "ЛМК" ? " selected" : ""}>ЛМК</option>
-                <option value="29Н"${selectedBlankSeries === "29Н" ? " selected" : ""}>29Н</option>
-              </select>
+              <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка" readonly />
               <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
               <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
             </div>
@@ -11650,8 +11648,9 @@ function bindContentEvents() {
 
       const selectBlankSeries = (series) => {
         const normalizedSeries = normalizeBlankSeries(series);
-        if (!["ЛМК", "29Н"].includes(normalizedSeries)) return;
+        if (!normalizedSeries) return;
         selectedBlankSeries = normalizedSeries;
+        chairmanPrintBlankState.selectedSeries = normalizedSeries;
         const seriesInput = document.getElementById("chairmanPrintBlankSeries");
         const numberInput = document.getElementById("chairmanPrintBlankNumber");
         const blank = selectedPrintBlanks.get(normalizedSeries);
@@ -11679,10 +11678,16 @@ function bindContentEvents() {
             series: normalizedSeries,
           });
           let blank = null;
+          const certificateType = getDriverPrintCertificateType(normalizedSeries);
+          const shouldAutoCreateImmediately =
+            !isNumberedCertificatePrintType(certificateType) &&
+            !isPreenteredBlankSeries(normalizedSeries) &&
+            !canAutoCreateChairmanBlankSeries(normalizedSeries);
           try {
+            if (shouldAutoCreateImmediately) query.set("auto_create", "true");
             blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
           } catch (error) {
-            if (!canAutoCreateChairmanBlankSeries(normalizedSeries)) {
+            if (isNumberedCertificatePrintType(certificateType) || !canAutoCreateChairmanBlankSeries(normalizedSeries)) {
               throw error;
             }
             query.set("auto_create", "true");
@@ -11711,9 +11716,20 @@ function bindContentEvents() {
         });
       });
 
-      actionModalContent?.querySelector("#chairmanPrintBlankSeries")?.addEventListener("change", (event) => {
-        selectBlankSeries(event.currentTarget.value);
-      });
+      const chairmanSeriesInput = actionModalContent?.querySelector("#chairmanPrintBlankSeries");
+      const openChairmanSeriesPicker = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openDriverPrintSeriesPicker({
+          value: selectedBlankSeries,
+          options: getDriverPrintSeriesPickerOptions([]),
+          onSelect: selectBlankSeries,
+        });
+      };
+      chairmanSeriesInput?.addEventListener("pointerdown", openChairmanSeriesPicker);
+      chairmanSeriesInput?.addEventListener("mousedown", openChairmanSeriesPicker);
+      chairmanSeriesInput?.addEventListener("click", openChairmanSeriesPicker);
+      chairmanSeriesInput?.addEventListener("focus", openChairmanSeriesPicker);
 
       actionModalContent?.querySelector("[data-chairman-certificate-find-blank]")?.addEventListener("click", async (event) => {
         await findChairmanBlank(getSelectedCertificateSeries(), event.currentTarget);
@@ -11829,7 +11845,7 @@ function bindContentEvents() {
           const certificateType = isExplicitCertificateTemplate ? printType : "";
           const requiredBlankSeries = certificateType
             ? getChairmanCertificatePrintSeries(certificateType, client)
-            : getChairmanBlankSeriesForPrintKind(printKind);
+            : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (!selectedBlank?.id) {
