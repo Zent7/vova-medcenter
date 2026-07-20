@@ -11611,7 +11611,7 @@ function bindContentEvents() {
 
             <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
             <div class="driver-print-classic__lookup">
-              <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка" readonly />
+              <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка" role="button" readonly />
               <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
               <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
             </div>
@@ -11726,10 +11726,10 @@ function bindContentEvents() {
           onSelect: selectBlankSeries,
         });
       };
-      chairmanSeriesInput?.addEventListener("pointerdown", openChairmanSeriesPicker);
-      chairmanSeriesInput?.addEventListener("mousedown", openChairmanSeriesPicker);
       chairmanSeriesInput?.addEventListener("click", openChairmanSeriesPicker);
-      chairmanSeriesInput?.addEventListener("focus", openChairmanSeriesPicker);
+      chairmanSeriesInput?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") openChairmanSeriesPicker(event);
+      });
 
       actionModalContent?.querySelector("[data-chairman-certificate-find-blank]")?.addEventListener("click", async (event) => {
         await findChairmanBlank(getSelectedCertificateSeries(), event.currentTarget);
