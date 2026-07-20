@@ -44,7 +44,7 @@ from app.services.blank_forms import (
     resolve_required_blank_type,
     reuse_blank_for_existing_document,
 )
-from app.services.document_context import _split_address, build_document_context
+from app.services.document_context import MONTH_NAMES, _split_address, build_document_context
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
@@ -56,6 +56,19 @@ XMLDSIG_NS = "http://www.w3.org/2000/09/xmldsig#"
 MIAC_DRIVER_TEMPLATE = "Водительская(новая).xml"
 MIAC_GUARD_TEMPLATE = "Чод_новый.xml"
 MIAC_GIMS_TEMPLATE = "ГИМС_шаблон_для_загрузки_из_файла.xml"
+
+CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
+    {
+        "070 новый шабл.docx",
+        "072 сюрина ноый шабл.docx",
+        "072у_шаблон.docx",
+        "cпортэкг_шаблон.docx",
+        "cправкабассейн_шаблон.docx",
+        "гос.тайна_шаблон.docx",
+        "гсу001_шаблон.docx",
+        "гто1144_шаблон.docx",
+    }
+)
 
 ET.register_namespace("soapenv", SOAP_NS)
 ET.register_namespace("mb", MIAC_NS)
@@ -451,6 +464,58 @@ def _expand_service_rows(tree: ET.ElementTree, service_rows: list[dict[str, str]
     return tree
 
 
+def _document_namespace_declarations(xml_text: str) -> list[tuple[str, str]]:
+    document_start = xml_text.find("<w:document")
+    if document_start < 0:
+        return []
+    document_start_end = xml_text.find(">", document_start)
+    if document_start_end < 0:
+        return []
+    root_tag = xml_text[document_start:document_start_end]
+    declarations = re.findall(
+        r'\s+xmlns(?::([A-Za-z_][\w.-]*))?="([^"]+)"',
+        root_tag,
+    )
+    for prefix, namespace_uri in declarations:
+        if prefix == "xml":
+            continue
+        try:
+            ET.register_namespace(prefix or "", namespace_uri)
+        except ValueError:
+            continue
+    return declarations
+
+
+def _restore_document_namespace_declarations(
+    serialized_xml: bytes,
+    declarations: list[tuple[str, str]],
+) -> bytes:
+    if not declarations:
+        return serialized_xml
+
+    xml_text = serialized_xml.decode("utf-8")
+    document_start = xml_text.find("<w:document")
+    if document_start < 0:
+        return serialized_xml
+    document_start_end = xml_text.find(">", document_start)
+    if document_start_end < 0:
+        return serialized_xml
+
+    root_tag = xml_text[document_start:document_start_end]
+    missing_attributes: list[str] = []
+    for prefix, namespace_uri in declarations:
+        attribute_name = f"xmlns:{prefix}" if prefix else "xmlns"
+        if re.search(rf"\s+{re.escape(attribute_name)}=", root_tag):
+            continue
+        missing_attributes.append(f'{attribute_name}="{namespace_uri}"')
+    if not missing_attributes:
+        return serialized_xml
+
+    insertion = " " + " ".join(missing_attributes)
+    xml_text = xml_text[:document_start_end] + insertion + xml_text[document_start_end:]
+    return xml_text.encode("utf-8")
+
+
 def _generate_docx(
     template_path: Path,
     output_path: Path,
@@ -464,6 +529,7 @@ def _generate_docx(
                 file_bytes = source_zip.read(item.filename)
                 if item.filename == "word/document.xml":
                     xml_text = file_bytes.decode("utf-8")
+                    namespace_declarations = _document_namespace_declarations(xml_text)
                     xml_text = _replace_text_tokens(xml_text, context)
                     xml_text = _replace_prof_29n_static_doctor_names(xml_text, context)
                     if cleanup_xml:
@@ -484,7 +550,10 @@ def _generate_docx(
                             tree = _replace_split_token_nodes(tree, context)
                             tree = _append_bookmark_value(tree, context)
                             tree = _expand_service_rows(tree, service_rows or [])
-                            file_bytes = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+                            file_bytes = _restore_document_namespace_declarations(
+                                ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True),
+                                namespace_declarations,
+                            )
                         except ParseError:
                             # Some client templates contain non-standard Word XML fragments.
                             # In that case we still keep token replacement instead of failing generation.
@@ -2807,6 +2876,80 @@ def _first_field_value(fields: dict, *keys: str) -> str:
     return ""
 
 
+def _parse_chairman_exam_date(value: object) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    ru_match = re.search(r"(?<!\d)(\d{1,2})[./](\d{1,2})[./](\d{2}|\d{4})(?!\d)", text)
+    if ru_match:
+        raw_date = ".".join(ru_match.groups())
+        date_format = "%d.%m.%Y" if len(ru_match.group(3)) == 4 else "%d.%m.%y"
+        try:
+            return datetime.strptime(raw_date, date_format).date()
+        except ValueError:
+            return None
+
+    iso_match = re.search(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)", text)
+    if iso_match:
+        try:
+            return date(*(int(part) for part in iso_match.groups()))
+        except ValueError:
+            return None
+
+    return None
+
+
+def _chairman_exam_date_context_overrides(exams: list[DoctorExam]) -> dict[str, str]:
+    chairman = _exam_map(exams).get("chairman")
+    if chairman is None:
+        return {}
+
+    exam_date = _parse_chairman_exam_date(
+        _first_field_value(chairman.fields_json or {}, "examDate", "exam_date")
+    )
+    if exam_date is None:
+        return {}
+
+    formatted_date = exam_date.strftime("%d.%m.%y")
+    day = exam_date.strftime("%d")
+    month = exam_date.strftime("%m")
+    month_name = MONTH_NAMES.get(exam_date.month, "")
+    year = str(exam_date.year)
+    return {
+        "VisitDate": formatted_date,
+        "VisitDate_DATEFULL": formatted_date,
+        "DateCalc": formatted_date,
+        "ServiceDateCalc": formatted_date,
+        "ServiceDateCalc1": formatted_date,
+        "VisitDate_DAY": day,
+        "MonthCalc": month,
+        "VisitDate_MONTH": month,
+        "VisitDate_DATEMONTH": month_name,
+        "VisitDate_YEAR": year,
+        "VisitDate_DAY1": day,
+        "MonthCalc1": month,
+        "VisitDate_MONTH1": month,
+        "VisitDate_DATEMONTH1": month_name,
+        "VisitDate_YEAR1": year,
+    }
+
+
+def _chairman_certificate_date_context_overrides(
+    template: DocumentTemplate,
+    exams: list[DoctorExam],
+) -> dict[str, str]:
+    candidates = [getattr(template, "file_name", None), getattr(template, "file_path", None)]
+    file_names = {
+        Path(str(candidate)).name.casefold()
+        for candidate in candidates
+        if str(candidate or "").strip()
+    }
+    if not file_names.intersection(CHAIRMAN_EXAM_DATE_TEMPLATE_FILES):
+        return {}
+    return _chairman_exam_date_context_overrides(exams)
+
+
 def _sport_context_overrides(exams: list[DoctorExam]) -> dict[str, str]:
     empty_overrides = {
         "SportDiagnosis": "",
@@ -3384,6 +3527,7 @@ def generate_document(
                 for key, value in _sport_context_overrides(document_exams).items()
             }
         )
+        context.update(_chairman_certificate_date_context_overrides(template, document_exams))
         if blank_form is not None:
             context["BlankNumber"] = blank_form.full_number
             context["BlankSeries"] = blank_form.series or ""
