@@ -1992,6 +1992,7 @@ const RU_DATE_FORMAT_OPTIONS = {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
+  timeZone: "Europe/Moscow",
 };
 
 const RU_DATE_TIME_FORMAT_OPTIONS = {
@@ -2000,8 +2001,22 @@ const RU_DATE_TIME_FORMAT_OPTIONS = {
   minute: "2-digit",
 };
 
+const TIME_ZONE_AWARE_ISO_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}[T\s]+\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+function parseTimeZoneAwareIsoDateTime(value) {
+  if (!TIME_ZONE_AWARE_ISO_DATE_TIME_PATTERN.test(value)) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatDateTime(value = new Date()) {
   const text = typeof value === "string" ? value.trim() : "";
+  const timeZoneAwareDate = parseTimeZoneAwareIsoDateTime(text);
+  if (timeZoneAwareDate) {
+    return timeZoneAwareDate.toLocaleString("ru-RU", RU_DATE_TIME_FORMAT_OPTIONS);
+  }
+
   const isoDateTimeMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2}))?/);
   if (isoDateTimeMatch) {
     const dateText = `${isoDateTimeMatch[3]}.${isoDateTimeMatch[2]}.${isoDateTimeMatch[1]}`;
@@ -2022,6 +2037,15 @@ function formatDateTime(value = new Date()) {
 
 function extractDisplayTime(value) {
   const text = typeof value === "string" ? value.trim() : "";
+  const timeZoneAwareDate = parseTimeZoneAwareIsoDateTime(text);
+  if (timeZoneAwareDate) {
+    return timeZoneAwareDate.toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Europe/Moscow",
+    });
+  }
+
   const isoDateTimeMatch = text.match(/^\d{4}-\d{2}-\d{2}[T\s]+(\d{1,2}):(\d{2})/);
   if (isoDateTimeMatch) return `${isoDateTimeMatch[1].padStart(2, "0")}:${isoDateTimeMatch[2]}`;
 
@@ -2032,7 +2056,11 @@ function extractDisplayTime(value) {
 
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Moscow",
+  });
 }
 
 function formatDateTimeWithFallbackTime(value, fallbackTimeValue) {
