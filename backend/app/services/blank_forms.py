@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,9 +32,12 @@ from app.models.blank_form import (
     BlankType,
 )
 from app.models.client import Client
+from app.models.client_document import ClientDocument
+from app.models.document_journal import DocumentJournalEntry
 from app.models.document_template import DocumentTemplate
 from app.models.encounter import Encounter
 from app.models.generated_document import GeneratedDocument
+from app.models.medical_record import MedicalRecordEntry
 from app.models.user import User
 from app.services.audit import write_audit_log
 
@@ -517,6 +520,114 @@ def spoil_form(
             "blank_type": form.blank_type,
             "full_number": form.full_number,
             "reason": form.spoiled_reason,
+        },
+    )
+    return form
+
+
+def release_form(
+    db: Session,
+    *,
+    form_id: int,
+    user_id: int | None,
+) -> BlankForm:
+    """Возвращает ошибочно выданный, но не использованный номер в свободные."""
+
+    form = db.execute(
+        select(BlankForm).where(BlankForm.id == form_id).with_for_update()
+    ).scalar_one_or_none()
+    if form is None:
+        raise BlankServiceError("Бланк не найден")
+    if form.status != BLANK_STATUS_ISSUED:
+        raise BlankServiceError("Освободить можно только выданный бланк")
+
+    released_at = datetime.utcnow()
+    release_reason = "Номер освобождён: печать была запущена по ошибке"
+    previous_links = {
+        "client_id": form.client_id,
+        "encounter_id": form.encounter_id,
+        "generated_document_id": form.generated_document_id,
+        "client_document_id": form.client_document_id,
+    }
+
+    generated_query = select(GeneratedDocument).where(GeneratedDocument.blank_form_id == form.id)
+    if form.generated_document_id is not None:
+        generated_query = select(GeneratedDocument).where(
+            or_(
+                GeneratedDocument.blank_form_id == form.id,
+                GeneratedDocument.id == form.generated_document_id,
+            )
+        )
+    generated_documents = list(db.execute(generated_query).scalars())
+    generated_document_ids: list[int] = []
+    for document in generated_documents:
+        generated_document_ids.append(document.id)
+        document.blank_form_id = None
+        document.blank_number_snapshot = None
+        if document.document_number == form.full_number:
+            document.document_number = None
+        if document.cancelled_at is None:
+            document.cancelled_at = released_at
+            document.cancelled_by_user_id = user_id
+            document.cancelled_reason = release_reason
+
+    if generated_document_ids:
+        journal_entries = db.execute(
+            select(DocumentJournalEntry).where(
+                DocumentJournalEntry.generated_document_id.in_(generated_document_ids),
+                DocumentJournalEntry.deleted_at.is_(None),
+            )
+        ).scalars()
+        for entry in journal_entries:
+            entry.deleted_at = released_at
+
+    client_document_query = select(ClientDocument).where(ClientDocument.blank_form_id == form.id)
+    if form.client_document_id is not None:
+        client_document_query = select(ClientDocument).where(
+            or_(
+                ClientDocument.blank_form_id == form.id,
+                ClientDocument.id == form.client_document_id,
+            )
+        )
+    for document in db.execute(client_document_query).scalars():
+        document.blank_form_id = None
+        document.blank_number_snapshot = None
+
+    if form.encounter_id is not None:
+        conclusion = f"Выдан номерной бланк медицинского заключения №{form.full_number}"
+        entries = db.execute(
+            select(MedicalRecordEntry).where(
+                MedicalRecordEntry.encounter_id == form.encounter_id,
+                MedicalRecordEntry.doctor_role_id == "document",
+                MedicalRecordEntry.conclusion == conclusion,
+            )
+        ).scalars()
+        for entry in entries:
+            db.delete(entry)
+
+    form.status = BLANK_STATUS_FREE
+    form.client_id = None
+    form.encounter_id = None
+    form.generated_document_id = None
+    form.client_document_id = None
+    form.issued_at = None
+    form.issued_by_user_id = None
+    form.cancelled_at = None
+    form.cancelled_by_user_id = None
+    form.cancelled_reason = None
+    db.flush()
+
+    write_audit_log(
+        db,
+        entity_type="blank_form",
+        entity_id=form.id,
+        action="release",
+        user_id=user_id or 1,
+        center_id=form.center_id,
+        payload_json={
+            "blank_type": form.blank_type,
+            "full_number": form.full_number,
+            **previous_links,
         },
     )
     return form

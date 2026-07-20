@@ -24,6 +24,7 @@ from app.services.blank_forms import (
     list_batches,
     list_blank_types,
     list_forms,
+    release_form,
     spoil_form,
     stats as compute_stats,
 )
@@ -179,6 +180,22 @@ def spoil_form_endpoint(
     reason = payload.reason if payload is not None else None
     try:
         form = spoil_form(db, form_id=form_id, reason=reason, user_id=_current_user_id())
+    except BlankServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(form)
+    return BlankFormRead.model_validate(enrich_form_for_read(db, form))
+
+
+@router.post("/forms/{form_id}/release", response_model=BlankFormRead)
+def release_form_endpoint(
+    form_id: int,
+    db: Session = Depends(get_db),
+) -> BlankFormRead:
+    try:
+        form = release_form(db, form_id=form_id, user_id=_current_user_id())
     except BlankServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

@@ -323,6 +323,8 @@
                               ${
                                 item.status === "free"
                                   ? `<button type="button" class="ghost-button" data-blank-spoil="${item.id}">Испорчен</button>`
+                                  : item.status === "issued"
+                                    ? `<button type="button" class="ghost-button" data-blank-release="${item.id}" data-blank-number="${esc(item.full_number)}">Освободить номер</button>`
                                   : ""
                               }
                             </td>
@@ -469,6 +471,34 @@
             window.humanizeApiError
               ? window.humanizeApiError(error, "Не удалось изменить статус бланка")
               : String(error?.message || error || "Не удалось изменить статус бланка"),
+          );
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-blank-release]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const formId = button.dataset.blankRelease;
+        const blankNumber = button.dataset.blankNumber || "";
+        if (!formId) return;
+        const confirmed = window.confirm(
+          `Освободить номер ${blankNumber}?\n\nИспользуйте это действие, только если документ не был напечатан. Номер снова будет доступен следующему пациенту.`,
+        );
+        if (!confirmed) return;
+
+        button.disabled = true;
+        try {
+          await window.apiRequest(`/blanks/forms/${encodeURIComponent(formId)}/release`, {
+            method: "POST",
+          });
+          window.showToast?.(`Номер ${blankNumber} освобождён`);
+          await loadBlanksData({ force: true });
+        } catch (error) {
+          button.disabled = false;
+          window.showToast?.(
+            window.humanizeApiError
+              ? window.humanizeApiError(error, "Не удалось освободить номер")
+              : String(error?.message || error || "Не удалось освободить номер"),
           );
         }
       });
