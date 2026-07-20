@@ -399,7 +399,13 @@ function getVisibleClientServices(groupId) {
     .filter((service) => String(service.groupId) === String(groupId))
     .filter((service) => {
       const normalizedName = String(service.name || "").trim().toLowerCase();
-      return !normalizedName.includes("дубл");
+      const hasDetailedEkgService = structuredServices.some(
+        (candidate) =>
+          candidate.isActive !== false &&
+          String(candidate.groupId) === String(groupId) &&
+          String(candidate.name || "").trim().toLowerCase() === "экг без расшифровки",
+      );
+      return !normalizedName.includes("дубл") && !(hasDetailedEkgService && normalizedName === "экг");
     })
     .slice();
 
