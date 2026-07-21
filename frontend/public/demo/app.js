@@ -4977,7 +4977,7 @@ function renderNav() {
       if (page === "reports" && !data.reportLoading) {
         loadReportsSummary();
       }
-      if ((page === "blanks" || page === "chart" || page === "xml") && !data.workflowDataLoading) {
+      if ((page === "chart" || page === "xml") && !data.workflowDataLoading) {
         loadWorkflowData();
       }
       if (page === "blanks" && typeof window.loadBlanksData === "function" && !data.blanksLoading) {
@@ -9796,7 +9796,6 @@ function renderDocumentsPage() {
     : data.generatedDocuments;
 
   return `
-    ${renderBlanksPage()}
     ${renderWorkflowLoadState()}
     <section class="card">
       <h3>Документы по обращению</h3>
@@ -10228,7 +10227,8 @@ function renderContent() {
   if (appState.page === "upload") return renderClientImportPage();
   if (appState.page === "doctors") return renderDoctorsPage();
   if (appState.page === "templates") return renderTemplatesPage();
-  if (appState.page === "blanks") return renderDocumentsPage();
+  if (appState.page === "blanks") return renderBlanksPage();
+  if (appState.page === "documents") return renderDocumentsPage();
   if (appState.page === "cash") return renderCashPage();
   if (appState.page === "reports") return renderReportsPage();
   if (appState.page === "employee") return renderEmployeePage();
@@ -10448,6 +10448,7 @@ window.addEventListener("scroll", () => {
 
 function getPageTitle() {
   if (appState.page === "dashboard") return "Главная";
+  if (appState.page === "documents") return "Документы по обращению";
   return navItems.find((item) => item.id === appState.page)?.label || "Главная";
 }
 
@@ -10642,7 +10643,7 @@ async function saveOperatorVisitForm({ recalculate = false, close = false, skipA
             getDocumentsForVisit(visit.id).find((item) => String(item.templateId || "") === String(template.id)) || null;
         }
 
-        appState.page = "blanks";
+        appState.page = "documents";
           await loadWorkflowData({
             clientId: selectedClient?.backendId || selectedClient?.id || null,
             encounterId: visit.backendId || null,
@@ -11107,14 +11108,11 @@ function bindContentEvents() {
     openVisitDocumentsButton.addEventListener("click", async () => {
       const visit = await saveOperatorVisitForm();
       const selectedClient = getSelectedClient();
-      appState.page = "blanks";
+      appState.page = "documents";
       await loadWorkflowData({
         clientId: selectedClient?.backendId || selectedClient?.id || null,
         encounterId: visit?.backendId || null,
       });
-      if (typeof window.loadBlanksData === "function") {
-        await window.loadBlanksData({ force: true });
-      }
       renderApp();
       showToast("Открыты документы по обращению");
     });
@@ -12123,7 +12121,7 @@ window.renderApp = renderApp;
 window.openDriverPrintFlow = openDriverPrintFlow;
 
 renderApp();
-if ((appState.page === "blanks" || appState.page === "chart" || appState.page === "xml") && !data.workflowDataLoading) {
+if ((appState.page === "chart" || appState.page === "xml" || appState.page === "documents") && !data.workflowDataLoading) {
   loadWorkflowData();
 }
 Promise.allSettled([loadClientsFromBackend(appState.clientSearch), loadServicesFromBackend(), loadDocumentTemplatesFromBackend()])

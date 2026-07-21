@@ -127,16 +127,12 @@
     const typeOptions = Array.isArray(data.blanksTypes) ? data.blanksTypes : [];
 
     return `
-      <div class="blanks-section-head">
-        <button type="button" class="ghost-button" data-blanks-toggle-form>
-          ${appState.blanksFormOpen ? "Скрыть форму" : "Добавить партию"}
-        </button>
-      </div>
       ${
         appState.blanksFormOpen
           ? `
             <form class="card blanks-batch-form" id="blanksBatchForm">
-              <h3>Новая партия</h3>
+              <h3>Добавить диапазон номеров</h3>
+              <p class="muted">Укажите серию и первый с последним номером. Все номера из диапазона будут добавлены автоматически.</p>
               <div class="visit-form__grid">
                 <label class="field">
                   <span>Тип бланка</span>
@@ -171,7 +167,8 @@
                   : ""
               }
               <div class="visit-form__actions">
-                <button type="submit" class="primary-button">${data.blanksFormSaving ? "Сохранение..." : "Сохранить партию"}</button>
+                <button type="button" class="ghost-button" data-blanks-close-form>Отмена</button>
+                <button type="submit" class="primary-button">${data.blanksFormSaving ? "Добавление..." : "Добавить номера"}</button>
               </div>
             </form>
           `
@@ -365,10 +362,15 @@
       <section class="card">
         <div class="blanks-page__header">
           <div>
-            <h3>Учёт номерных бланков</h3>
-            <p class="muted">Партии, статусы и выдача бланков для документов с номерным учётом.</p>
+            <h3>Бланки</h3>
+            <p class="muted">Добавляйте диапазоны номеров и проверяйте, какие бланки свободны, выданы или испорчены.</p>
           </div>
-          <button type="button" class="ghost-button" data-blanks-refresh>Обновить</button>
+          <div class="blanks-page__actions">
+            <button type="button" class="primary-button" data-blanks-add-numbers ${appState.blanksFormOpen ? "disabled" : ""}>
+              ${appState.blanksFormOpen ? "Форма открыта" : "Добавить номера"}
+            </button>
+            <button type="button" class="ghost-button" data-blanks-refresh>Обновить</button>
+          </div>
         </div>
         <div class="tabs">
           <button type="button" class="tabs__item ${appState.blanksTab === "overview" ? "tabs__item--active" : ""}" data-blanks-tab="overview">Обзор</button>
@@ -396,6 +398,17 @@
       loadBlanksData({ force: true });
     });
 
+    document.querySelector("[data-blanks-add-numbers]")?.addEventListener("click", () => {
+      window.appState.blanksTab = "batches";
+      window.appState.blanksFormOpen = true;
+      window.data.blanksFormError = "";
+      window.persistDemoState?.();
+      window.renderApp?.();
+      window.requestAnimationFrame(() => {
+        document.querySelector("#blanksBatchForm select, #blanksBatchForm input")?.focus();
+      });
+    });
+
     document.querySelector("[data-blanks-show-issued]")?.addEventListener("click", () => {
       window.appState.blanksFilterStatus = "issued";
       window.appState.blanksSearch = "";
@@ -404,8 +417,8 @@
       window.showToast?.("Выберите нужный номер и нажмите «Освободить номер» в его строке");
     });
 
-    document.querySelector("[data-blanks-toggle-form]")?.addEventListener("click", () => {
-      window.appState.blanksFormOpen = !window.appState.blanksFormOpen;
+    document.querySelector("[data-blanks-close-form]")?.addEventListener("click", () => {
+      window.appState.blanksFormOpen = false;
       window.data.blanksFormError = "";
       window.persistDemoState?.();
       window.renderApp?.();

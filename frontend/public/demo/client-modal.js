@@ -1535,7 +1535,7 @@ function openClientModal(clientId = null, options = {}) {
 
     actionModal.classList.add("hidden");
     if (shouldOpenContract) {
-      appState.page = "blanks";
+      appState.page = "documents";
     }
     renderApp();
     if (shouldOpenContract) {

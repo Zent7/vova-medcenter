@@ -499,6 +499,13 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   margin-bottom: 16px;
 }
 
+.blanks-page__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .tabs {
   display: flex;
   gap: 10px;
