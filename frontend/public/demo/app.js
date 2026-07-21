@@ -8952,10 +8952,12 @@ function getNumberedCertificateLookupSeriesForType(type) {
 }
 
 function getNumberedCertificateDisplaySeries(series, certificateType = "") {
+  const normalizedSeries = normalizeBlankSeries(series);
   const normalizedType = String(certificateType || getDriverPrintCertificateType(series) || "").toLowerCase();
-  if (normalizedType === "086") return "086";
-  if (normalizedType === "095") return "095";
-  return normalizeBlankSeries(series);
+  const seriesType = getDriverPrintCertificateType(normalizedSeries);
+  if (normalizedType === "086" && seriesType === "086") return "086";
+  if (normalizedType === "095" && seriesType === "095") return "095";
+  return normalizedSeries;
 }
 
 function resolveNumberedCertificateLookupSeries(selectedSeries, certificateType, seriesOptions = []) {
@@ -8965,7 +8967,8 @@ function resolveNumberedCertificateLookupSeries(selectedSeries, certificateType,
     .map((item) => normalizeBlankSeries(item?.series || item))
     .filter(Boolean);
 
-  if (isNumberedCertificatePrintType(normalizedType)) {
+  const selectedSeriesType = getDriverPrintCertificateType(normalizedSelected);
+  if (isNumberedCertificatePrintType(normalizedType) && selectedSeriesType === normalizedType) {
     const marker = normalizedType === "086" ? "086" : "095";
     const matching = options.find((series) => {
       const normalizedSeries = series.toLowerCase();
@@ -11886,11 +11889,13 @@ function bindContentEvents() {
       if (numberedCertificateSeries || certificatePrintFlowOptions) {
         if (targetWindow && !targetWindow.closed) targetWindow.close();
         window.closeDoctorExamCard?.();
+        const selectedFlowSeries = chairmanPrintBlankState.selectedSeries || numberedCertificateSeries;
         await window.openDriverPrintFlow?.({
           ...(certificatePrintFlowOptions || {}),
           ...(numberedCertificateSeries
             ? {
-                preselectedSeries: numberedCertificateSeries,
+                preselectedSeries: selectedFlowSeries,
+                preselectedBlank: chairmanPrintBlankState.blanks.get(selectedFlowSeries) || null,
                 selectedCertificateType: printType || "",
                 legacyCertificateFlow: true,
               }
