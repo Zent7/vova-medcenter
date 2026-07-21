@@ -259,7 +259,13 @@
 
     return `
       <article class="card">
-        <h3>Номера бланков</h3>
+        <div class="blanks-page__header">
+          <div>
+            <h3>Номера бланков</h3>
+            <p class="muted">Чтобы вернуть ошибочно занятый номер, откройте выданные бланки.</p>
+          </div>
+          <button type="button" class="primary-button" data-blanks-show-issued>Освободить выданный номер</button>
+        </div>
         <div class="blanks-filters">
           <label class="field">
             <span>Статус</span>
@@ -388,6 +394,14 @@
 
     document.querySelector("[data-blanks-refresh]")?.addEventListener("click", () => {
       loadBlanksData({ force: true });
+    });
+
+    document.querySelector("[data-blanks-show-issued]")?.addEventListener("click", () => {
+      window.appState.blanksFilterStatus = "issued";
+      window.appState.blanksSearch = "";
+      window.persistDemoState?.();
+      window.renderApp?.();
+      window.showToast?.("Выберите нужный номер и нажмите «Освободить номер» в его строке");
     });
 
     document.querySelector("[data-blanks-toggle-form]")?.addEventListener("click", () => {
