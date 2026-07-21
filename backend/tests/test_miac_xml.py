@@ -28,7 +28,9 @@ from app.models.blank_form import (  # noqa: E402
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
     BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
     BlankBatch,
     BlankForm,
 )
@@ -220,6 +222,14 @@ class MiacBlankReuseTests(unittest.TestCase):
             resolve_required_blank_type(template, print_variant="chod"),
             BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
         )
+        self.assertEqual(
+            resolve_required_blank_type(template, print_variant="gims"),
+            BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+        )
+        self.assertEqual(
+            resolve_required_blank_type(template, print_variant="lmk"),
+            BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+        )
         self.assertIsNone(resolve_required_blank_type(template, print_variant="sport"))
 
     def test_xml_reuses_issued_encounter_blank_without_consuming_free_blank(self):
@@ -321,7 +331,7 @@ class MiacBlankReuseTests(unittest.TestCase):
                         template_type="xml",
                         output_format="xml",
                         requires_numbered_blank=True,
-                        blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                        blank_type=BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
                         is_active=True,
                     )
                     chairman = DoctorExam(
@@ -336,7 +346,7 @@ class MiacBlankReuseTests(unittest.TestCase):
                     )
                     batch = BlankBatch(
                         center_id=center.id,
-                        blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                        blank_type=BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
                         series="ГИМС",
                         number_from=1,
                         number_to=1,
@@ -348,7 +358,7 @@ class MiacBlankReuseTests(unittest.TestCase):
                     blank = BlankForm(
                         batch_id=batch.id,
                         center_id=center.id,
-                        blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                        blank_type=BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
                         series="ГИМС",
                         number_value=1,
                         full_number="ГИМС0000001",

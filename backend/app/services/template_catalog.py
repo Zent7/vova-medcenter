@@ -89,7 +89,9 @@ def sync_document_template_catalog(db) -> int:
 
     from app.models.blank_form import (
         BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+        BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
         BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+        BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
         BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
     )
     from app.models.document_template import DocumentTemplate
@@ -147,12 +149,15 @@ def sync_document_template_catalog(db) -> int:
         template.blank_type = None
 
         haystack = " ".join([item["code"], item["name"], item["file_name"]]).lower()
-        if "охран" in haystack or "guard" in haystack or "чод" in haystack or "002" in haystack:
+        if "гимс" in haystack or "gims" in haystack:
+            template.requires_numbered_blank = True
+            template.blank_type = BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE
+        elif "лмк" in haystack or "lmk" in haystack:
+            template.requires_numbered_blank = True
+            template.blank_type = BLANK_TYPE_LMK_MEDICAL_CERTIFICATE
+        elif "охран" in haystack or "guard" in haystack or "чод" in haystack or "002" in haystack:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE
-        elif item["template_type"] == "xml" and ("гимс" in haystack or "gims" in haystack):
-            template.requires_numbered_blank = True
-            template.blank_type = BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
         elif "трактор" in haystack or "tractor" in haystack or "071" in haystack:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE

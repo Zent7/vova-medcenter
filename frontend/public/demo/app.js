@@ -8787,8 +8787,10 @@ const CERTIFICATE_PRINT_TYPE_LABELS = {
   "13098": "13098",
 };
 const BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate";
+const BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE = "gims_medical_certificate";
 const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
 const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
+const BLANK_TYPE_LMK_MEDICAL_CERTIFICATE = "lmk_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071у"],
   ["профосмотр", "29Н"],
@@ -8910,6 +8912,10 @@ function getDriverPrintCertificateType(series) {
 
 function getBlankTypeForCertificatePrintType(type) {
   const normalizedType = String(type || "").toLowerCase();
+  if (normalizedType === "gims") return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE;
+  if (normalizedType === "lmk" || normalizedType === "lmk_title" || normalizedType === "lmk_certificate") {
+    return BLANK_TYPE_LMK_MEDICAL_CERTIFICATE;
+  }
   if (normalizedType === "071") return BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE;
   if (normalizedType === "guard" || normalizedType === "chod") return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE;
   return "";
@@ -11718,13 +11724,13 @@ function bindContentEvents() {
         if (button) button.disabled = true;
         try {
           const centerId = await resolveCenterIdForVisit(visit, client);
+          const certificateType = getDriverPrintCertificateType(normalizedSeries);
           const query = new URLSearchParams({
-            blank_type: "driver_medical_certificate",
+            blank_type: getBlankTypeForCertificatePrintType(certificateType) || BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
             center_id: String(centerId),
             series: normalizedSeries,
           });
           let blank = null;
-          const certificateType = getDriverPrintCertificateType(normalizedSeries);
           const shouldAutoCreateImmediately =
             !isNumberedCertificatePrintType(certificateType) &&
             !isPreenteredBlankSeries(normalizedSeries) &&
