@@ -13,9 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.models.doctor_exam import DoctorExam  # noqa: E402
 from app.models.client import Client  # noqa: E402
+from app.models.encounter import Encounter  # noqa: E402
 from app.services.document_context import build_document_context  # noqa: E402
 from app.services.document_generator import (  # noqa: E402
     _chairman_certificate_date_context_overrides,
+    _document_doctor_name_for_context,
     _generate_docx,
 )
 
@@ -72,6 +74,15 @@ class ChairmanCertificateDateTests(unittest.TestCase):
         self.assertEqual(overrides["VisitDate_DAY"], "05")
         self.assertEqual(overrides["VisitDate_DATEMONTH"], "июля")
         self.assertEqual(overrides["VisitDate_YEAR"], "2026")
+        self.assertEqual(overrides["PoolValidUntil"], "05.01.2027")
+
+    def test_pool_validity_clamps_to_last_day_of_month(self):
+        self.exam.fields_json = {"examDate": "31.08.2026"}
+        template = SimpleNamespace(file_name="CправкаБассейн_шаблон.docx", file_path=None)
+
+        overrides = _chairman_certificate_date_context_overrides(template, [self.exam])
+
+        self.assertEqual(overrides["PoolValidUntil"], "28.02.2027")
 
     def test_unrelated_template_keeps_encounter_date_context(self):
         template = SimpleNamespace(file_name="Договор_шаблон.docx", file_path=None)
@@ -93,6 +104,60 @@ class ChairmanCertificateDateTests(unittest.TestCase):
             "28011999",
         )
 
+    def test_pool_wording_follows_client_sex(self):
+        male = Client(
+            id=1,
+            last_name="Иванов",
+            first_name="Иван",
+            birth_date=date(1999, 1, 28),
+            sex="M",
+        )
+        female = Client(
+            id=2,
+            last_name="Иванова",
+            first_name="Ирина",
+            birth_date=date(1999, 1, 28),
+            sex="F",
+        )
+
+        male_context = build_document_context(male)
+        female_context = build_document_context(female)
+
+        self.assertEqual(
+            (male_context["PoolAdmission"], male_context["PoolHealthy"]),
+            ("Допущен", "здоров"),
+        )
+        self.assertEqual(
+            (female_context["PoolAdmission"], female_context["PoolHealthy"]),
+            ("Допущена", "здорова"),
+        )
+
+    def test_pool_validity_falls_back_to_encounter_date(self):
+        client = Client(
+            id=1,
+            last_name="Иванов",
+            first_name="Иван",
+            birth_date=date(1999, 1, 28),
+            sex="M",
+        )
+        encounter = Encounter(
+            id=10,
+            client_id=1,
+            center_id=1,
+            encounter_date=date(2026, 8, 31),
+        )
+
+        context = build_document_context(client, encounter)
+
+        self.assertEqual(context["PoolValidUntil"], "28.02.2027")
+
+    def test_document_doctor_tracks_changed_chairman_name(self):
+        self.exam.doctor_name = "Иванов И.И."
+        self.assertEqual(_document_doctor_name_for_context([self.exam]), "Иванов И.И.")
+
+        self.exam.doctor_name = "Петров П.П."
+        self.assertEqual(_document_doctor_name_for_context([self.exam]), "Петров П.П.")
+
     def test_selected_certificate_templates_render_chairman_date(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
@@ -113,6 +178,9 @@ class ChairmanCertificateDateTests(unittest.TestCase):
                         "BirthDateCalc_DIGIT7": "9",
                         "BirthDateCalc_DIGIT8": "9",
                         "SexCalc": "муж",
+                        "PoolAdmission": "Допущен",
+                        "PoolHealthy": "здоров",
+                        "Doctor": "Петров П.П.",
                         **_chairman_certificate_date_context_overrides(template, [self.exam]),
                     }
                     output_path = output_dir / template_name
@@ -146,6 +214,11 @@ class ChairmanCertificateDateTests(unittest.TestCase):
 
                     if "Бассейн" in template_name:
                         self.assertIn("06.02.96 № 65", text)
+                        self.assertIn("Допущен по состоянию здоровья", text)
+                        self.assertIn("Практически здоров", text)
+                        self.assertIn("практически здоров", text)
+                        self.assertIn("Справка действительна до 05.01.2027", text)
+                        self.assertEqual(text.count("Петров П.П."), 3)
 
 
 if __name__ == "__main__":

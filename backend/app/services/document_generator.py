@@ -44,7 +44,12 @@ from app.services.blank_forms import (
     resolve_required_blank_type,
     reuse_blank_for_existing_document,
 )
-from app.services.document_context import MONTH_NAMES, _split_address, build_document_context
+from app.services.document_context import (
+    MONTH_NAMES,
+    _add_calendar_months,
+    _split_address,
+    build_document_context,
+)
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
@@ -2916,6 +2921,7 @@ def _chairman_exam_date_context_overrides(exams: list[DoctorExam]) -> dict[str, 
     month = exam_date.strftime("%m")
     month_name = MONTH_NAMES.get(exam_date.month, "")
     year = str(exam_date.year)
+    valid_until = _add_calendar_months(exam_date, 6)
     return {
         "VisitDate": formatted_date,
         "VisitDate_DATEFULL": formatted_date,
@@ -2932,6 +2938,7 @@ def _chairman_exam_date_context_overrides(exams: list[DoctorExam]) -> dict[str, 
         "VisitDate_MONTH1": month,
         "VisitDate_DATEMONTH1": month_name,
         "VisitDate_YEAR1": year,
+        "PoolValidUntil": valid_until.strftime("%d.%m.%Y"),
     }
 
 
