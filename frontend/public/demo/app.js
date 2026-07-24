@@ -2495,11 +2495,17 @@ function humanizeApiError(error, fallback = "Не удалось выполни�
   return message;
 }
 
+const DEFAULT_API_REQUEST_TIMEOUT_MS = 60000;
+
 async function apiRequest(path, options = {}) {
   ensureDemoAuthConsistency();
-  const optionHeaders = options.headers || {};
+  const {
+    timeoutMs = DEFAULT_API_REQUEST_TIMEOUT_MS,
+    ...fetchOptions
+  } = options;
+  const optionHeaders = fetchOptions.headers || {};
   const authHeaders = getDemoAuthHeaders();
-  let requestBody = options.body;
+  let requestBody = fetchOptions.body;
   if (
     requestBody &&
     typeof requestBody !== "string" &&
@@ -2509,46 +2515,67 @@ async function apiRequest(path, options = {}) {
   ) {
     requestBody = JSON.stringify(requestBody);
   }
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...(requestBody instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...authHeaders,
-      ...optionHeaders,
-    },
-    body: requestBody,
-  });
 
-  if (!response.ok) {
-    let detail = "";
-    let errorBody = null;
-    let errorText = "";
-    try {
-      errorText = await response.text();
-    } catch {
-      errorText = "";
+  const timeoutController =
+    !fetchOptions.signal && Number(timeoutMs) > 0 && typeof AbortController === "function"
+      ? new AbortController()
+      : null;
+  const timeoutId = timeoutController
+    ? window.setTimeout(() => timeoutController.abort(), Number(timeoutMs))
+    : null;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchOptions,
+      signal: fetchOptions.signal || timeoutController?.signal,
+      headers: {
+        ...(requestBody instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...authHeaders,
+        ...optionHeaders,
+      },
+      body: requestBody,
+    });
+
+    if (!response.ok) {
+      let detail = "";
+      let errorBody = null;
+      let errorText = "";
+      try {
+        errorText = await response.text();
+      } catch {
+        errorText = "";
+      }
+      try {
+        errorBody = errorText ? JSON.parse(errorText) : null;
+      } catch {
+        errorBody = null;
+      }
+      if (errorBody?.detail?.message) {
+        detail = errorBody.detail.message;
+      } else if (typeof errorBody?.detail === "string") {
+        detail = errorBody.detail;
+      } else if (Array.isArray(errorBody?.detail)) {
+        detail = JSON.stringify({ detail: errorBody.detail });
+      } else if (errorBody?.detail && typeof errorBody.detail === "object") {
+        detail = JSON.stringify(errorBody.detail);
+      } else {
+        detail = errorText;
+      }
+      throw new Error(detail || `HTTP ${response.status}`);
     }
-    try {
-      errorBody = errorText ? JSON.parse(errorText) : null;
-    } catch {
-      errorBody = null;
+
+    if (response.status === 204) return null;
+    return response.json();
+  } catch (error) {
+    if (error?.name === "AbortError" && timeoutController?.signal.aborted) {
+      throw new Error(`Сервер не ответил за ${Math.round(Number(timeoutMs) / 1000)} сек.`);
     }
-    if (errorBody?.detail?.message) {
-      detail = errorBody.detail.message;
-    } else if (typeof errorBody?.detail === "string") {
-      detail = errorBody.detail;
-    } else if (Array.isArray(errorBody?.detail)) {
-      detail = JSON.stringify({ detail: errorBody.detail });
-    } else if (errorBody?.detail && typeof errorBody.detail === "object") {
-      detail = JSON.stringify(errorBody.detail);
-    } else {
-      detail = errorText;
+    throw error;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
     }
-    throw new Error(detail || `HTTP ${response.status}`);
   }
-
-  if (response.status === 204) return null;
-  return response.json();
 }
 
 function getDemoAuthHeaders() {
@@ -2923,10 +2950,92 @@ function buildWordProtocolUrl(fileUrl) {
   return `ms-word:ofv|u|${encodeURI(fileUrl)}`;
 }
 
+function renderDocumentTargetWindow(targetWindow, options = {}) {
+  if (!targetWindow || targetWindow.closed) return false;
+  const {
+    title = "Подготовка документа",
+    message = "Документ формируется. Не закрывайте это окно.",
+    fileUrl = "",
+    wordUrl = "",
+    error = false,
+  } = options;
+  const actions =
+    fileUrl || wordUrl
+      ? `
+        <div class="actions">
+          ${wordUrl ? `<a class="primary" href="${escapeHtml(wordUrl)}">Открыть в Microsoft Word</a>` : ""}
+          ${fileUrl ? `<a href="${escapeHtml(fileUrl)}">Скачать документ</a>` : ""}
+        </div>
+        <p class="hint">Если Word не открылся автоматически, нажмите кнопку выше.</p>
+      `
+      : "";
+  try {
+    targetWindow.document.open();
+    targetWindow.document.write(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, "Segoe UI", Arial, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; color: #17202a; }
+    main { width: min(560px, calc(100% - 40px)); box-sizing: border-box; padding: 32px; border-radius: 18px; background: #fff; box-shadow: 0 18px 60px rgba(30, 47, 62, .14); }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { margin: 0; line-height: 1.5; color: ${error ? "#a61b1b" : "#52616f"}; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+    a { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 18px; border: 1px solid #c8d1da; border-radius: 10px; color: #243746; text-decoration: none; font-weight: 600; }
+    a.primary { border-color: #147d64; background: #147d64; color: #fff; }
+    .hint { margin-top: 18px; font-size: 14px; color: #6f7d89; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(message)}</p>
+    ${actions}
+  </main>
+</body>
+</html>`);
+    targetWindow.document.close();
+    return true;
+  } catch (error) {
+    console.warn("Не удалось обновить окно документа", error);
+    return false;
+  }
+}
+
+function openDocumentTargetWindow(message = "Документ формируется. Не закрывайте это окно.") {
+  const targetWindow = window.open("about:blank", "_blank");
+  if (!targetWindow) {
+    showToast("Браузер заблокировал окно документа");
+    return null;
+  }
+  renderDocumentTargetWindow(targetWindow, { message });
+  return targetWindow;
+}
+
+function showDocumentTargetError(targetWindow, message) {
+  return renderDocumentTargetWindow(targetWindow, {
+    title: "Не удалось открыть документ",
+    message: message || "Повторите печать или скачайте документ из истории.",
+    error: true,
+  });
+}
+
 function openDocumentFileUrl(fileUrl, documentItem = null, targetWindow = null) {
   const fileName = documentItem?.fileName || documentItem?.file_name || fileUrl;
-  const destinationUrl = isWordDocumentFile(fileName) ? buildWordProtocolUrl(fileUrl) : fileUrl;
+  const wordDocument = isWordDocumentFile(fileName);
+  const destinationUrl = wordDocument ? buildWordProtocolUrl(fileUrl) : fileUrl;
   if (targetWindow && !targetWindow.closed) {
+    if (wordDocument) {
+      renderDocumentTargetWindow(targetWindow, {
+        title: "Документ готов",
+        message: "Открываем справку в Microsoft Word.",
+        fileUrl,
+        wordUrl: destinationUrl,
+      });
+    }
     targetWindow.location.href = destinationUrl;
     return true;
   }
@@ -3031,7 +3140,7 @@ async function openGeneratedDocumentDirectly(documentItem, options = {}) {
       console.warn("Не удалось открыть документ через авторизованную ссылку", fallbackError);
     }
     if (targetWindow && !targetWindow.closed) {
-      targetWindow.close();
+      showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть документ"));
     }
     throw error;
   }
@@ -4543,7 +4652,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
   persistDemoState();
 }
 
-async function saveDoctorExam(examId, updatedFields) {
+async function saveDoctorExam(examId, updatedFields, options = {}) {
   ensureVisitsStore();
 
   const exam = data.doctorExams.find((item) => item.id === examId);
@@ -4577,13 +4686,21 @@ async function saveDoctorExam(examId, updatedFields) {
   try {
     if (exam.doctorRoleId === "chairman") {
       await syncDoctorExamToBackend(exam);
-      try {
-        await syncChairmanExamToClientAndMedicalRecord(exam);
-      } catch (chairmanSyncError) {
-        console.warn("Не удалось полностью досинхронизировать председателя", chairmanSyncError);
-        showToast("Карточка председателя сохранена, но обращение/карта обновились не полностью");
+      const syncSecondaryChairmanData = async () => {
+        try {
+          await syncChairmanExamToClientAndMedicalRecord(exam);
+        } catch (chairmanSyncError) {
+          console.warn("Не удалось полностью досинхронизировать председателя", chairmanSyncError);
+          showToast("Карточка председателя сохранена, но обращение/карта обновились не полностью");
+        }
+        await refreshDashboardDoctorStatusForExam(exam, { render: false });
+      };
+      if (options.waitForSecondarySync === false) {
+        exam.__saving = false;
+        void syncSecondaryChairmanData();
+        return true;
       }
-      await refreshDashboardDoctorStatusForExam(exam, { render: false });
+      await syncSecondaryChairmanData();
       exam.__saving = false;
       return true;
     }
@@ -9961,14 +10078,14 @@ async function openDriverPrintFlow(options = {}) {
 
     document.querySelectorAll("[data-driver-print-variant]").forEach((button) => {
       button.addEventListener("click", async () => {
-        const targetWindow = window.open("about:blank", "_blank");
+        const targetWindow = openDocumentTargetWindow();
         await printVariant(button.dataset.driverPrintVariant || "", { targetWindow });
       });
     });
 
     document.querySelectorAll("[data-driver-print-selected-certificate]").forEach((button) => {
       button.addEventListener("click", async () => {
-        const targetWindow = window.open("about:blank", "_blank");
+        const targetWindow = openDocumentTargetWindow();
         await printSelectedCertificate(button.dataset.driverPrintSelectedCertificate || "", { targetWindow });
       });
     });
@@ -10112,14 +10229,12 @@ async function openDemoDocument(typeOrId, options = {}) {
   });
 
   document.getElementById("printDocumentPreview")?.addEventListener("click", async () => {
-    const targetWindow = window.open("about:blank", "_blank");
+    const targetWindow = openDocumentTargetWindow();
     try {
       await openGeneratedDocumentDirectly(documentItem, { targetWindow });
       showToast("Документ открыт");
     } catch (error) {
-      if (targetWindow && !targetWindow.closed) {
-        targetWindow.close();
-      }
+      showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть документ"));
       showToast(humanizeApiError(error, "Не удалось открыть документ"));
     }
   });
@@ -10904,11 +11019,11 @@ async function prepareContractPrintContext() {
 }
 
 async function printContractForCurrentVisit({ rerender = true } = {}) {
-  const targetWindow = window.open("about:blank", "_blank");
+  const targetWindow = openDocumentTargetWindow("Договор формируется. Не закрывайте это окно.");
   try {
     const { client, visit } = await prepareContractPrintContext();
     if (!client || !visit) {
-      if (targetWindow && !targetWindow.closed) targetWindow.close();
+      showDocumentTargetError(targetWindow, "Сначала выберите клиента и обращение.");
       showToast("Сначала выбери клиента и обращение");
       return;
     }
@@ -10917,7 +11032,7 @@ async function printContractForCurrentVisit({ rerender = true } = {}) {
     showToast(`Договор открыт: ${documentItem?.title || "документ"}`);
     if (rerender) renderApp();
   } catch (error) {
-    if (targetWindow && !targetWindow.closed) targetWindow.close();
+    showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть договор"));
     console.error(error);
     showToast(humanizeApiError(error, "Не удалось отправить договор в печать"));
   }
@@ -12041,16 +12156,16 @@ function bindContentEvents() {
       });
 
       actionModalContent?.querySelector("[data-chairman-print-current-certificate]")?.addEventListener("click", async (event) => {
-        const targetWindow = window.open("about:blank", "_blank");
+        const targetWindow = openDocumentTargetWindow("Справка формируется. Не закрывайте это окно.");
         await runChairmanPrint(`${selectedCertificateType}_certificate`, "справку", event.currentTarget, targetWindow);
       });
 
       actionModalContent?.querySelector("[data-chairman-print-certificate-duplicate]")?.addEventListener("click", async (event) => {
         event.preventDefault();
-        const targetWindow = window.open("about:blank", "_blank");
+        const targetWindow = openDocumentTargetWindow("Открываем дубликат справки.");
         const latestDocument = findLatestCertificateDocument(selectedCertificateType);
         if (!latestDocument) {
-          if (targetWindow && !targetWindow.closed) targetWindow.close();
+          showDocumentTargetError(targetWindow, "Для этой справки еще нет напечатанного документа.");
           showToast("Для этой справки еще нет напечатанного документа");
           return;
         }
@@ -12058,7 +12173,7 @@ function bindContentEvents() {
           await openGeneratedDocumentDirectly(latestDocument, { targetWindow });
           showToast(`Дубликат открыт: ${latestDocument.title || getCertificatePrintTypeLabel(selectedCertificateType)}`);
         } catch (error) {
-          if (targetWindow && !targetWindow.closed) targetWindow.close();
+          showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть дубликат"));
           showToast(humanizeApiError(error, "Не удалось открыть дубликат"));
         }
       });
@@ -12072,7 +12187,7 @@ function bindContentEvents() {
           if (certificateTemplateMenu && certificateType) {
             selectCertificateType(certificateType);
           }
-          const targetWindow = window.open("about:blank", "_blank");
+          const targetWindow = openDocumentTargetWindow("Документ формируется. Не закрывайте это окно.");
           await runChairmanPrint(
             printKind,
             button.textContent?.trim() || "документ",
@@ -12086,16 +12201,16 @@ function bindContentEvents() {
     const runChairmanPrint = async (printKind, actionLabel, currentButton, targetWindow = null) => {
       const examId = chairmanForm.dataset.examId;
       if (!examId) {
-        if (targetWindow && !targetWindow.closed) targetWindow.close();
+        showDocumentTargetError(targetWindow, "Не удалось подготовить печать из окна председателя.");
         showToast("Не удалось подготовить печать из окна председателя");
         return;
       }
 
       if (currentButton) currentButton.disabled = true;
       const values = collectChairmanModalFormValues(chairmanForm);
-      const saved = await window.saveDoctorExam?.(examId, values);
+      const saved = await window.saveDoctorExam?.(examId, values, { waitForSecondarySync: false });
       if (!saved) {
-        if (targetWindow && !targetWindow.closed) targetWindow.close();
+        showDocumentTargetError(targetWindow, "Не удалось сохранить карточку врача перед печатью.");
         if (currentButton) currentButton.disabled = false;
         return;
       }
@@ -12156,7 +12271,7 @@ function bindContentEvents() {
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (!selectedBlank?.id) {
-              if (targetWindow && !targetWindow.closed) targetWindow.close();
+              showDocumentTargetError(targetWindow, `Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}.`);
               showToast(`Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}`);
               if (currentButton) currentButton.disabled = false;
               return;
@@ -12168,7 +12283,7 @@ function bindContentEvents() {
           window.closeDoctorExamCard?.();
           showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
         } catch (error) {
-          if (targetWindow && !targetWindow.closed) targetWindow.close();
+          showDocumentTargetError(targetWindow, humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));
           console.error(error);
           if (currentButton) currentButton.disabled = false;
           showToast(humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));
@@ -12187,7 +12302,7 @@ function bindContentEvents() {
         openChairmanPrintMenu();
         return;
       }
-      const targetWindow = window.open("about:blank", "_blank");
+      const targetWindow = openDocumentTargetWindow("Документ формируется. Не закрывайте это окно.");
       await runChairmanPrint(printButton.dataset.chairmanPrint || "conclusion", printButton.textContent?.trim() || "\u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442", printButton, targetWindow);
     });
   }
