@@ -3461,6 +3461,8 @@ const CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX =
   "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей";
 const GUARD_CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX =
   "Ритм синусовый, ЧСС, ЭОС нормальное положение, ЭКГ без особенностей";
+const CHAIRMAN_AUTO_EKG_PREFIX = "Медицинский центр ООО «Мед-Авто»";
+const LEGACY_CHAIRMAN_AUTO_EKG_PREFIX = 'Медицинский центр ООО "ЦМО "ЮЛМЕД"';
 
 function buildChairmanAutoEkgConclusion(date, formType = "") {
   const finalDate = extractRuDate(date) || todayRuDate();
@@ -3471,7 +3473,7 @@ function buildChairmanAutoEkgConclusion(date, formType = "") {
 }
 
 function buildChairmanAutoEkgText(date) {
-  return `Медицинский центр ООО "ЦМО "ЮЛМЕД", ЭКГ от ${extractRuDate(date) || todayRuDate()}`;
+  return `${CHAIRMAN_AUTO_EKG_PREFIX}, ЭКГ от ${extractRuDate(date) || todayRuDate()}`;
 }
 
 function buildChairmanAutoFluorographyText(date) {
@@ -3480,7 +3482,8 @@ function buildChairmanAutoFluorographyText(date) {
 
 function isChairmanAutoEkgText(value) {
   const text = String(value ?? "").trim();
-  return text.includes("ЭКГ от ") && text.startsWith('Медицинский центр ООО "ЦМО "ЮЛМЕД"');
+  if (!text.includes("ЭКГ от ")) return false;
+  return [CHAIRMAN_AUTO_EKG_PREFIX, LEGACY_CHAIRMAN_AUTO_EKG_PREFIX].some((prefix) => text.startsWith(prefix));
 }
 
 function isChairmanAutoFluorographyText(value) {
@@ -3503,7 +3506,9 @@ function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
   const result = { ...fields };
   const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
   const visitDate = extractRuDate(visit?.visitDate) || extractRuDate(visit?.createdAt) || todayRuDate();
-  const ekgDate = getChairmanInitialDate(client, visit, CHAIRMAN_EKG_DATE_KEYS) || visitDate;
+  const currentEkgValue = String(result.ekg ?? "").trim();
+  const storedAutoEkgDate = isChairmanAutoEkgText(currentEkgValue) ? extractRuDate(currentEkgValue) : "";
+  const ekgDate = storedAutoEkgDate || getChairmanInitialDate(client, visit, CHAIRMAN_EKG_DATE_KEYS) || visitDate;
   const fluorographyDate = getChairmanInitialDate(client, visit, CHAIRMAN_FLUOROGRAPHY_DATE_KEYS) || visitDate;
   const resolveDefault = (value) => (typeof value === "function" ? value(client, visit, result) : value);
   const setIfBlank = (key, value) => {
