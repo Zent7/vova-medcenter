@@ -26,20 +26,30 @@ BLANK_STATUSES = (BLANK_STATUS_FREE, BLANK_STATUS_ISSUED, BLANK_STATUS_SPOILED, 
 
 # Стартовый набор типов номерных бланков.
 BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate"
+BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE = "gims_medical_certificate"
 BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate"
 BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate"
+BLANK_TYPE_LMK_MEDICAL_CERTIFICATE = "lmk_medical_certificate"
 NUMBERED_BLANK_TYPES = (
     (
         BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
-        "Медицинское заключение для водительского удостоверения",
+        "Водительская",
+    ),
+    (
+        BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+        "ГИМС",
     ),
     (
         BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
-        "Справка для управления самоходными машинами",
+        "Тракторная",
     ),
     (
         BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
-        "Справка 002 ЧОД (для охраны)",
+        "Охранная",
+    ),
+    (
+        BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+        "ЛМК",
     ),
 )
 

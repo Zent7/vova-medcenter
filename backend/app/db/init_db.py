@@ -2,7 +2,9 @@ from app.db.base import Base
 from app.db.session import engine, SessionLocal
 from app.models.blank_form import (
     BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
     BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
     BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
     NUMBERED_BLANK_TYPES,
 )
@@ -277,6 +279,26 @@ def ensure_document_template_blank_columns() -> None:
 
         blank_type_updates = [
             (
+                BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%гимс%'
+                OR lower(coalesce(file_name, '')) LIKE '%гимс%'
+                OR lower(coalesce(code, '')) LIKE '%gims%'
+                OR lower(coalesce(name, '')) LIKE '%gims%'
+                OR lower(coalesce(file_name, '')) LIKE '%gims%'
+                """,
+            ),
+            (
+                BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%лмк%'
+                OR lower(coalesce(file_name, '')) LIKE '%лмк%'
+                OR lower(coalesce(code, '')) LIKE '%lmk%'
+                OR lower(coalesce(name, '')) LIKE '%lmk%'
+                OR lower(coalesce(file_name, '')) LIKE '%lmk%'
+                """,
+            ),
+            (
                 BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
                 """
                 lower(coalesce(name, '')) LIKE '%вод%'
@@ -344,6 +366,71 @@ def seed_blank_types() -> None:
             else:
                 existing.name = name
                 existing.is_active = True
+        db.flush()
+        db.execute(
+            text(
+                """
+                UPDATE blank_batches
+                SET blank_type = CASE
+                    WHEN coalesce(series, '') LIKE 'ЛМК%'
+                        OR lower(coalesce(series, '')) LIKE 'лмк%'
+                        OR lower(coalesce(series, '')) LIKE 'lmk%'
+                        THEN :lmk_type
+                    WHEN coalesce(series, '') LIKE 'ГИМС%'
+                        OR lower(coalesce(series, '')) LIKE 'гимс%'
+                        OR lower(coalesce(series, '')) LIKE 'gims%'
+                        THEN :gims_type
+                    ELSE blank_type
+                END
+                WHERE blank_type = :driver_type
+                  AND (
+                    coalesce(series, '') LIKE 'ЛМК%'
+                    OR lower(coalesce(series, '')) LIKE 'лмк%'
+                    OR lower(coalesce(series, '')) LIKE 'lmk%'
+                    OR coalesce(series, '') LIKE 'ГИМС%'
+                    OR lower(coalesce(series, '')) LIKE 'гимс%'
+                    OR lower(coalesce(series, '')) LIKE 'gims%'
+                  )
+                """
+            ),
+            {
+                "driver_type": BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                "gims_type": BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                "lmk_type": BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+            },
+        )
+        db.execute(
+            text(
+                """
+                UPDATE blank_forms
+                SET blank_type = CASE
+                    WHEN coalesce(series, '') LIKE 'ЛМК%'
+                        OR lower(coalesce(series, '')) LIKE 'лмк%'
+                        OR lower(coalesce(series, '')) LIKE 'lmk%'
+                        THEN :lmk_type
+                    WHEN coalesce(series, '') LIKE 'ГИМС%'
+                        OR lower(coalesce(series, '')) LIKE 'гимс%'
+                        OR lower(coalesce(series, '')) LIKE 'gims%'
+                        THEN :gims_type
+                    ELSE blank_type
+                END
+                WHERE blank_type = :driver_type
+                  AND (
+                    coalesce(series, '') LIKE 'ЛМК%'
+                    OR lower(coalesce(series, '')) LIKE 'лмк%'
+                    OR lower(coalesce(series, '')) LIKE 'lmk%'
+                    OR coalesce(series, '') LIKE 'ГИМС%'
+                    OR lower(coalesce(series, '')) LIKE 'гимс%'
+                    OR lower(coalesce(series, '')) LIKE 'gims%'
+                  )
+                """
+            ),
+            {
+                "driver_type": BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                "gims_type": BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                "lmk_type": BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+            },
+        )
         db.commit()
 
 

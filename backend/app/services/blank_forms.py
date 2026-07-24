@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,10 @@ from app.models.blank_form import (
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_STATUS_SPOILED,
+    BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
     BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+    NUMBERED_BLANK_TYPES,
     BlankBatch,
     BlankForm,
     BlankType,
@@ -116,9 +119,16 @@ def parse_number_input(value: str | int | None) -> int:
 
 
 def list_blank_types(db: Session) -> list[BlankType]:
+    order_by_code = case(
+        {code: index for index, (code, _name) in enumerate(NUMBERED_BLANK_TYPES)},
+        value=BlankType.code,
+        else_=len(NUMBERED_BLANK_TYPES),
+    )
     return list(
         db.execute(
-            select(BlankType).where(BlankType.is_active.is_(True)).order_by(BlankType.id.asc())
+            select(BlankType)
+            .where(BlankType.is_active.is_(True))
+            .order_by(order_by_code, BlankType.id.asc())
         ).scalars()
     )
 
@@ -879,6 +889,10 @@ def resolve_required_blank_type(
 ) -> str | None:
     if str(print_variant or "").strip().casefold() in {"guard", "chod"}:
         return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE
+    if str(print_variant or "").strip().casefold() == "gims":
+        return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE
+    if str(print_variant or "").strip().casefold() in {"lmk", "lmk_title", "lmk_certificate"}:
+        return BLANK_TYPE_LMK_MEDICAL_CERTIFICATE
 
     if not template.requires_numbered_blank:
         return None
