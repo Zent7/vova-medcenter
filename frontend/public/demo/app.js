@@ -42,6 +42,7 @@ const appState = {
   blanksFilterBatchId: "all",
   blanksSearch: "",
   restoreInputId: null,
+  selectedEncounterId: null,
   activeVisitId: null,
   doctorExamModal: {
     isOpen: false,
@@ -106,6 +107,7 @@ const data = {
           "ЛОР",
         ],
   clients: [],
+  fullClientsById: {},
   visits: [],
   documents: [],
   doctorExams: [],
@@ -1160,6 +1162,7 @@ function applyPersistedDemoState() {
     appState.blanksSearch = savedAppState.blanksSearch;
   }
   if (savedAppState.restoreInputId !== undefined) appState.restoreInputId = savedAppState.restoreInputId;
+  if (savedAppState.selectedEncounterId !== undefined) appState.selectedEncounterId = savedAppState.selectedEncounterId;
   if (savedAppState.activeVisitId !== undefined) appState.activeVisitId = savedAppState.activeVisitId;
   appState.doctorExamModal = {
     isOpen: false,
@@ -1227,6 +1230,7 @@ function persistDemoState() {
         blanksFilterBatchId: appState.blanksFilterBatchId,
         blanksSearch: appState.blanksSearch,
         restoreInputId: appState.restoreInputId,
+        selectedEncounterId: appState.selectedEncounterId,
         activeVisitId: appState.activeVisitId,
         doctorExamModal: appState.doctorExamModal,
       },
@@ -1577,12 +1581,13 @@ function hasDriverAdmissionCategoriesForVisit(visit) {
   if (!visit) return false;
   const client = getClientPool().find((item) => String(item.id) === String(visit.clientId));
   const detail = getDriverDetailFromVisit(visit);
+  const hasVisitSpecificServices = getSelectedVisitServiceIds(visit).length > 0 || (visit.serviceNames || []).length > 0;
   const values = [
     detail.categories,
     visit.admissionCategory,
-    client?.admissionCategory,
-    client?.category,
-    client?.rawApiClient?.admission_category,
+    ...(hasVisitSpecificServices
+      ? []
+      : [client?.admissionCategory, client?.category, client?.rawApiClient?.admission_category]),
   ];
   return values.some((value) => normalizeDriverCategories(value).length > 0);
 }
@@ -1591,13 +1596,16 @@ function getChairmanFormTypeForVisit(visit) {
   const services = getServicesForVisit(visit);
   const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
   const rawClient = client?.rawApiClient || {};
+  const visitServiceNames = Array.isArray(visit?.serviceNames) ? visit.serviceNames : [];
+  const rawVisitServiceNames = Array.isArray(visit?.rawApiEncounter?.services) ? visit.rawApiEncounter.services : [];
+  const hasVisitSpecificServices = services.length > 0 || visitServiceNames.length > 0 || rawVisitServiceNames.length > 0;
   const serviceText = normalizeSearchTextWithRepairs([
-    ...(Array.isArray(visit?.serviceNames) ? visit.serviceNames : []),
-    ...(Array.isArray(client?.services) ? client.services : []),
-    ...(Array.isArray(rawClient?.services) ? rawClient.services : []),
-    ...(Array.isArray(rawClient?.legacy_payload_json?.services) ? rawClient.legacy_payload_json.services : []),
+    ...visitServiceNames,
+    ...(hasVisitSpecificServices || !Array.isArray(client?.services) ? [] : client.services),
+    ...(hasVisitSpecificServices || !Array.isArray(rawClient?.services) ? [] : rawClient.services),
+    ...(hasVisitSpecificServices || !Array.isArray(rawClient?.legacy_payload_json?.services) ? [] : rawClient.legacy_payload_json.services),
     ...services.map((service) => service.name),
-    ...(Array.isArray(visit?.rawApiEncounter?.services) ? visit.rawApiEncounter.services : []),
+    ...rawVisitServiceNames,
   ]
     .join(" "));
 
@@ -2100,19 +2108,24 @@ function joinDocument(client) {
 function mapApiClient(client) {
   const services = Array.isArray(client.services) ? client.services : [];
   const admissionServices = getClientAdmissionServiceNames(client);
-  const encounterDateText = client.encounter_date_text || client.real_date_text || client.created_at || "";
-  const encounterTimeSource = client.latest_encounter_created_at || client.created_at || "";
+  const encounterId = client.encounter_id ?? null;
+  const encounterDateText = client.encounter_date || client.encounter_date_text || client.real_date_text || client.created_at || "";
+  const encounterTimeSource = client.encounter_created_at || client.latest_encounter_created_at || client.created_at || "";
   const encounterDateTime = formatDateTimeWithFallbackTime(encounterDateText, encounterTimeSource);
   return {
     id: client.id,
     backendId: client.id,
+    dashboardRowId: encounterId ? `encounter-${encounterId}` : `client-${client.id}`,
+    encounterId,
+    encounterStatus: client.encounter_status || "",
     patientNumber: client.patient_number,
     fullName: joinClientName(client) || `Пациент ${client.patient_number || client.id}`,
     birthDate: formatApiDate(client.birth_date),
     sex: client.sex || "",
     gender: client.sex || "",
     phone: client.phone || "",
-    center: client.center || "Медцентр 1",
+    centerId: client.center_id ?? null,
+    center: client.center_name || client.center || "Медцентр 1",
     document: joinDocument(client),
     documentType: client.document_type || "",
     documentSeries: client.document_series || "",
@@ -2121,7 +2134,7 @@ function mapApiClient(client) {
     documentIssuedDate: formatApiDate(client.document_issued_date),
     snils: client.snils || "",
     email: client.email || "",
-    note: client.notes || "",
+    note: encounterId !== null ? client.comment || "" : client.notes || "",
     lastVisit: encounterDateTime,
     services,
     registration: client.registration_text || client.address_text || "",
@@ -2149,7 +2162,7 @@ function mapApiClient(client) {
     mkb10: client.mkb10 || "",
     realDate: client.real_date_text || "",
     createdAt: client.created_at || "",
-    latestEncounterCreatedAt: client.latest_encounter_created_at || "",
+    latestEncounterCreatedAt: encounterTimeSource || "",
     rawApiClient: client,
   };
 }
@@ -2665,6 +2678,11 @@ async function resolveCenterIdForVisit(visit, client) {
     throw new Error("Не удалось загрузить список центров");
   }
 
+  const explicitCenterId = Number(visit?.centerId || client?.centerId || 0);
+  if (explicitCenterId && centers.some((center) => Number(center?.id) === explicitCenterId)) {
+    return explicitCenterId;
+  }
+
   const candidateNames = [
     visit?.center,
     client?.center,
@@ -3119,6 +3137,9 @@ function expandTwoDigitYear(value) {
 function upsertClientInMemory(client) {
   if (!client) return null;
   const mappedClient = client.rawApiClient ? client : mapApiClient(client);
+  if (mappedClient.rawApiClient && Object.hasOwn(mappedClient.rawApiClient, "legacy_payload_json")) {
+    data.fullClientsById[String(mappedClient.backendId || mappedClient.id)] = mappedClient;
+  }
   const mergeClient = (existing, incoming) => {
     const existingServices = Array.isArray(existing?.services) ? existing.services : [];
     const incomingServices = Array.isArray(incoming?.services) ? incoming.services : [];
@@ -3572,9 +3593,63 @@ function createVisitForClient(clientId, options = {}) {
   appState.visitServiceSearch = "";
   persistDemoState();
   ensureRequiredDoctorExamsForVisit(client, visit);
-  syncVisitToBackend(visit, client);
+  if (options.syncBackend !== false) syncVisitToBackend(visit, client);
 
   return visit;
+}
+
+async function createVisitsForClientByServices(client, serviceDrafts = []) {
+  const drafts = Array.isArray(serviceDrafts) ? serviceDrafts.filter((item) => item?.serviceId) : [];
+  if (!client || !drafts.length) return [];
+
+  const centerId = await resolveCenterIdForVisit({ center: client.center, centerId: client.centerId }, client);
+  const encounterDate = getLocalDateInputValue();
+  const savedItems = await apiRequest("/encounters/by-services", {
+    method: "POST",
+    body: JSON.stringify({
+      center_id: centerId,
+      client_id: Number(client.backendId || client.id),
+      encounter_date: encounterDate,
+      services: drafts.map((draft) => ({
+        service_id: Number(draft.serviceId),
+        unit_price: Number(draft.amount || 0),
+        payment_type: draft.paymentType || "cash",
+        comment: draft.comment || null,
+        notes: JSON.stringify(draft.detail || {}),
+      })),
+    }),
+  });
+
+  if (!Array.isArray(savedItems) || savedItems.length !== drafts.length) {
+    throw new Error("Backend вернул неполный список созданных обращений");
+  }
+
+  const visits = savedItems.map((savedItem, index) => {
+    const draft = drafts[index];
+    const visit = createVisitForClient(client.id, {
+      serviceNames: [draft.serviceName],
+      serviceIds: [String(draft.serviceId)],
+      serviceDetails: { [String(draft.serviceId)]: { ...(draft.detail || {}) } },
+      clientSex: draft.clientSex || getClientSexKey(client) || "",
+      amount: Number(draft.amount || 0),
+      paymentType: draft.paymentType || "cash",
+      comment: draft.comment || "",
+      syncBackend: false,
+    });
+    if (!visit) return null;
+    visit.backendId = savedItem?.encounter?.id || null;
+    visit.status = savedItem?.encounter?.status || "draft";
+    visit.__backendServicesSaved = true;
+    return visit;
+  }).filter(Boolean);
+
+  await Promise.all(visits.map((visit) => loadDoctorExamsForClient(client, visit)));
+
+  const activeVisit = visits[0] || null;
+  appState.activeVisitId = activeVisit?.id || null;
+  appState.selectedEncounterId = activeVisit?.backendId || null;
+  persistDemoState();
+  return visits;
 }
 
 function createVisitForClientIfNeeded(clientId, options = {}) {
@@ -3642,7 +3717,7 @@ async function syncVisitToBackend(visit, client) {
       const payload = {
         center_id: centerId,
         client_id: Number(clientId),
-        encounter_date: parseRuDateToIso(visit.visitDate, new Date().toISOString().slice(0, 10)),
+        encounter_date: parseRuDateToIso(visit.visitDate, getLocalDateInputValue()),
         payment_type: visit.paymentType || "cash",
         total_amount: Number(visit.amount || calculateVisitAmountByIds(getSelectedVisitServiceIds(visit), getVisitServiceDetails(visit))),
         comment: visit.comment || "",
@@ -3862,9 +3937,16 @@ function mapDashboardDoctorStatus(status, previousStatus = null) {
   };
 }
 
+function getDashboardDoctorStatusStorageKey(value) {
+  const encounterId = value?.encounterId ?? value?.encounter_id ?? null;
+  if (encounterId) return `encounter-${encounterId}`;
+  const clientId = value?.clientId ?? value?.client_id ?? value?.backendId ?? value?.id ?? null;
+  return clientId ? `client-${clientId}` : "";
+}
+
 function getDashboardDoctorStatus(client) {
-  const clientId = client?.backendId || client?.id;
-  return clientId ? data.dashboardDoctorStatuses[String(clientId)] || null : null;
+  const key = getDashboardDoctorStatusStorageKey(client);
+  return key ? data.dashboardDoctorStatuses[key] || null : null;
 }
 
 function getDashboardDoctorStatusVisit(client) {
@@ -3906,14 +3988,15 @@ function getDashboardBlankNumber(client, status = null) {
 
 function areDashboardDoctorStatusesReady(clients) {
   return (Array.isArray(clients) ? clients : []).every((client) => {
-    const clientId = client?.backendId || client?.id;
-    return clientId && Object.hasOwn(data.dashboardDoctorStatuses, String(clientId));
+    const key = getDashboardDoctorStatusStorageKey(client);
+    return key && Object.hasOwn(data.dashboardDoctorStatuses, key);
   });
 }
 
 async function loadDashboardDoctorStatuses(clients, { render = true } = {}) {
   const items = Array.isArray(clients) ? clients.filter(Boolean) : [];
-  const ids = items.map((c) => c?.backendId || c?.id).filter(Boolean);
+  const ids = Array.from(new Set(items.map((item) => item?.backendId || item?.id).filter(Boolean)));
+  const encounterIds = Array.from(new Set(items.map((item) => item?.encounterId).filter(Boolean)));
   if (!ids.length) {
     data.dashboardDoctorStatusesLoading = false;
     data.dashboardDoctorStatusesError = "";
@@ -3927,16 +4010,26 @@ async function loadDashboardDoctorStatuses(clients, { render = true } = {}) {
   if (render) renderApp();
 
   try {
-    const params = ids.map((id) => `client_ids=${encodeURIComponent(id)}`).join("&");
+    const params = [
+      ...ids.map((id) => `client_ids=${encodeURIComponent(id)}`),
+      ...encounterIds.map((id) => `encounter_ids=${encodeURIComponent(id)}`),
+    ].join("&");
     const statuses = await apiRequest(`/dashboard/client-doctor-statuses?${params}`);
     if (requestId !== data.dashboardDoctorStatusesRequestId) return;
 
     const nextStatuses = { ...data.dashboardDoctorStatuses };
-    ids.forEach((id) => {
-      nextStatuses[String(id)] = mapDashboardDoctorStatus({ client_id: id }, nextStatuses[String(id)]);
+    items.forEach((item) => {
+      const key = getDashboardDoctorStatusStorageKey(item);
+      if (!key) return;
+      nextStatuses[key] = mapDashboardDoctorStatus(
+        { client_id: item?.backendId || item?.id, encounter_id: item?.encounterId || null },
+        nextStatuses[key],
+      );
     });
     for (const status of Array.isArray(statuses) ? statuses : []) {
-      nextStatuses[String(status.client_id)] = mapDashboardDoctorStatus(status, nextStatuses[String(status.client_id)]);
+      const key = getDashboardDoctorStatusStorageKey(status);
+      if (!key) continue;
+      nextStatuses[key] = mapDashboardDoctorStatus(status, nextStatuses[key]);
     }
     data.dashboardDoctorStatuses = nextStatuses;
   } catch (error) {
@@ -3953,21 +4046,53 @@ async function loadDashboardDoctorStatuses(clients, { render = true } = {}) {
 async function refreshDashboardDoctorStatusForExam(exam, options = {}) {
   const client = getClientPool().find((item) => String(item.id) === String(exam?.clientId));
   if (!client) return;
-  await loadDashboardDoctorStatuses([client], options);
+  const visit = data.visits.find((item) => String(item.id) === String(exam?.visitId));
+  await loadDashboardDoctorStatuses([{ ...client, encounterId: visit?.backendId || exam?.backendEncounterId || null }], options);
 }
 
-async function loadClientWorkspace(client) {
+function activateClientEncounter(clientId, encounterId) {
+  if (!encounterId) return getCurrentVisitForClient(clientId);
+  const visit = data.visits.find(
+    (item) => String(item.clientId) === String(clientId) && String(item.backendId || "") === String(encounterId),
+  );
+  if (visit) appState.activeVisitId = visit.id;
+  return visit || null;
+}
+
+async function loadClientWorkspace(client, { encounterId = null } = {}) {
   if (!client) return;
   data.medicalRecordEditMode = false;
   data.medicalRecordSaveError = "";
   await loadEncountersForClient(client);
-  const visit = getCurrentVisitForClient(client.id);
+  const visit = activateClientEncounter(client.id, encounterId) || getCurrentVisitForClient(client.id);
+  appState.selectedEncounterId = visit?.backendId || encounterId || null;
   await loadDoctorExamsForClient(client, visit);
   await loadWorkflowData({
     clientId: client.backendId || client.id,
     encounterId: visit?.backendId || null,
   });
+  persistDemoState();
   renderApp();
+}
+
+function mergeFullClientWithDashboardRow(client, fullClient) {
+  const hasEncounter = client?.encounterId !== null && client?.encounterId !== undefined;
+  return {
+    ...client,
+    ...fullClient,
+    dashboardRowId: client?.dashboardRowId || fullClient?.dashboardRowId,
+    encounterId: hasEncounter ? client.encounterId : fullClient?.encounterId ?? null,
+    encounterStatus: hasEncounter ? client.encounterStatus : fullClient?.encounterStatus || "",
+    centerId: client?.centerId ?? fullClient?.centerId ?? null,
+    center: client?.center || fullClient?.center || "Медцентр 1",
+    services: hasEncounter && Array.isArray(client?.services) ? client.services.slice() : fullClient?.services || [],
+    note: hasEncounter ? client?.note || "" : fullClient?.note || "",
+    lastVisit: hasEncounter ? client?.lastVisit || "" : fullClient?.lastVisit || "",
+    encounterDate: hasEncounter ? client?.encounterDate || "" : fullClient?.encounterDate || "",
+    latestEncounterCreatedAt: hasEncounter
+      ? client?.latestEncounterCreatedAt || ""
+      : fullClient?.latestEncounterCreatedAt || "",
+  };
 }
 
 async function ensureFullClientLoaded(client) {
@@ -3975,8 +4100,14 @@ async function ensureFullClientLoaded(client) {
   if (client.rawApiClient && Object.hasOwn(client.rawApiClient, "legacy_payload_json")) return client;
 
   const clientId = client.backendId || client.id;
-  const apiClient = await apiRequest(`/clients/${encodeURIComponent(clientId)}`);
-  return upsertClientInMemory(apiClient);
+  const cacheKey = String(clientId);
+  let fullClient = data.fullClientsById[cacheKey] || null;
+  if (!fullClient) {
+    const apiClient = await apiRequest(`/clients/${encodeURIComponent(clientId)}`);
+    fullClient = mapApiClient(apiClient);
+    data.fullClientsById[cacheKey] = fullClient;
+  }
+  return mergeFullClientWithDashboardRow(client, fullClient);
 }
 
 async function restoreWorkplaceSelection() {
@@ -4766,6 +4897,37 @@ function getVisibleDashboardClients() {
   return getDashboardClientPage().currentClients;
 }
 
+function getSelectedDashboardRow(clients = getVisibleDashboardClients()) {
+  const rows = Array.isArray(clients) ? clients : [];
+  const selectedClientId = appState.selectedClientId;
+  if (!selectedClientId) return null;
+  return rows.find(
+    (client) =>
+      String(client.id) === String(selectedClientId) &&
+      (!appState.selectedEncounterId || String(client.encounterId || "") === String(appState.selectedEncounterId)),
+  ) || null;
+}
+
+function getNewEncounterTargetClient() {
+  const visibleClients = getVisibleDashboardClients();
+  const selectedRow = getSelectedDashboardRow(visibleClients);
+  let targetRow = selectedRow;
+
+  if (!targetRow && appState.clientSearch.trim()) {
+    const uniqueClientIds = Array.from(new Set(visibleClients.map((client) => String(client.id)).filter(Boolean)));
+    if (uniqueClientIds.length === 1) {
+      targetRow = visibleClients.find((client) => String(client.id) === uniqueClientIds[0]) || null;
+    }
+  }
+
+  if (!targetRow && !appState.clientSearch.trim()) {
+    targetRow = getSelectedClient();
+  }
+  if (!targetRow) return null;
+
+  return getClientPool().find((client) => String(client.id) === String(targetRow.id)) || targetRow;
+}
+
 async function loadClientsFromBackend(searchValue) {
   const search = String(searchValue || "").trim();
   const shouldFilterByEncounterDate = appState.clientPeriodFilterApplied === true;
@@ -4790,7 +4952,7 @@ async function loadClientsFromBackend(searchValue) {
     if (search) params.set("search", search);
     if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
     if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
-    const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
+    const url = `${API_BASE_URL}/dashboard/encounter-rows?${params.toString()}`;
     const response = await fetch(url, { signal: abortController.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const clients = await response.json();
@@ -4852,6 +5014,7 @@ function resetDashboardClientSelection() {
   appState.clientPeriodFilterApplied = false;
   appState.dashboardPage = 1;
   appState.selectedClientId = null;
+  appState.selectedEncounterId = null;
   appState.activeVisitId = null;
   data.backendSearch = "";
   data.backendSearchError = "";
@@ -5019,7 +5182,11 @@ function buildExcelRows(clients) {
       .filter(Boolean)
       .map((service) => getServiceToken(service))
       .filter(Boolean);
-    const localVisit = getCurrentVisitForClient(client.id);
+    const localVisit = client.encounterId
+      ? data.visits.find(
+          (visit) => String(visit.clientId) === String(client.id) && String(visit.backendId || "") === String(client.encounterId),
+        ) || null
+      : getCurrentVisitForClient(client.id);
     const currentVisit = localVisit || getDashboardDoctorStatusVisit(client) || (
       fallbackServiceIds.length
         ? {
@@ -5039,6 +5206,8 @@ function buildExcelRows(clients) {
 
     return {
       id: client.id,
+      encounterId: client.encounterId || currentVisit?.backendId || null,
+      rowId: client.dashboardRowId || (client.encounterId ? `encounter-${client.encounterId}` : `client-${client.id}`),
       patientNumber: client.patientNumber ?? client.id,
       fullName: client.fullName,
       birthDate: client.birthDate,
@@ -5375,7 +5544,9 @@ function renderSketchHome() {
     pageStartIndex,
     totalPages,
   } = getDashboardClientPage();
-  const selectedClient = currentClients.find((client) => client.id === appState.selectedClientId) || getSelectedClient();
+  const selectedDashboardRow = getSelectedDashboardRow(currentClients);
+  const selectedClient = getSelectedClient() || selectedDashboardRow;
+  const newEncounterTarget = getNewEncounterTargetClient();
   const duplicateCandidates = findDuplicateCandidates(appState.clientSearch).filter((client) => client.id !== selectedClient?.id);
   const hasSelectedClient = Boolean(selectedClient);
   const doctorButtons = [
@@ -5461,7 +5632,7 @@ function renderSketchHome() {
                 <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="поиск" autocapitalize="words" />
               </label>
               <div class="sketch-toolbar__actions">
-                <button class="primary-button" id="addClientButton" type="button">Добавить</button>
+                <button class="primary-button" id="addClientButton" type="button" title="Создать новую карточку пациента">Новый клиент</button>
                 <button
                   class="primary-button"
                   id="printSelectedClientContractButton"
@@ -5475,8 +5646,8 @@ function renderSketchHome() {
                   class="secondary-button dashboard-new-visit-button"
                   id="createVisitFromDashboardButton"
                   type="button"
-                  ${hasSelectedClient ? "" : "disabled"}
-                  title="${hasSelectedClient ? "Создать новое обращение для выбранного клиента" : "Сначала выберите клиента в таблице"}"
+                  ${newEncounterTarget ? "" : "disabled"}
+                  title="${newEncounterTarget ? "Создать отдельное обращение на каждую выбранную услугу" : "Найдите одного клиента или выберите его в таблице"}"
                 >
                   Новое обращение
                 </button>
@@ -5544,7 +5715,7 @@ function renderSketchHome() {
                 ? excelRows
                     .map(
                       (row) => `
-                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Один щелчок — выбрать, двойной — изменить клиента">
+                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && String(selectedClient.id) === String(row.id) && String(appState.selectedEncounterId || "") === String(row.encounterId || "") ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" data-encounter-id="${row.encounterId || ""}" data-dashboard-row-id="${escapeHtml(row.rowId)}" title="Один щелчок — выбрать обращение, двойной — изменить клиента">
                           <span>${escapeHtml(row.encounterDate)}</span>
                           <span class="sketch-table__fio">${escapeHtml(displayTableValue(row.fullName))}</span>
                           <span>${escapeHtml(row.birthDate)}</span>
@@ -8652,6 +8823,41 @@ async function createDemoDocument(type) {
   return createDocumentForVisit(type, client, visit);
 }
 
+async function createContractsForVisits(client, visits = []) {
+  const targetVisits = Array.isArray(visits) ? visits.filter(Boolean) : [];
+  if (!client || !targetVisits.length) return [];
+
+  const documents = [];
+  const failures = [];
+  try {
+    for (const visit of targetVisits) {
+      try {
+        appState.activeVisitId = visit.id;
+        appState.selectedEncounterId = visit.backendId || null;
+        const documentItem = await createDocumentForVisit("contract", client, visit);
+        if (!documentItem) continue;
+        documents.push(documentItem);
+        if (documentItem.downloadUrl) await downloadGeneratedDocument(documentItem);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  } finally {
+    const firstVisit = targetVisits[0];
+    appState.activeVisitId = firstVisit?.id || null;
+    appState.selectedEncounterId = firstVisit?.backendId || null;
+    persistDemoState();
+  }
+
+  if (failures.length) {
+    throw new Error(`Сформировано договоров: ${documents.length} из ${targetVisits.length}`);
+  }
+  showToast(`Договоры скачиваются: ${documents.length}`);
+  return documents;
+}
+
+window.createContractsForVisits = createContractsForVisits;
+
 function normalizeBlankSeries(series) {
   return String(series ?? "").trim();
 }
@@ -10819,6 +11025,7 @@ function bindContentEvents() {
       appState.clientPeriodFilterApplied = Boolean(appState.clientEncounterDateFrom || appState.clientEncounterDateTo);
       appState.dashboardPage = 1;
       appState.selectedClientId = null;
+      appState.selectedEncounterId = null;
       appState.activeVisitId = null;
       persistDemoState();
       scheduleClientSearch(appState.clientSearch || "");
@@ -10834,6 +11041,7 @@ function bindContentEvents() {
       appState.clientPeriodFilterApplied = false;
       appState.dashboardPage = 1;
       appState.selectedClientId = null;
+      appState.selectedEncounterId = null;
       appState.activeVisitId = null;
       persistDemoState();
       scheduleClientSearch(appState.clientSearch || "");
@@ -10862,8 +11070,25 @@ function bindContentEvents() {
   const createVisitFromDashboardButton = document.getElementById("createVisitFromDashboardButton");
   if (createVisitFromDashboardButton) {
     createVisitFromDashboardButton.addEventListener("click", async () => {
-      const selectedClient = getSelectedClient();
-      await createVisitAndOpenEditor(selectedClient);
+      createVisitFromDashboardButton.disabled = true;
+      try {
+        const encounterTarget = getNewEncounterTargetClient();
+        if (!encounterTarget) {
+          showToast("Найдите одного клиента или выберите его в таблице");
+          return;
+        }
+        const fullClient = await ensureFullClientLoaded(encounterTarget);
+        appState.selectedClientId = fullClient.id;
+        if (window.openClientModal) {
+          window.openClientModal(fullClient.id, { encounterMode: true, client: fullClient });
+        }
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось загрузить полную карточку клиента"));
+      } finally {
+        if (createVisitFromDashboardButton.isConnected) {
+          createVisitFromDashboardButton.disabled = false;
+        }
+      }
     });
   }
 
@@ -11302,7 +11527,10 @@ function bindContentEvents() {
       const doctorCell = event.target.closest("[data-row-doctor-role-id]");
       const doctorRoleId = doctorCell?.dataset.rowDoctorRoleId || "";
       const nextClientId = Number(button.dataset.clientId);
+      const nextEncounterId = button.dataset.encounterId ? Number(button.dataset.encounterId) : null;
       const wasSameSelectedClient = String(appState.selectedClientId) === String(nextClientId);
+      const wasSameEncounter = String(appState.selectedEncounterId || "") === String(nextEncounterId || "");
+      const wasSameSelection = wasSameSelectedClient && wasSameEncounter;
       if (
         doctorRoleId &&
         Number(window.__suppressDoctorCellClickUntil || 0) > Date.now()
@@ -11314,7 +11542,9 @@ function bindContentEvents() {
         clientRowClickTimer = window.setTimeout(async () => {
           clientRowClickTimer = null;
           appState.selectedClientId = nextClientId;
-          appState.activeVisitId = getCurrentVisitForClient(appState.selectedClientId)?.id || null;
+          appState.selectedEncounterId = nextEncounterId;
+          const loadedVisit = activateClientEncounter(nextClientId, nextEncounterId);
+          appState.activeVisitId = loadedVisit?.id || null;
           persistDemoState();
           renderApp();
           let selectedClient = getSelectedClient();
@@ -11324,9 +11554,10 @@ function bindContentEvents() {
             showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
             return;
           }
-          renderApp();
-          if (!wasSameSelectedClient) {
-            await loadClientWorkspace(selectedClient);
+          if (!wasSameSelection || !loadedVisit) {
+            await loadClientWorkspace(selectedClient, { encounterId: nextEncounterId });
+          } else {
+            renderApp();
           }
         }, CLIENT_ROW_SINGLE_CLICK_DELAY);
         return;
@@ -11336,7 +11567,9 @@ function bindContentEvents() {
         clientRowClickTimer = null;
       }
       appState.selectedClientId = nextClientId;
-      appState.activeVisitId = getCurrentVisitForClient(appState.selectedClientId)?.id || null;
+      appState.selectedEncounterId = nextEncounterId;
+      const loadedVisit = activateClientEncounter(nextClientId, nextEncounterId);
+      appState.activeVisitId = loadedVisit?.id || null;
       persistDemoState();
       renderApp();
       let selectedClient = getSelectedClient();
@@ -11346,9 +11579,10 @@ function bindContentEvents() {
         showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
         return;
       }
-      renderApp();
-      if (!doctorRoleId || !wasSameSelectedClient) {
-        await loadClientWorkspace(selectedClient);
+      if (!wasSameSelection || !loadedVisit) {
+        await loadClientWorkspace(selectedClient, { encounterId: nextEncounterId });
+      } else {
+        renderApp();
       }
 
       if (selectedClient && doctorRoleId) {
@@ -11383,8 +11617,10 @@ function bindContentEvents() {
       }
 
       const nextClientId = Number(button.dataset.clientId);
+      const nextEncounterId = button.dataset.encounterId ? Number(button.dataset.encounterId) : null;
       appState.selectedClientId = nextClientId;
-      appState.activeVisitId = getCurrentVisitForClient(nextClientId)?.id || null;
+      appState.selectedEncounterId = nextEncounterId;
+      appState.activeVisitId = activateClientEncounter(nextClientId, nextEncounterId)?.id || null;
       persistDemoState();
 
       let selectedClient = getSelectedClient();
@@ -11396,7 +11632,7 @@ function bindContentEvents() {
       }
 
       if (selectedClient && window.openClientModal) {
-        window.openClientModal(selectedClient.id);
+        window.openClientModal(selectedClient.id, { client: selectedClient });
       }
     });
   });
@@ -12089,6 +12325,7 @@ window.getOrCreateDoctorExam = getOrCreateDoctorExam;
 window.getOrCreateDraftVisit = getOrCreateDraftVisit;
 window.getCurrentVisitForClient = getCurrentVisitForClient;
 window.createVisitForClient = createVisitForClient;
+window.createVisitsForClientByServices = createVisitsForClientByServices;
 window.createVisitForClientIfNeeded = createVisitForClientIfNeeded;
 window.updateVisit = updateVisit;
 window.ensureRequiredDoctorExamsForVisit = ensureRequiredDoctorExamsForVisit;
@@ -12115,6 +12352,7 @@ window.mapApiService = mapApiService;
 window.mapApiClient = mapApiClient;
 window.upsertClientInMemory = upsertClientInMemory;
 window.showClientInDashboardResults = showClientInDashboardResults;
+window.refreshDashboardEncounterRows = () => loadClientsFromBackend(appState.clientSearch);
 window.parseRuDateToIso = parseRuDateToIso;
 window.loadDashboardDoctorStatuses = loadDashboardDoctorStatuses;
 window.loadServicesFromBackend = loadServicesFromBackend;

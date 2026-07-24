@@ -299,7 +299,9 @@ def client_search_text_expr():
 
 
 def client_search_conditions(value: str):
-    tokens = [token.lower() for token in value.split() if token]
+    # Keep the caller's casing here. PostgreSQL ILIKE remains case-insensitive,
+    # while SQLite's lower() does not fold Cyrillic during local diagnostics.
+    tokens = [token for token in value.split() if token]
     conditions = []
     if tokens:
         search_text = client_search_text_expr()

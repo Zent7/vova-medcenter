@@ -16,6 +16,8 @@ from app.models.center import Center  # noqa: E402
 from app.models.client import Client  # noqa: E402
 from app.models.doctor_exam import DoctorExam  # noqa: E402
 from app.models.encounter import Encounter  # noqa: E402
+from app.models.encounter_service import EncounterService  # noqa: E402
+from app.models.service import Service  # noqa: E402
 
 
 class DashboardDoctorStatusesTests(unittest.TestCase):
@@ -52,7 +54,7 @@ class DashboardDoctorStatusesTests(unittest.TestCase):
         self.engine.dispose()
 
     def _statuses(self):
-        return get_client_doctor_statuses(client_ids=[1], db=self.db)[0]
+        return get_client_doctor_statuses(client_ids=[1], encounter_ids=None, db=self.db)[0]
 
     def test_completed_gynecologist_is_returned_for_male_client(self):
         self.db.add(
@@ -89,6 +91,82 @@ class DashboardDoctorStatusesTests(unittest.TestCase):
 
         self.assertIn("gynecologist", status.existing_doctor_role_ids)
         self.assertNotIn("gynecologist", status.completed_doctor_role_ids)
+
+    def test_requested_encounters_for_same_client_have_separate_statuses(self):
+        self.db.add_all(
+            [
+                Service(id=1, code="old-service", name="Old service", price=100),
+                Service(id=2, code="new-service", name="New service", price=200),
+                Encounter(
+                    id=2,
+                    center_id=1,
+                    client_id=1,
+                    encounter_date=date(2026, 7, 7),
+                    payment_type="cash",
+                    total_amount=0,
+                    status="draft",
+                    suppressed_doctor_role_ids=["surgeon"],
+                ),
+            ]
+        )
+        self.db.flush()
+        self.db.add_all(
+            [
+                EncounterService(encounter_id=1, service_id=1, unit_price=100, line_total=100),
+                EncounterService(encounter_id=2, service_id=2, unit_price=200, line_total=200),
+                DoctorExam(
+                    client_id=1,
+                    encounter_id=1,
+                    doctor_role_id="therapist",
+                    is_completed=True,
+                    fields_json={},
+                ),
+                DoctorExam(
+                    client_id=1,
+                    encounter_id=2,
+                    doctor_role_id="ophthalmologist",
+                    is_completed=False,
+                    fields_json={},
+                ),
+            ]
+        )
+        self.db.commit()
+
+        statuses = get_client_doctor_statuses(
+            client_ids=[1],
+            encounter_ids=[2, 1, 2],
+            db=self.db,
+        )
+
+        self.assertEqual([status.encounter_id for status in statuses], [2, 1])
+        self.assertEqual([service.service_id for service in statuses[0].services], [2])
+        self.assertEqual(statuses[0].existing_doctor_role_ids, ["ophthalmologist"])
+        self.assertEqual(statuses[0].completed_doctor_role_ids, [])
+        self.assertEqual(statuses[0].suppressed_doctor_role_ids, ["surgeon"])
+        self.assertEqual([service.service_id for service in statuses[1].services], [1])
+        self.assertEqual(statuses[1].existing_doctor_role_ids, ["therapist"])
+        self.assertEqual(statuses[1].completed_doctor_role_ids, ["therapist"])
+
+    def test_client_only_request_keeps_latest_encounter_compatibility(self):
+        self.db.add(
+            Encounter(
+                id=2,
+                center_id=1,
+                client_id=1,
+                encounter_date=date(2026, 7, 7),
+                payment_type="cash",
+                total_amount=0,
+                status="closed",
+            )
+        )
+        self.db.commit()
+
+        statuses = get_client_doctor_statuses(client_ids=[1], encounter_ids=None, db=self.db)
+
+        self.assertEqual(len(statuses), 1)
+        self.assertEqual(statuses[0].client_id, 1)
+        self.assertEqual(statuses[0].encounter_id, 2)
+        self.assertEqual(statuses[0].encounter_status, "closed")
 
 
 if __name__ == "__main__":

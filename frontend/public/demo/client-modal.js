@@ -968,13 +968,13 @@ function bindClientServiceGroupButtons() {
 
 function openClientModal(clientId = null, options = {}) {
   const encounterMode = options && typeof options === "object" ? options.encounterMode === true : false;
+  const providedClient = options && typeof options === "object" ? options.client || null : null;
+  const cachedClient = clientId ? data.fullClientsById?.[String(clientId)] || null : null;
   const selectedClient = window.getSelectedClient?.();
-  const editingClient = clientId
-    ? selectedClient && String(selectedClient.id) === String(clientId)
-      ? selectedClient
-      : window.getClientPool?.().find((client) => String(client.id) === String(clientId)) ||
-        data.clients.find((client) => String(client.id) === String(clientId))
-    : null;
+  const editingClient = clientId
+    ? [providedClient, cachedClient, selectedClient, ...(window.getClientPool?.() || []), ...(data.clients || [])]
+        .find((client) => client && String(client.id) === String(clientId)) || null
+    : null;
   const raw = editingClient ? editingClient.fullName : appState.clientSearch.trim();
   const parts = raw.split(/\s+/).filter(Boolean);
   const [lastName = "", firstName = "", middleName = ""] = parts;
@@ -1202,19 +1202,20 @@ function openClientModal(clientId = null, options = {}) {
 
         <label class="field">
           <span>Комментарий</span>
-          <textarea name="comment" rows="2">${escapeHtml(editingClient?.note || "")}</textarea>
+          <textarea name="comment" rows="2">${escapeHtml(encounterMode ? "" : (editingClient?.note || ""))}</textarea>
         </label>
 
         </section>
 
         <section class="client-create-section">
-          <div class="client-create-section__head">
+          <div class="client-create-section__head">
             <div>
               <span class="client-create-section__eyebrow">Услуги и оформление</span>
               <strong>Выбор сценария обслуживания</strong>
-            </div>
-          </div>
-        <div id="serviceSelectorContainer">
+            </div>
+          </div>
+        ${encounterMode ? '<p class="muted">Данные пациента взяты из его карточки и здесь не изменяются. Каждая выбранная услуга будет сохранена отдельной строкой обращения.</p>' : ""}
+        <div id="serviceSelectorContainer">
           ${renderClientServiceSelector(initialSelectedServices)}
         </div>
         <div id="clientDriverPanelContainer">
@@ -1246,6 +1247,22 @@ function openClientModal(clientId = null, options = {}) {
     form.querySelectorAll(".field").forEach((field) => {
       if (!field.querySelector("input, select, textarea")) field.remove();
     });
+    if (encounterMode) {
+      const serviceSection = form.querySelector("#serviceSelectorContainer")?.closest(".client-create-section");
+      form.querySelectorAll(".client-create-section").forEach((section) => {
+        if (section === serviceSection) return;
+        section.querySelectorAll("input, select, textarea").forEach((field) => {
+          if (field.name === "comment") return;
+          if (field.tagName === "SELECT") {
+            field.disabled = true;
+          } else {
+            field.readOnly = true;
+          }
+          field.setAttribute("aria-readonly", "true");
+          field.title = "Изменить эти данные можно в карточке пациента";
+        });
+      });
+    }
     bindClientNameCapitalization(form);
     bindClientAddressAutocomplete(form, { defaultCountry: Boolean(editingClient) });
     form.elements.gender?.addEventListener("change", () => {
@@ -1335,7 +1352,11 @@ function openClientModal(clientId = null, options = {}) {
     const visitAmount = window.calculateVisitAmountByIds
       ? window.calculateVisitAmountByIds(selectedServiceIds, serviceDetails)
       : window.calculateVisitAmount?.(selectedServiceValues);
-    const formSex = String(formData.get("gender") || "").toLowerCase().startsWith("ж") ? "F" : "M";
+    const submittedGender = encounterMode
+      ? (editingClient?.gender || editingClient?.sex || editingClient?.rawApiClient?.sex || "")
+      : formData.get("gender");
+    const normalizedGender = String(submittedGender || "").toLowerCase();
+    const formSex = normalizedGender === "f" || normalizedGender.startsWith("ж") ? "F" : "M";
 
     const isCreated = !editingClient;
 
@@ -1346,7 +1367,7 @@ function openClientModal(clientId = null, options = {}) {
         patientNumber: "",
       };
 
-    Object.assign(targetClient, {
+    if (!encounterMode) Object.assign(targetClient, {
       fullName: fullName || "Новый клиент",
       birthDate: String(formData.get("birthDate") || "").trim(),
       sex: formSex,
@@ -1373,7 +1394,7 @@ function openClientModal(clientId = null, options = {}) {
       encounterDate: encounterDateText,
       lastVisit: encounterDateText,
       services: selectedServiceValues,
-    });
+    });
 
     try {
       const addressText = [
@@ -1409,9 +1430,10 @@ function openClientModal(clientId = null, options = {}) {
         workPlace: formData.get("workPlace"),
         organization: formData.get("organization"),
       });
-      const backendId = editingClient?.backendId || (editingClient?.rawApiClient ? editingClient.id : null);
-      if (!window.apiRequest) throw new Error("Backend API недоступен");
-      const savedClient = await window.apiRequest?.(backendId ? `/clients/${backendId}` : "/clients", {
+      if (!encounterMode) {
+        const backendId = editingClient?.backendId || (editingClient?.rawApiClient ? editingClient.id : null);
+        if (!window.apiRequest) throw new Error("Backend API недоступен");
+        const savedClient = await window.apiRequest?.(backendId ? `/clients/${backendId}` : "/clients", {
         method: backendId ? "PUT" : "POST",
         body: JSON.stringify({
           last_name: String(formData.get("lastName") || "").trim() || "Без фамилии",
@@ -1444,10 +1466,10 @@ function openClientModal(clientId = null, options = {}) {
           },
         }),
       });
-      if (savedClient) {
-        const savedMapped = window.upsertClientInMemory?.(savedClient);
-        if (savedMapped) {
-          Object.assign(savedMapped, {
+        if (savedClient) {
+          const savedMapped = window.upsertClientInMemory?.(savedClient);
+          if (savedMapped) {
+            Object.assign(savedMapped, {
             ...targetClient,
             id: savedClient.id,
             backendId: savedClient.id,
@@ -1461,11 +1483,12 @@ function openClientModal(clientId = null, options = {}) {
             gender: savedClient.sex || formSex,
             rawApiClient: savedClient,
           });
-          targetClient = savedMapped;
-          targetClient = window.showClientInDashboardResults?.(targetClient, {
-            resetSearch: isCreated,
-            refresh: false,
-          }) || targetClient;
+            targetClient = savedMapped;
+            targetClient = window.showClientInDashboardResults?.(targetClient, {
+              resetSearch: isCreated,
+              refresh: false,
+            }) || targetClient;
+          }
         }
       }
     } catch (error) {
@@ -1482,11 +1505,53 @@ function openClientModal(clientId = null, options = {}) {
     appState.selectedClientId = targetClient.id;
     appState.clientSearch = isCreated ? "" : targetClient.fullName || fullName;
     data.backendSearch = appState.clientSearch.trim();
-    window.markClientChanged?.(targetClient, isCreated);
+    if (!encounterMode) window.markClientChanged?.(targetClient, isCreated);
 
-    const shouldCreateOrUpdateVisit = isCreated || encounterMode || selectedServiceValues.length;
-    const currentVisit =
-      shouldCreateOrUpdateVisit
+    let createdVisits = [];
+    let currentVisit = null;
+    const shouldSplitIntoServiceEncounters = (isCreated || encounterMode) && selectedServiceValues.length > 0;
+
+    if (encounterMode && !selectedServiceValues.length) {
+      showToast("Выберите хотя бы одну услугу");
+      return;
+    }
+
+    if (shouldSplitIntoServiceEncounters) {
+      const serviceDrafts = getClientServiceItemsByNames(selectedServiceValues).map((service) => {
+        const serviceId = getClientServiceDetailKey(service);
+        const detail = { ...(serviceDetails[serviceId] || {}) };
+        const summary = getClientVisitPaymentSummary([service.name], { [serviceId]: detail }, formData.get("comment"));
+        return {
+          serviceId,
+          serviceName: service.name,
+          detail,
+          clientSex: formSex,
+          amount: Number(detail.unitPrice ?? service.price ?? 0),
+          paymentType: summary.paymentType,
+          comment: summary.comment,
+        };
+      });
+
+      try {
+        createdVisits = await window.createVisitsForClientByServices?.(targetClient, serviceDrafts) || [];
+      } catch (error) {
+        console.warn("Failed to create encounters by services", error);
+        showToast(window.humanizeApiError?.(error, "Не удалось создать обращения") || "Не удалось создать обращения");
+        return;
+      }
+      if (createdVisits.length !== serviceDrafts.length) {
+        showToast("Backend не сохранил все выбранные услуги");
+        return;
+      }
+      currentVisit = createdVisits[0] || null;
+      await window.loadDashboardDoctorStatuses?.(
+        createdVisits.map((visit) => ({ ...targetClient, encounterId: visit.backendId })),
+        { render: false },
+      );
+      await window.refreshDashboardEncounterRows?.();
+    } else {
+      const shouldCreateOrUpdateVisit = isCreated || selectedServiceValues.length;
+      currentVisit = shouldCreateOrUpdateVisit
         ? window.createVisitForClientIfNeeded?.(targetClient.id, {
             serviceNames: selectedServiceValues,
             serviceIds: selectedServiceIds,
@@ -1495,10 +1560,11 @@ function openClientModal(clientId = null, options = {}) {
             amount: visitAmount,
             paymentType: paymentSummary.paymentType,
             comment: paymentSummary.comment,
-            forceNew: encounterMode,
           })
-        : window.getCurrentVisitForClient?.(targetClient.id);
-    if (currentVisit && currentVisit.status !== "closed") {
+        : window.getCurrentVisitForClient?.(targetClient.id);
+    }
+
+    if (!shouldSplitIntoServiceEncounters && currentVisit && currentVisit.status !== "closed") {
       const visitPatch = {
         serviceNames: selectedServiceValues,
         serviceIds: selectedServiceIds,
@@ -1530,22 +1596,32 @@ function openClientModal(clientId = null, options = {}) {
         resetSearch: false,
         refresh: true,
       }) || targetClient;
-      window.persistDemoState?.();
-    }
+      window.persistDemoState?.();
+    }
 
     actionModal.classList.add("hidden");
     if (shouldOpenContract) {
       appState.page = "documents";
     }
-    renderApp();
-    if (shouldOpenContract) {
-      await window.openDemoDocument?.("contract", { autoOpenFile: true });
-      return;
-    }
+    renderApp();
+    if (shouldOpenContract) {
+      if (createdVisits.length > 1) {
+        try {
+          await window.createContractsForVisits?.(targetClient, createdVisits);
+        } catch (error) {
+          showToast(window.humanizeApiError?.(error, "Не удалось сформировать все договоры") || "Не удалось сформировать все договоры");
+        }
+      } else {
+        await window.openDemoDocument?.("contract", { autoOpenFile: true });
+      }
+      return;
+    }
     showToast(
-      encounterMode
-        ? "Обращение сохранено"
-        : (editingClient ? `Клиент ${fullName || "клиент"} обновлен` : `Клиент ${fullName || "Новый клиент"} добавлен`),
+      createdVisits.length > 1
+        ? `Сохранено обращений: ${createdVisits.length}`
+        : encounterMode
+          ? "Обращение сохранено"
+          : (editingClient ? `Клиент ${fullName || "клиент"} обновлен` : `Клиент ${fullName || "Новый клиент"} добавлен`),
     );
   });
 }
