@@ -10144,15 +10144,32 @@ async function openDriverPrintFlow(options = {}) {
         const autoCreate =
           !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
           !isPreenteredBlankSeries(requestedSeries);
-        const query = new URLSearchParams({ auto_create: String(autoCreate) });
-        const result = await apiRequest(
-          `/blanks/forms/${Number(currentBlank.id)}/spoil-and-replace?${query.toString()}`,
-          {
+
+        if (currentBlank.status === "free") {
+          await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/spoil`, {
             method: "POST",
             body: JSON.stringify({ reason: "Бракованный бланк при печати председателем" }),
-          },
+          });
+        } else if (currentBlank.generated_document_id) {
+          await markPrintedDocument(
+            currentBlank.generated_document_id,
+            false,
+            "Бракованный бланк при печати председателем",
+          );
+        } else {
+          throw new Error("Не найден сформированный документ для списания выданного бланка");
+        }
+
+        flowState.currentBlank = null;
+        const query = new URLSearchParams({
+          blank_type: flowState.blankType,
+          center_id: String(flowState.centerId),
+          series: lookupSeries || "",
+        });
+        if (autoCreate) query.set("auto_create", "true");
+        flowState.currentBlank = normalizeDriverPrintBlank(
+          await apiRequest(`/blanks/forms/next?${query.toString()}`),
         );
-        flowState.currentBlank = normalizeDriverPrintBlank(result?.next_form || null);
         await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
         if (flowState.currentBlank?.id) {
           const nextParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
@@ -12059,6 +12076,8 @@ function bindContentEvents() {
               id: previousDocument.blankFormId,
               series,
               full_number: previousDocument.blankNumber || "",
+              status: "issued",
+              generated_document_id: previousDocument.backendId || previousDocument.id || null,
             });
           }
         });

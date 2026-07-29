@@ -6,7 +6,6 @@ from app.schemas.blank_form import (
     BlankBatchCreate,
     BlankBatchRead,
     BlankFormRead,
-    BlankFormReplacementRead,
     BlankFormSpoilRequest,
     BlankSeriesRead,
     BlankStatsItem,
@@ -26,7 +25,6 @@ from app.services.blank_forms import (
     list_blank_types,
     list_forms,
     release_form,
-    spoil_and_replace_form,
     spoil_form,
     stats as compute_stats,
 )
@@ -189,46 +187,6 @@ def spoil_form_endpoint(
     db.commit()
     db.refresh(form)
     return BlankFormRead.model_validate(enrich_form_for_read(db, form))
-
-
-@router.post("/forms/{form_id}/spoil-and-replace", response_model=BlankFormReplacementRead)
-def spoil_and_replace_form_endpoint(
-    form_id: int,
-    payload: BlankFormSpoilRequest | None = None,
-    auto_create: bool = Query(default=False),
-    db: Session = Depends(get_db),
-) -> BlankFormReplacementRead:
-    reason = payload.reason if payload is not None else None
-    try:
-        spoiled_form, next_form = spoil_and_replace_form(
-            db,
-            form_id=form_id,
-            reason=reason,
-            user_id=_current_user_id(),
-            auto_create=auto_create,
-        )
-    except BlankRangeInvalidError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except BlankRangeOverlapError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except BlankServiceError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    db.commit()
-    db.refresh(spoiled_form)
-    if next_form is not None:
-        db.refresh(next_form)
-    return BlankFormReplacementRead(
-        spoiled_form=BlankFormRead.model_validate(enrich_form_for_read(db, spoiled_form)),
-        next_form=(
-            BlankFormRead.model_validate(enrich_form_for_read(db, next_form))
-            if next_form is not None
-            else None
-        ),
-    )
 
 
 @router.post("/forms/{form_id}/release", response_model=BlankFormRead)
