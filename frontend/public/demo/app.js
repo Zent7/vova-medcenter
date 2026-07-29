@@ -416,7 +416,6 @@ const navItems = [
   { id: "cash", label: "Касса", toast: "Открыт блок: Касса" },
   { id: "xml", label: "XML", toast: "Открыт блок: XML" },
   { id: "reports", label: "Отчеты", toast: "Открыт блок: Отчеты" },
-  { id: "harmfulness", label: "Пункты вредности", toast: "Открыт блок: Пункты вредности" },
 ];
 
 function canManageEmployeeWorkspace() {
