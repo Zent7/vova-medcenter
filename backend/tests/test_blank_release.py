@@ -11,7 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app.models  # noqa: E402,F401
 from app.db.base import Base  # noqa: E402
-from app.models.blank_form import BLANK_STATUS_FREE, BLANK_STATUS_ISSUED, BlankBatch, BlankForm  # noqa: E402
+from app.models.blank_form import (  # noqa: E402
+    BLANK_STATUS_FREE,
+    BLANK_STATUS_ISSUED,
+    BLANK_STATUS_SPOILED,
+    BlankBatch,
+    BlankForm,
+)
 from app.models.center import Center  # noqa: E402
 from app.models.client import Client  # noqa: E402
 from app.models.document_journal import DocumentJournalEntry  # noqa: E402
@@ -19,7 +25,7 @@ from app.models.document_template import DocumentTemplate  # noqa: E402
 from app.models.encounter import Encounter  # noqa: E402
 from app.models.generated_document import GeneratedDocument  # noqa: E402
 from app.models.medical_record import MedicalRecord, MedicalRecordEntry  # noqa: E402
-from app.services.blank_forms import BlankServiceError, release_form  # noqa: E402
+from app.services.blank_forms import BlankServiceError, release_form, spoil_and_replace_form  # noqa: E402
 
 
 class BlankReleaseTests(unittest.TestCase):
@@ -154,6 +160,53 @@ class BlankReleaseTests(unittest.TestCase):
 
             with self.assertRaisesRegex(BlankServiceError, "только выданный"):
                 release_form(db, form_id=blank.id, user_id=None)
+
+    def test_spoiled_blank_is_replaced_with_next_number(self):
+        with self.Session() as db:
+            batch = BlankBatch(
+                blank_type="driver_medical_certificate",
+                series="002",
+                number_from=1,
+                number_to=2,
+                number_width=6,
+                quantity=2,
+            )
+            db.add(batch)
+            db.flush()
+            spoiled_blank = BlankForm(
+                batch_id=batch.id,
+                blank_type=batch.blank_type,
+                series=batch.series,
+                number_value=1,
+                full_number="002000001",
+                status=BLANK_STATUS_ISSUED,
+                issued_at=datetime.utcnow(),
+            )
+            next_blank = BlankForm(
+                batch_id=batch.id,
+                blank_type=batch.blank_type,
+                series=batch.series,
+                number_value=2,
+                full_number="002000002",
+                status=BLANK_STATUS_FREE,
+            )
+            db.add_all([spoiled_blank, next_blank])
+            db.commit()
+
+            replaced, selected_next = spoil_and_replace_form(
+                db,
+                form_id=spoiled_blank.id,
+                reason="Ошибка в документе",
+                user_id=None,
+            )
+            db.commit()
+
+            self.assertEqual(replaced.status, BLANK_STATUS_SPOILED)
+            self.assertEqual(replaced.spoiled_reason, "Ошибка в документе")
+            self.assertIsNotNone(replaced.spoiled_at)
+            self.assertIsNotNone(selected_next)
+            self.assertEqual(selected_next.id, next_blank.id)
+            self.assertEqual(selected_next.full_number, "002000002")
 
 
 if __name__ == "__main__":

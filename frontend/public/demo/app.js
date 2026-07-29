@@ -8632,6 +8632,7 @@ function getChairmanNumberedCertificateSeries(printType) {
 const CHAIRMAN_CERTIFICATE_PRINT_FLOWS = new Map([
   ["sport", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "sport" }],
   ["gto", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "gto" }],
+  ["071", { preselectedSeries: "071у", certificateTypes: ["071"], selectedCertificateType: "071", compactCertificateFlow: true }],
   ["gims", { preselectedSeries: "ГИМС", certificateTypes: ["gims"], selectedCertificateType: "gims", compactCertificateFlow: true }],
 ]);
 
@@ -9114,6 +9115,7 @@ const CERTIFICATE_PRINT_TYPE_LABELS = {
   "13098": "13098",
 };
 const BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate";
+const BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE = "gims_medical_certificate";
 const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
 const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
@@ -9238,6 +9240,7 @@ function getDriverPrintCertificateType(series) {
 function getBlankTypeForCertificatePrintType(type) {
   const normalizedType = String(type || "").toLowerCase();
   if (normalizedType === "071") return BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE;
+  if (normalizedType === "gims") return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE;
   if (normalizedType === "guard" || normalizedType === "chod") return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE;
   return "";
 }
@@ -9857,6 +9860,11 @@ async function openDriverPrintFlow(options = {}) {
           print_variant: variant.id,
         }),
       });
+      flowState.currentBlank = {
+        ...flowState.currentBlank,
+        status: "issued",
+        generated_document_id: result.generated_document_id ?? null,
+      };
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
       await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
@@ -9905,6 +9913,11 @@ async function openDriverPrintFlow(options = {}) {
     try {
       const printOptions = { blankFormId: Number(flowState.currentBlank.id) };
       const documentItem = await createDocumentForVisit(finalCertificateType, client, visit, { ...printOptions, print: true });
+      flowState.currentBlank = {
+        ...flowState.currentBlank,
+        status: "issued",
+        generated_document_id: documentItem?.id ?? null,
+      };
       await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
       showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
       if (shouldAutoGenerateXmlForCertificate(finalCertificateType)) {
@@ -9933,6 +9946,10 @@ async function openDriverPrintFlow(options = {}) {
       : blankParts.series;
     const visibleCertificateType = flowState.selectedCertificateType || getDriverPrintCertificateType(flowState.selectedSeries);
     const certificatePrintDisabled = flowState.loading || !flowState.currentBlank?.id || !visibleCertificateType;
+    const canReplaceBlank =
+      isOrdinaryDriverFlow ||
+      ["gims", "071"].includes(String(visibleCertificateType || "").toLowerCase());
+    const blankManagementDisabled = flowState.loading || !flowState.currentBlank?.id;
 
     openActionModal(
       "Печать результатов:",
@@ -9946,6 +9963,17 @@ async function openDriverPrintFlow(options = {}) {
             <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(blankParts.number)}" readonly />
             <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
           </div>
+
+          ${
+            canReplaceBlank
+              ? `
+                <div class="driver-print-classic__blank-actions">
+                  <button type="button" class="driver-print-classic__button" id="driverReleaseBlank" ${blankManagementDisabled ? "disabled" : ""}>Освободить номер</button>
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--spoiled" id="driverReplaceSpoiledBlank" ${blankManagementDisabled ? "disabled" : ""}>Бракованный бланк</button>
+                </div>
+              `
+              : ""
+          }
 
           ${
             flowState.compactCertificateFlow
@@ -10069,6 +10097,72 @@ async function openDriverPrintFlow(options = {}) {
       } catch (error) {
         flowState.currentBlank = null;
         flowState.error = humanizeApiError(error, "Не удалось подобрать свободный бланк");
+      } finally {
+        flowState.loading = false;
+        renderFlow();
+      }
+    });
+
+    document.getElementById("driverReleaseBlank")?.addEventListener("click", async () => {
+      const currentBlank = flowState.currentBlank;
+      if (!currentBlank?.id) return;
+
+      flowState.loading = true;
+      flowState.error = "";
+      renderFlow();
+      try {
+        if (currentBlank.status !== "free") {
+          await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/release`, {
+            method: "POST",
+          });
+          await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
+        }
+        flowState.currentBlank = null;
+        showToast(`Номер ${currentBlank.full_number || ""} освобождён`);
+      } catch (error) {
+        flowState.error = humanizeApiError(error, "Не удалось освободить номер бланка");
+      } finally {
+        flowState.loading = false;
+        renderFlow();
+      }
+    });
+
+    document.getElementById("driverReplaceSpoiledBlank")?.addEventListener("click", async () => {
+      const currentBlank = flowState.currentBlank;
+      if (!currentBlank?.id) return;
+
+      flowState.loading = true;
+      flowState.error = "";
+      renderFlow();
+      try {
+        const lookupSeries = resolveNumberedCertificateLookupSeries(
+          flowState.selectedSeries,
+          flowState.selectedCertificateType,
+          flowState.seriesOptions,
+        );
+        const requestedSeries = lookupSeries || flowState.selectedSeries;
+        const autoCreate =
+          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
+          !isPreenteredBlankSeries(requestedSeries);
+        const query = new URLSearchParams({ auto_create: String(autoCreate) });
+        const result = await apiRequest(
+          `/blanks/forms/${Number(currentBlank.id)}/spoil-and-replace?${query.toString()}`,
+          {
+            method: "POST",
+            body: JSON.stringify({ reason: "Бракованный бланк при печати председателем" }),
+          },
+        );
+        flowState.currentBlank = normalizeDriverPrintBlank(result?.next_form || null);
+        await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
+        if (flowState.currentBlank?.id) {
+          const nextParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
+          showToast(`Бланк ${currentBlank.full_number || ""} списан. Подставлен следующий номер ${nextParts.fullNumber || nextParts.number}`);
+        } else {
+          flowState.error = "Бланк списан, но следующего свободного номера в этой серии нет.";
+          showToast(flowState.error);
+        }
+      } catch (error) {
+        flowState.error = humanizeApiError(error, "Не удалось заменить бракованный бланк");
       } finally {
         flowState.loading = false;
         renderFlow();

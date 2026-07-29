@@ -3989,6 +3989,18 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   height: 36px;
 }
 
+.driver-print-classic__blank-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin: 0 0 9px;
+}
+
+.driver-print-classic__button--spoiled {
+  border-color: #b36a6a;
+  color: #8f2525;
+}
+
 .driver-print-classic__button--duplicate {
   width: 132px;
   height: 27px;

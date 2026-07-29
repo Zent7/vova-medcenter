@@ -84,6 +84,11 @@ class BlankFormSpoilRequest(BaseModel):
     reason: str | None = None
 
 
+class BlankFormReplacementRead(BaseModel):
+    spoiled_form: BlankFormRead
+    next_form: BlankFormRead | None = None
+
+
 class BlankStatsItem(BaseModel):
     blank_type: str
     blank_type_name: str
