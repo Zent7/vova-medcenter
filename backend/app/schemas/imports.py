@@ -12,6 +12,8 @@ class ClientImportPreviewRow(BaseModel):
     full_name: str
     birth_date: str | None = None
     organization: str | None = None
+    service_name: str | None = None
+    encounter_date: str | None = None
     status: str
     match_reason: str | None = None
 
@@ -21,6 +23,7 @@ class ClientImportPreviewResponse(BaseModel):
     parsed_rows: int
     created_candidates: int
     update_candidates: int
+    service_rows: int
     preview_rows: list[ClientImportPreviewRow]
 
 
@@ -29,3 +32,4 @@ class ClientImportResultResponse(BaseModel):
     parsed_rows: int
     created: int
     updated: int
+    encounters_created: int

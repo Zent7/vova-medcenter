@@ -5960,7 +5960,7 @@ async function commitClientImport() {
         file_content_base64: data.importFileBase64,
       }),
     });
-    data.importSuccess = `Импорт завершен. Создано: ${result.created}. Обновлено: ${result.updated}.`;
+    data.importSuccess = `Импорт завершен. Создано клиентов: ${result.created}. Обновлено: ${result.updated}. Создано обращений: ${result.encounters_created || 0}.`;
     data.importPreview = null;
     scheduleClientSearch(appState.clientSearch || "");
   } catch (error) {
@@ -5981,7 +5981,11 @@ function renderClientImportPage() {
             <h3>Загрузка клиентов</h3>
             <p class="muted">Скачай шаблон, отправь его заводу для заполнения, потом загрузи готовый Excel сюда.</p>
           </div>
-          <a class="primary-button" href="./client-import-template.xlsx" download>Скачать шаблон Excel</a>
+          <a
+            class="primary-button"
+            href="./client-import-template.xlsx?v=20260729-services-v1"
+            download="client-import-template.xlsx"
+          >Скачать шаблон Excel</a>
         </div>
 
         <div class="import-help">
@@ -5989,7 +5993,8 @@ function renderClientImportPage() {
             <strong>Как это работает</strong>
             <ol>
               <li>Скачать шаблон.</li>
-              <li>Отправить его клиенту/заводу для заполнения.</li>
+              <li>Заполнить обязательные поля: фамилию, имя и дату рождения.</li>
+              <li>При необходимости выбрать услугу из выпадающего списка.</li>
               <li>Выбрать заполненный файл ниже.</li>
               <li>Сначала посмотреть предпросмотр, потом загрузить в базу.</li>
             </ol>
@@ -5999,6 +6004,7 @@ function renderClientImportPage() {
             <ul>
               <li>создавать новых клиентов;</li>
               <li>обновлять существующих по СНИЛС, документу или ФИО + дате рождения;</li>
+              <li>создавать обращение по выбранной услуге;</li>
               <li>поддерживает файлы <code>.xlsx</code> и <code>.xls</code>.</li>
             </ul>
           </div>
@@ -6039,6 +6045,10 @@ function renderClientImportPage() {
                   <div class="summary-card__label">Будет обновлено</div>
                   <div class="summary-card__value">${preview.update_candidates}</div>
                 </div>
+                <div class="summary-card">
+                  <div class="summary-card__label">Обращений с услугой</div>
+                  <div class="summary-card__value">${preview.service_rows || 0}</div>
+                </div>
               </div>
 
               <div class="import-preview-list">
@@ -6049,6 +6059,11 @@ function renderClientImportPage() {
                         <div>
                           <strong>${escapeHtml(row.full_name)}</strong>
                           <small>Строка ${row.row_number}${row.birth_date ? ` В· ${escapeHtml(row.birth_date)}` : ""}${row.organization ? ` В· ${escapeHtml(row.organization)}` : ""}</small>
+                          ${
+                            row.service_name
+                              ? `<small>Услуга: ${escapeHtml(row.service_name)}${row.encounter_date ? ` · ${escapeHtml(row.encounter_date)}` : ""}</small>`
+                              : ""
+                          }
                         </div>
                         ${row.agent ? `<small>Агент: ${escapeHtml(row.agent)}</small>` : ""}
                         <div class="import-preview-row__meta">
