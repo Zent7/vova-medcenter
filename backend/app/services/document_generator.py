@@ -4,6 +4,8 @@ from datetime import date, datetime
 from pathlib import Path
 import re
 import shutil
+import struct
+import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -18,6 +20,7 @@ import xlwt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from xlrd import xldate
+from xlrd.compdoc import CompDoc
 from xlutils.copy import copy as copy_xls_workbook
 
 from app.core.config import settings
@@ -49,6 +52,13 @@ from app.services.document_context import (
     _add_calendar_months,
     _split_address,
     build_document_context,
+)
+from app.services.new_xls_templates import (
+    NEW_XLS_TEMPLATE_BY_FILE,
+    NEW_XLS_TEMPLATE_BY_SHEET,
+    PLACEHOLDER_LENGTH,
+    NewXlsTemplateSpec,
+    new_xls_placeholder,
 )
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -2376,6 +2386,536 @@ def _fill_tractor_xls_sheets(source_book, target_book, exams_by_role: dict[str, 
         )
 
 
+def _new_xls_context_value(context: dict[str, str], key: str) -> str:
+    value = str(context.get(key, "") or "").strip()
+    if value.casefold() in {"не указано", "здоров", "врач", "администратор системы"}:
+        return ""
+    return value
+
+
+def _new_xls_exam_value(exam: DoctorExam | None, *field_names: str) -> str:
+    if exam is None:
+        return ""
+    fields = exam.fields_json or {}
+    field_value = _exam_field(fields, *field_names)
+    if field_value:
+        return field_value
+    return _first_non_empty(exam.result_text, exam.diagnosis)
+
+
+def _new_xls_exam_doctor(exam: DoctorExam | None) -> str:
+    return str(getattr(exam, "doctor_name", "") or "").strip()
+
+
+def _new_xls_gsu_secondary_page_text(value: str) -> str:
+    # The source form centers these fields across a selection whose printable
+    # area starts very close to the first glyph. Keep a small internal indent
+    # so desktop Excel does not clip the first letters at the page edge.
+    return f"        {value}" if value else ""
+
+
+def _new_xls_date_text(value: date | datetime | str | None) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    return str(value).strip()
+
+
+def _new_xls_exam_date(exam: DoctorExam | None, encounter: Encounter | None) -> object:
+    if exam is not None and exam.completed_at:
+        return _new_xls_date_text(exam.completed_at)
+    return _new_xls_date_text(encounter.encounter_date if encounter else None)
+
+
+def _new_xls_signer(
+    context: dict[str, str],
+    exams_by_role: dict[str, DoctorExam],
+) -> str:
+    return _first_non_empty(
+        _new_xls_exam_doctor(exams_by_role.get("chairman")),
+        _new_xls_exam_doctor(exams_by_role.get("therapist")),
+        _new_xls_context_value(context, "Doctor"),
+    )
+
+
+def _write_xls_characters(
+    target_sheet,
+    source_sheet,
+    coordinates: tuple[tuple[int, int], ...],
+    value: object,
+    *,
+    digits_only: bool = False,
+) -> None:
+    text = str(value or "").strip()
+    if digits_only:
+        text = re.sub(r"\D", "", text)
+    for index, (row_index, col_index) in enumerate(coordinates):
+        character = text[index] if index < len(text) else ""
+        _write_xls_cell(target_sheet, source_sheet, row_index, col_index, character)
+
+
+def _new_xls_medical_values(
+    context: dict[str, str],
+    exams_by_role: dict[str, DoctorExam],
+) -> dict[str, str]:
+    chairman = exams_by_role.get("chairman")
+    therapist = exams_by_role.get("therapist")
+    source_exam = chairman or therapist
+    fields = source_exam.fields_json if source_exam is not None else {}
+    diagnosis = _first_non_empty(
+        str(getattr(source_exam, "diagnosis", "") or "").strip(),
+        _exam_field(fields or {}, "diagnosis", "diagnosisShort", "diagnosisText", "diagnoz"),
+        _new_xls_context_value(context, "Diagnosis"),
+    )
+    mkb10 = _first_non_empty(
+        _exam_field(fields or {}, "mkb10", "MKB10", "icd10", "diagnosisCode"),
+        _new_xls_context_value(context, "MKB10"),
+    )
+    diagnosis_with_code = diagnosis
+    if mkb10 and mkb10.casefold() not in diagnosis.casefold():
+        diagnosis_with_code = " ".join(part for part in [diagnosis, f"МКБ-10: {mkb10}"] if part)
+    return {
+        "diagnosis": diagnosis,
+        "mkb10": mkb10,
+        "diagnosis_with_code": diagnosis_with_code,
+        "complaints": _exam_field(fields or {}, "complaints", "complaint", "complaintsText"),
+        "anamnesis": _exam_field(
+            fields or {},
+            "anamnesis",
+            "anamnesisText",
+            "history",
+            "anamnesisVitae",
+        ),
+        "results": _first_non_empty(
+            _exam_field(
+                fields or {},
+                "objective",
+                "objectiveData",
+                "objectiveText",
+                "research",
+                "researchResults",
+            ),
+            str(getattr(source_exam, "result_text", "") or "").strip(),
+        ),
+        "conclusion": _first_non_empty(
+            _exam_field(fields or {}, "conclusionText", "issuedConclusion", "conclusion", "result"),
+            str(getattr(source_exam, "result_text", "") or "").strip(),
+            str(getattr(source_exam, "diagnosis", "") or "").strip(),
+            _new_xls_context_value(context, "Conclusion"),
+        ),
+    }
+
+
+def _fill_new_gsu_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    psychiatrist = exams_by_role.get("psychiatrist")
+    narcologist = exams_by_role.get("psychiatrist-narcologist")
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            (
+                (4, 38),
+                _new_xls_gsu_secondary_page_text(
+                    _new_xls_exam_value(narcologist, "conclusion", "result")
+                ),
+            ),
+            ((6, 39), "Врач: психиатр-нарколог" if _new_xls_exam_doctor(narcologist) else ""),
+            ((6, 52), _new_xls_exam_doctor(narcologist)),
+            ((7, 47), _new_xls_exam_value(narcologist, "objective", "researchResults")),
+            ((18, 9), _new_xls_date_text(encounter.encounter_date if encounter else None)),
+            (
+                (18, 19),
+                _first_non_empty(
+                    context.get("BlankFullNumber"),
+                    context.get("BlankNumber"),
+                    context.get("ReferenceNumber"),
+                ),
+            ),
+            (
+                (19, 38),
+                _new_xls_gsu_secondary_page_text(
+                    _new_xls_exam_value(psychiatrist, "conclusion", "result")
+                ),
+            ),
+            ((21, 39), "Врач: психиатр" if _new_xls_exam_doctor(psychiatrist) else ""),
+            ((21, 52), _new_xls_exam_doctor(psychiatrist)),
+            ((22, 47), _new_xls_exam_value(psychiatrist, "objective", "researchResults")),
+            ((27, 11), context.get("ClientCalc", "")),
+            ((30, 14), context.get("SexFull") or context.get("SexCalc", "")),
+            ((31, 10), _new_xls_date_text(client.birth_date)),
+            ((33, 2), context.get("AddressCalc", "")),
+            ((38, 26), _new_xls_exam_doctor(exams_by_role.get("therapist"))),
+            ((41, 26), _new_xls_signer(context, exams_by_role)),
+        ],
+    )
+
+
+def _fill_new_070_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    medical = _new_xls_medical_values(context, exams_by_role)
+    source_exam = exams_by_role.get("chairman") or exams_by_role.get("therapist")
+    fields = source_exam.fields_json if source_exam is not None else {}
+    sanatorium = _first_non_empty(
+        _exam_field(fields or {}, "sanatorium", "sanatoriumName", "treatmentOrganization"),
+        _new_xls_context_value(context, "Sanatorium"),
+    )
+    preferred = _first_non_empty(
+        _exam_field(fields or {}, "preferredTreatmentPlace", "preferredPlace"),
+        sanatorium,
+    )
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            (
+                (12, 20),
+                _first_non_empty(
+                    context.get("BlankFullNumber"),
+                    context.get("BlankNumber"),
+                    context.get("ReferenceNumber"),
+                ),
+            ),
+            ((14, 12), _new_xls_date_text(encounter.encounter_date if encounter else None)),
+            ((18, 15), context.get("ClientCalc", "")),
+            ((19, 7), _new_xls_date_text(client.birth_date)),
+            ((19, 27), context.get("SexFull") or context.get("SexCalc", "")),
+            ((21, 1), context.get("AddressCalc", "")),
+            ((29, 20), _new_xls_context_value(context, "DisabilityCategoryCode")),
+            ((29, 21), _new_xls_context_value(context, "BenefitCategoryCode")),
+            ((33, 20), _new_xls_context_value(context, "InsuranceKind")),
+            ((36, 3), context.get("DocumentSeries", "")),
+            ((36, 8), context.get("DocumentNumber", "")),
+            ((36, 20), context.get("DocumentDate", "")),
+            ((36, 33), context.get("Phone", "")),
+            ((39, 11), sanatorium),
+            ((42, 1), medical["diagnosis_with_code"]),
+            ((50, 10), _exam_field(fields or {}, "treatmentType", "treatmentMode")),
+            ((52, 7), preferred),
+            ((56, 22), _new_xls_exam_doctor(exams_by_role.get("therapist"))),
+            ((57, 22), _new_xls_signer(context, exams_by_role)),
+        ],
+    )
+    _write_xls_characters(
+        target_sheet,
+        source_sheet,
+        tuple((25, col_index) for col_index in range(15, 31)),
+        context.get("PolisOMS", ""),
+        digits_only=True,
+    )
+    _write_xls_characters(
+        target_sheet,
+        source_sheet,
+        tuple((37, col_index) for col_index in range(16, 30)),
+        context.get("SNILS", ""),
+    )
+
+
+def _fill_new_072_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    medical = _new_xls_medical_values(context, exams_by_role)
+    source_exam = exams_by_role.get("chairman") or exams_by_role.get("therapist")
+    fields = source_exam.fields_json if source_exam is not None else {}
+    sanatorium = _first_non_empty(
+        _exam_field(fields or {}, "sanatorium", "sanatoriumName", "treatmentOrganization"),
+        _new_xls_context_value(context, "Sanatorium"),
+    )
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            (
+                (12, 24),
+                _first_non_empty(
+                    context.get("BlankFullNumber"),
+                    context.get("BlankNumber"),
+                    context.get("ReferenceNumber"),
+                ),
+            ),
+            ((13, 12), _new_xls_date_text(encounter.encounter_date if encounter else None)),
+            ((15, 14), context.get("ClientCalc", "")),
+            ((16, 7), _new_xls_date_text(client.birth_date)),
+            ((16, 24), context.get("SexFull") or context.get("SexCalc", "")),
+            ((18, 1), context.get("AddressCalc", "")),
+            ((25, 20), _new_xls_context_value(context, "BenefitCategoryCode")),
+            ((29, 20), _new_xls_context_value(context, "InsuranceKind")),
+            ((32, 3), context.get("DocumentSeries", "")),
+            ((32, 8), context.get("DocumentNumber", "")),
+            ((32, 20), context.get("DocumentDate", "")),
+            ((32, 33), context.get("Phone", "")),
+            ((39, 14), sanatorium),
+            ((42, 14), context.get("ClientCalc", "")),
+            ((45, 1), medical["diagnosis_with_code"]),
+            ((56, 1), medical["complaints"]),
+            ((58, 1), medical["anamnesis"]),
+            ((62, 1), medical["results"]),
+            ((68, 1), medical["diagnosis_with_code"]),
+            ((75, 1), _exam_field(fields or {}, "additionalInformation", "additionalInfo")),
+            ((78, 1), _exam_field(fields or {}, "disabilityCause", "disabilityDiagnosis")),
+            ((83, 17), sanatorium),
+            ((84, 28), _exam_field(fields or {}, "treatmentType", "treatmentMode")),
+            ((87, 16), _exam_field(fields or {}, "voucherNumber", "permitNumber")),
+            ((89, 1), _new_xls_exam_doctor(source_exam)),
+            ((90, 28), _new_xls_signer(context, exams_by_role)),
+        ],
+    )
+    _write_xls_characters(
+        target_sheet,
+        source_sheet,
+        tuple((21, col_index) for col_index in range(22, 38)),
+        context.get("PolisOMS", ""),
+        digits_only=True,
+    )
+    _write_xls_characters(
+        target_sheet,
+        source_sheet,
+        tuple((33, col_index) for col_index in range(14, 28)),
+        context.get("SNILS", ""),
+    )
+
+
+def _fill_new_sport_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    chairman = exams_by_role.get("chairman")
+    therapist = exams_by_role.get("therapist")
+    source_exam = chairman or therapist
+    fields = source_exam.fields_json if source_exam is not None else {}
+    issue_date = encounter.encounter_date if encounter else None
+    sport_type = _first_non_empty(
+        _exam_field(fields or {}, "sportType", "sport", "sports", "discipline"),
+        _new_xls_context_value(context, "SportType"),
+    )
+    ekg = _first_non_empty(
+        _exam_field(fields or {}, "ekgConclusion", "EKGConclusion", "ecgConclusion", "ekg", "EKG", "ecg"),
+        _new_xls_context_value(context, "SportEkgConclusion"),
+        _new_xls_context_value(context, "SportEkg"),
+    )
+    conclusion = _first_non_empty(
+        _exam_field(fields or {}, "conclusionText", "sportConclusionText", "issuedConclusion", "conclusion", "result"),
+        str(getattr(source_exam, "result_text", "") or "").strip(),
+        _new_xls_context_value(context, "SportConclusion"),
+    )
+    valid_until = _first_non_empty(
+        _exam_field(fields or {}, "validUntil", "validThrough", "sportValidUntil"),
+        context.get("PoolValidUntil"),
+    )
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            (
+                (1, 13),
+                _first_non_empty(
+                    context.get("BlankFullNumber"),
+                    context.get("BlankNumber"),
+                    context.get("ReferenceNumber"),
+                ),
+            ),
+            ((12, 8), _new_xls_date_text(issue_date)),
+            ((13, 3), context.get("ClientCalc", "")),
+            ((13, 13), _new_xls_date_text(client.birth_date)),
+            ((15, 5), _new_xls_date_text(issue_date)),
+            ((19, 7), sport_type),
+            ((22, 2), ekg),
+            ((23, 3), conclusion),
+            ((27, 11), _new_xls_signer(context, exams_by_role)),
+            ((29, 7), valid_until),
+        ],
+    )
+
+
+def _fill_new_gostaina_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    narcologist = exams_by_role.get("psychiatrist-narcologist")
+    psychiatrist = exams_by_role.get("psychiatrist")
+    neurologist = exams_by_role.get("neurologist")
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            ((16, 6), _new_xls_date_text(encounter.encounter_date if encounter else None)),
+            (
+                (16, 11),
+                _first_non_empty(
+                    context.get("BlankFullNumber"),
+                    context.get("BlankNumber"),
+                    context.get("ReferenceNumber"),
+                ),
+            ),
+            ((22, 2), context.get("ClientCalc", "")),
+            ((24, 4), _new_xls_date_text(client.birth_date)),
+            ((26, 4), context.get("SexFull") or context.get("SexCalc", "")),
+            ((29, 0), context.get("AddressCalc", "")),
+            ((36, 9), _new_xls_exam_date(narcologist, encounter)),
+            ((36, 15), _new_xls_exam_doctor(narcologist)),
+            ((38, 9), _new_xls_exam_date(psychiatrist, encounter)),
+            ((38, 15), _new_xls_exam_doctor(psychiatrist)),
+            ((40, 9), _new_xls_exam_date(neurologist, encounter)),
+            ((40, 15), _new_xls_exam_doctor(neurologist)),
+            ((47, 11), _new_xls_signer(context, exams_by_role)),
+            ((51, 15), _new_xls_exam_doctor(neurologist)),
+            ((53, 15), _new_xls_exam_doctor(narcologist)),
+            ((55, 15), _new_xls_exam_doctor(psychiatrist)),
+        ],
+    )
+
+
+def _fill_new_tractor_back_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    roles = (
+        "therapist",
+        "ophthalmologist",
+        "neurologist",
+        "otolaryngologist",
+        "surgeon",
+        "psychiatrist",
+        "psychiatrist-narcologist",
+        "gynecologist",
+        "dermatologist",
+    )
+    rows = (9, 11, 14, 17, 19, 20, 21, 22, 23)
+    pairs: list[tuple[tuple[int, int], object]] = []
+    for row_index, role_id in zip(rows, roles):
+        value = _new_xls_exam_value(
+            exams_by_role.get(role_id),
+            "conclusion",
+            "result",
+            "diagnosis",
+        )
+        pairs.extend([((row_index, 18), value), ((row_index, 38), value)])
+    signer = _new_xls_signer(context, exams_by_role)
+    pairs.extend([((36, 5), signer), ((36, 25), signer)])
+    _write_xls_pairs(target_sheet, source_sheet, pairs)
+
+
+def _fill_new_gims_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    issue_date = encounter.encounter_date if encounter else None
+    address = {
+        "city": context.get("CityCalc", ""),
+        "district": context.get("DistrictCalc", ""),
+        "street": context.get("StreetCalc", ""),
+        "house": context.get("HouseNumberCalc", ""),
+        "body": context.get("HouseBodyCalc", ""),
+        "apartment": context.get("ApartmentNumberCalc", ""),
+    }
+    if not any(address.values()) and context.get("AddressCalc"):
+        address = _split_address(context.get("AddressCalc", ""))
+    blank_number = _first_non_empty(
+        context.get("BlankNumber"),
+        context.get("BlankFullNumber"),
+    )
+    signer = _new_xls_signer(context, exams_by_role)
+    values = [
+        ((7, 3), blank_number),
+        ((7, 30), blank_number),
+        ((14, 2), context.get("ClientCalc", "")),
+        ((14, 28), context.get("ClientCalc", "")),
+        ((15, 14), context.get("BirthDateCalc_DAY", "")),
+        ((15, 17), context.get("BirthDateCalc_DATEMONTH", "")),
+        ((15, 21), context.get("BirthDateCalc_YEAR", "")),
+        ((15, 39), context.get("BirthDateCalc_DAY", "")),
+        ((15, 42), context.get("BirthDateCalc_DATEMONTH", "")),
+        ((15, 46), context.get("BirthDateCalc_YEAR", "")),
+        ((17, 3), context.get("SNILS", "")),
+        ((17, 29), context.get("SNILS", "")),
+        ((18, 17), address.get("city", "")),
+        ((18, 43), address.get("city", "")),
+        ((19, 4), address.get("district", "")),
+        ((19, 32), address.get("district", "")),
+        ((20, 7), address.get("city", "")),
+        ((20, 35), address.get("city", "")),
+        ((21, 4), address.get("street", "")),
+        ((21, 20), address.get("house", "")),
+        ((21, 31), address.get("street", "")),
+        ((21, 47), address.get("house", "")),
+        ((22, 8), address.get("body", "")),
+        ((22, 17), address.get("apartment", "")),
+        ((22, 34), address.get("body", "")),
+        ((22, 41), address.get("apartment", "")),
+        ((34, 15), issue_date.day if issue_date else ""),
+        ((34, 19), issue_date.strftime("%m") if issue_date else ""),
+        ((34, 23), issue_date.year if issue_date else ""),
+        ((34, 39), issue_date.day if issue_date else ""),
+        ((34, 44), issue_date.strftime("%m") if issue_date else ""),
+        ((34, 48), issue_date.year if issue_date else ""),
+        ((36, 9), signer),
+        ((36, 31), signer),
+    ]
+    _write_xls_pairs(target_sheet, source_sheet, values)
+
+
+def _fill_new_xls_sheets(
+    source_book,
+    target_book,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    for sheet_name, spec in NEW_XLS_TEMPLATE_BY_SHEET.items():
+        source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, sheet_name)
+        if source_sheet is None or target_sheet is None:
+            continue
+        _clear_xls_cells(target_sheet, source_sheet, list(spec.dynamic_cells))
+        if sheet_name == "ГС":
+            _fill_new_gsu_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+        elif sheet_name == "CKK":
+            _fill_new_070_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+        elif sheet_name == "CKK72":
+            _fill_new_072_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+        elif sheet_name == "Спорт":
+            _fill_new_sport_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+        elif sheet_name == "ГТ":
+            _fill_new_gostaina_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+        elif sheet_name == "Тр.Об":
+            _fill_new_tractor_back_xls_sheet(source_sheet, target_sheet, context, exams_by_role)
+        elif sheet_name == "Суда":
+            _fill_new_gims_xls_sheet(source_sheet, target_sheet, context, encounter, exams_by_role)
+
+
 def _fill_amb_opo_xls_sheet(
     source_sheet,
     target_sheet,
@@ -2708,17 +3248,20 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
         "driver_front": DRIVER_XLS_FRONT_SHEET_NAMES,
         "driver_back": DRIVER_XLS_BACK_SHEET_NAMES,
         "tractor_front": ("Тракторная Лицевая",),
-        "tractor_back": ("Тракторная оборотная",),
+        "tractor_back": ("Тр.Об", "Тракторная оборотная"),
         "ambulatory_extract": ("ПЗ2",),
         "prof_ambulatory_extract": ("ПЗ2",),
         "prof_ambulatory": ("Амб !",),
+        "070": ("CKK",),
+        "072": ("CKK72",),
         "086": ("086",),
         "certificate_086": ("086",),
         "pool": ("Бас",),
         "sport": ("Спорт",),
-        "gto": ("ГТ",),
+        "gto": ("ГТО",),
         "gsu": ("ГС",),
         "gostaina": ("ГТ",),
+        "gims": ("Суда",),
         "guard": ("ЧОД",),
         "chod": ("ЧОД",),
         "ekg": ("ЭЭГ",),
@@ -2770,6 +3313,338 @@ def _generate_xls(
     shutil.copy2(template_path, output_path)
 
 
+def _new_xls_display_value(book, sheet, row_index: int, col_index: int) -> str:
+    if row_index >= sheet.nrows or col_index >= sheet.ncols:
+        return ""
+    cell = sheet.cell(row_index, col_index)
+    if cell.ctype == xlrd.XL_CELL_EMPTY:
+        return ""
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        value = xldate.xldate_as_datetime(cell.value, book.datemode)
+        return value.strftime("%d.%m.%Y")
+    if cell.ctype == xlrd.XL_CELL_NUMBER:
+        number = float(cell.value)
+        return str(int(number)) if number.is_integer() else str(number)
+    return str(cell.value or "")
+
+
+def _new_xls_workbook_stream(
+    file_bytes: bytes,
+) -> tuple[bytes, list[tuple[int, int, int]]]:
+    compound_document = CompDoc(file_bytes)
+    for stream_name in ("Workbook", "Book"):
+        stream_bytes, stream_offset, stream_length = compound_document.locate_named_stream(stream_name)
+        if stream_bytes is None or stream_length <= 0:
+            continue
+        directory_entry = compound_document._dir_search(stream_name.split("/"))
+        if directory_entry is None or directory_entry.tot_size < compound_document.min_size_std_stream:
+            raise ValueError(
+                "Новый XLS-шаблон использует неподдерживаемый короткий Workbook stream"
+            )
+        logical_offset = 0
+        sector_id = directory_entry.first_SID
+        sectors: list[tuple[int, int, int]] = []
+        while sector_id >= 0 and logical_offset < stream_length:
+            sector_length = min(compound_document.sec_size, stream_length - logical_offset)
+            physical_offset = (sector_id + 1) * compound_document.sec_size
+            sectors.append(
+                (
+                    logical_offset,
+                    logical_offset + sector_length,
+                    physical_offset,
+                )
+            )
+            logical_offset += sector_length
+            sector_id = compound_document.SAT[sector_id]
+        if logical_offset != stream_length:
+            raise ValueError("Не удалось восстановить цепочку секторов Workbook stream")
+        workbook_stream = bytes(stream_bytes[stream_offset : stream_offset + stream_length])
+        return workbook_stream, sectors
+    raise ValueError("В XLS-шаблоне не найден Workbook stream")
+
+
+def _new_xls_sst_payload_spans(workbook_stream: bytes) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    in_sst = False
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream):
+            break
+        if record_id == 0x00FC:
+            in_sst = True
+            if payload_length >= 8:
+                spans.append((payload_start + 8, payload_end))
+        elif in_sst and record_id == 0x003C:
+            spans.append((payload_start, payload_end))
+        elif in_sst:
+            break
+        offset = payload_end
+    if not spans:
+        raise ValueError("В XLS-шаблоне не найдена таблица строк SST")
+    return spans
+
+
+def _new_xls_utf16_value(value: object) -> bytes:
+    text = str(value or "").replace("\u200b", "").rstrip()
+    while len(text.encode("utf-16le")) > PLACEHOLDER_LENGTH * 2:
+        text = text[:-1]
+    return text.encode("utf-16le")
+
+
+def _write_new_xls_stream_bytes(
+    file_bytes: bytearray,
+    sectors: list[tuple[int, int, int]],
+    logical_offset: int,
+    value: bytes,
+) -> None:
+    remaining = value
+    current_offset = logical_offset
+    while remaining:
+        sector = next(
+            (
+                item
+                for item in sectors
+                if item[0] <= current_offset < item[1]
+            ),
+            None,
+        )
+        if sector is None:
+            raise ValueError("Запись вышла за пределы Workbook stream")
+        logical_start, logical_end, physical_start = sector
+        writable_length = min(len(remaining), logical_end - current_offset)
+        target_start = physical_start + (current_offset - logical_start)
+        file_bytes[target_start : target_start + writable_length] = remaining[:writable_length]
+        remaining = remaining[writable_length:]
+        current_offset += writable_length
+
+
+def _new_xls_compact_sst_tail(
+    encoded_values: list[bytes],
+    *,
+    first_capacity: int,
+) -> tuple[bytes, int]:
+    max_payload_length = 8224
+    payloads: list[bytearray] = [bytearray()]
+    capacities = [first_capacity]
+
+    def start_payload(continuing_unicode_string: bool = False) -> None:
+        payloads.append(bytearray(b"\x01" if continuing_unicode_string else b""))
+        capacities.append(max_payload_length)
+
+    for encoded_value in encoded_values:
+        if capacities[-1] - len(payloads[-1]) < 3:
+            start_payload()
+        payloads[-1].extend(struct.pack("<HB", len(encoded_value) // 2, 0x01))
+        character_offset = 0
+        while character_offset < len(encoded_value):
+            room = capacities[-1] - len(payloads[-1])
+            writable = min(len(encoded_value) - character_offset, room)
+            writable -= writable % 2
+            if writable:
+                payloads[-1].extend(
+                    encoded_value[character_offset : character_offset + writable]
+                )
+                character_offset += writable
+            if character_offset < len(encoded_value):
+                start_payload(continuing_unicode_string=True)
+
+    compacted = bytearray(payloads[0])
+    for payload in payloads[1:]:
+        compacted.extend(struct.pack("<HH", 0x003C, len(payload)))
+        compacted.extend(payload)
+    return bytes(compacted), len(payloads[0])
+
+
+def _new_xls_patch_shifted_stream_offsets(
+    workbook_stream: bytearray,
+    *,
+    effective_length: int,
+    removed_start: int,
+    removed_length: int,
+) -> None:
+    offset = 0
+    while offset + 4 <= effective_length:
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > effective_length:
+            raise ValueError("Повреждена структура Workbook stream после уплотнения SST")
+        if record_id == 0x0085 and payload_length >= 4:
+            sheet_offset = struct.unpack_from("<I", workbook_stream, payload_start)[0]
+            if sheet_offset >= removed_start:
+                struct.pack_into(
+                    "<I",
+                    workbook_stream,
+                    payload_start,
+                    sheet_offset - removed_length,
+                )
+        elif record_id == 0x020B and payload_length >= 16:
+            for pointer_offset in range(payload_start + 12, payload_end, 4):
+                if pointer_offset + 4 > payload_end:
+                    break
+                dbcell_offset = struct.unpack_from("<I", workbook_stream, pointer_offset)[0]
+                if dbcell_offset >= removed_start:
+                    struct.pack_into(
+                        "<I",
+                        workbook_stream,
+                        pointer_offset,
+                        dbcell_offset - removed_length,
+                    )
+        elif record_id == 0x00FF:
+            struct.pack_into("<H", workbook_stream, offset, 0x0000)
+        offset = payload_end
+
+
+def _patch_new_xls_placeholders(
+    output_path: Path,
+    spec: NewXlsTemplateSpec,
+    values: dict[tuple[int, int], str],
+) -> None:
+    original_bytes = output_path.read_bytes()
+    file_bytes = bytearray(original_bytes)
+    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
+    spans = _new_xls_sst_payload_spans(workbook_stream)
+    string_starts: list[int] = []
+    for coordinate in spec.dynamic_cells:
+        placeholder = new_xls_placeholder(spec, coordinate)
+        marker = placeholder[:6].encode("utf-16le")
+        marker_offset = workbook_stream.find(marker)
+        if marker_offset < 0:
+            raise ValueError(
+                f"В {spec.file_name} не найден скрытый маркер ячейки "
+                f"R{coordinate[0] + 1}C{coordinate[1] + 1}"
+            )
+        if workbook_stream.find(marker, marker_offset + 1) >= 0:
+            raise ValueError(
+                f"В {spec.file_name} скрытый маркер ячейки "
+                f"R{coordinate[0] + 1}C{coordinate[1] + 1} не уникален"
+            )
+
+        span_index = next(
+            (
+                index
+                for index, (span_start, span_end) in enumerate(spans)
+                if span_start <= marker_offset < span_end
+            ),
+            None,
+        )
+        if span_index is None:
+            raise ValueError("Скрытый маркер XLS находится вне SST payload")
+        string_starts.append(marker_offset - 3)
+
+    if string_starts != sorted(string_starts):
+        raise ValueError("Скрытые поля XLS расположены не в порядке карты ячеек")
+    first_string_start = string_starts[0]
+    first_span_index = next(
+        index
+        for index, (span_start, span_end) in enumerate(spans)
+        if span_start <= first_string_start < span_end
+    )
+    first_payload_start = (
+        spans[first_span_index][0] - 8
+        if first_span_index == 0
+        else spans[first_span_index][0]
+    )
+    first_record_header = first_payload_start - 4
+    first_payload_prefix_length = first_string_start - first_payload_start
+    compacted_tail, first_tail_payload_length = _new_xls_compact_sst_tail(
+        [
+            _new_xls_utf16_value(values.get(coordinate, ""))
+            for coordinate in spec.dynamic_cells
+        ],
+        first_capacity=8224 - first_payload_prefix_length,
+    )
+    old_tail_end = spans[-1][1]
+    original_tail_length = old_tail_end - first_string_start
+    removed_length = original_tail_length - len(compacted_tail)
+    if removed_length < 0:
+        raise ValueError("Данные не помещаются в область скрытых полей XLS")
+
+    effective_length = len(workbook_stream) - removed_length
+    compacted_stream = bytearray(
+        workbook_stream[:first_string_start]
+        + compacted_tail
+        + workbook_stream[old_tail_end:]
+        + b"\x00" * removed_length
+    )
+    struct.pack_into(
+        "<H",
+        compacted_stream,
+        first_record_header + 2,
+        first_payload_prefix_length + first_tail_payload_length,
+    )
+    _new_xls_patch_shifted_stream_offsets(
+        compacted_stream,
+        effective_length=effective_length,
+        removed_start=old_tail_end,
+        removed_length=removed_length,
+    )
+    _write_new_xls_stream_bytes(
+        file_bytes,
+        sectors,
+        0,
+        bytes(compacted_stream),
+    )
+
+    output_path.write_bytes(file_bytes)
+
+
+def _generate_preserved_new_xls(
+    template_path: Path,
+    output_path: Path,
+    source_book,
+    spec: NewXlsTemplateSpec,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    runtime_values: dict[str, object],
+    print_variant: str | None,
+) -> None:
+    target_book = copy_xls_workbook(source_book)
+    exams_by_role = _exam_map(list(runtime_values.get("exams", [])))
+    _fill_new_xls_sheets(
+        source_book,
+        target_book,
+        context,
+        client,
+        encounter,
+        exams_by_role,
+    )
+    _apply_print_variant_to_xls_workbook(target_book, print_variant or spec.print_variant)
+
+    temporary_file = tempfile.NamedTemporaryFile(
+        prefix=".new_xls_values_",
+        suffix=".xls",
+        dir=output_path.parent,
+        delete=False,
+    )
+    temporary_path = Path(temporary_file.name)
+    temporary_file.close()
+    try:
+        target_book.save(str(temporary_path))
+        values_book = xlrd.open_workbook(
+            file_contents=temporary_path.read_bytes(),
+            formatting_info=True,
+        )
+        values_sheet = values_book.sheet_by_name(spec.sheet_name)
+        values = {
+            coordinate: _new_xls_display_value(
+                values_book,
+                values_sheet,
+                coordinate[0],
+                coordinate[1],
+            )
+            for coordinate in spec.dynamic_cells
+        }
+        shutil.copy2(template_path, output_path)
+        _patch_new_xls_placeholders(output_path, spec, values)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def _generate_runtime_xls(
     template_path: Path,
     output_path: Path,
@@ -2780,6 +3655,20 @@ def _generate_runtime_xls(
     print_variant: str | None = None,
 ) -> None:
     source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
+    new_template_spec = NEW_XLS_TEMPLATE_BY_FILE.get(template_path.name.casefold())
+    if new_template_spec is not None:
+        _generate_preserved_new_xls(
+            template_path,
+            output_path,
+            source_book,
+            new_template_spec,
+            context,
+            client,
+            encounter,
+            runtime_values,
+            print_variant,
+        )
+        return
     exams = list(runtime_values.get("exams", []))
     if _find_prof_amb_sheet_index(source_book) is not None:
         _generate_prof_amb_xls(template_path, output_path, context, client, encounter, exams, print_variant=print_variant)
@@ -2806,6 +3695,7 @@ def _generate_runtime_xls(
 
     _fill_driver_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
     _fill_tractor_xls_sheets(source_book, target_book, exams_by_role)
+    _fill_new_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
 
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "АмбОПО !")
     if source_sheet and target_sheet:
@@ -2856,6 +3746,7 @@ def _generate_runtime_xlsx(
 
     _fill_driver_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
     _fill_tractor_xls_sheets(source_book, target_book, exams_by_role)
+    _fill_new_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
 
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "АмбОПО !")
     if source_sheet and target_sheet:

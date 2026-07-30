@@ -8401,6 +8401,8 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     null;
   const findDocxSafely = (preferredKeys, fallbackKeywords = [], excludedKeywords = []) =>
     findTemplateSafely(docxTemplates, preferredKeys, fallbackKeywords, excludedKeywords);
+  const findNewXls = (preferredKeys) =>
+    findTemplateSafely(xlsTemplates, preferredKeys, [], []);
   const findChodXlsTemplate = () =>
     findTemplateSafely(xlsTemplates, ["все нужные шаблоны"], ["чод"], []);
   const findStandaloneEkgTemplate = () => findDocxSafely(["экг_шаблон", "экг шаблон"], ["экг"], ["спорт"]);
@@ -8465,25 +8467,26 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     return findTemplateByPreferredKeys(xmlTemplates, ["водительская(новая)"]);
   }
 
-  if (normalizedType === "070") return findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
+  if (normalizedType === "070") return findNewXls(["скк 070 новый формат"]) || findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
   if (normalizedType === "071") return findDocxSafely(["cправка_мед. осмотр_шаблон", "справка_мед. осмотр_шаблон", "справка шаблон"], ["071", "мед. осмотр"]);
-  if (normalizedType === "072") return findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], ["13072"]);
+  if (normalizedType === "072") return findNewXls(["скк 72 новый формат"]) || findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], ["13072"]);
   if (normalizedType === "082") return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
   if (normalizedType === "086") return find086Template();
   if (normalizedType === "095") return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
   if (normalizedType === "semt196") return findDocxSafely(["сэмт196_шаблон", "сэмт-196_шаблон"], ["сэмт", "196"], []);
-  if (normalizedType === "gsu") return findDocxSafely(["гсу001_шаблон"], ["гсу001", "001"], []);
-  if (normalizedType === "gostaina") return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гостайн", "гос.тайн", "989"], []);
+  if (normalizedType === "gsu") return findNewXls(["гс новый формат"]) || findDocxSafely(["гсу001_шаблон"], ["гсу001", "001"], []);
+  if (normalizedType === "gostaina") return findNewXls(["гт"]) || findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гостайн", "гос.тайн", "989"], []);
   if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);
   if (normalizedType === "ambulatory_extract") return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]);
   if (normalizedType === "gto") return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
-  if (normalizedType === "sport") return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
+  if (normalizedType === "sport") return findNewXls(["спорт"]) || findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
   if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
   if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
   if (normalizedType === "gims") {
     return (
+      findNewXls(["гимс судна"]) ||
       findTemplateSafely(
         xmlTemplates,
         ["гимс_шаблон_для_загрузки_из_файла", "гимс шаблон для загрузки из файла"],
@@ -8524,21 +8527,21 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("095")) return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
   if (serviceText.includes("бассейн")) return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (serviceText.includes("070") || serviceText.includes("путевк")) {
-    return findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
+    return findNewXls(["скк 070 новый формат"]) || findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
   }
   if (serviceText.includes("гто")) return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
-  if (serviceText.includes("гимс")) return findDocxSafely(["гимс"], ["гимс"], []);
-  if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гос.тайна"], []);
+  if (serviceText.includes("гимс")) return findNewXls(["гимс судна"]) || findDocxSafely(["гимс"], ["гимс"], []);
+  if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findNewXls(["гт"]) || findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гос.тайна"], []);
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
-  if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findDocxSafely(["гсу001_шаблон"], ["гсу001"], []);
+  if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findNewXls(["гс новый формат"]) || findDocxSafely(["гсу001_шаблон"], ["гсу001"], []);
   if (serviceText.includes("охран") || serviceText.includes("чод")) return findChodXlsTemplate() || findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   if (serviceText.includes("трактор")) return findDocx(["трактроная", "трактор"]) || null;
-  if (serviceText.includes("спорт")) return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
+  if (serviceText.includes("спорт")) return findNewXls(["спорт"]) || findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
   if (serviceText.includes("экг")) return findStandaloneEkgTemplate();
   if (serviceText.includes("лмк")) return findDocxSafely(["лмк_шаблон"], ["лмк"], []);
   if (serviceText.includes("профосмотр") || serviceText.includes("29н")) return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр"], ["выписка"]);
   if (serviceText.includes("санатор")) {
-    return findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], []);
+    return findNewXls(["скк 72 новый формат"]) || findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], []);
   }
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) {
     return findDocxSafely(["серт морская шаблон"], ["морская", "marine", "seafarer"], ["драг"]);
@@ -8656,12 +8659,15 @@ function getChairmanCertificatePrintFlowOptions(printType) {
 }
 
 const XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE = new Map([
+  ["070", "070"],
+  ["072", "072"],
   ["086", "086"],
   ["pool", "pool"],
   ["sport", "sport"],
   ["gto", "gto"],
   ["gsu", "gsu"],
   ["gostaina", "gostaina"],
+  ["gims", "gims"],
   ["guard", "guard"],
   ["chod", "chod"],
   ["ekg", "ekg"],
@@ -9006,6 +9012,14 @@ const DRIVER_PRINT_VARIANTS = [
   { id: "tractor_front", label: "Лицевая трактора", errorLabel: "лицевую сторону тракторной справки" },
   { id: "tractor_back", label: "Оборот трактора", errorLabel: "оборот тракторной справки" },
 ];
+const TRACTOR_BACK_TEMPLATE_FILE_NAME = "трактор об ст.xls";
+
+function findDocumentTemplateByExactFileName(fileName) {
+  const expectedName = String(fileName || "").trim().toLowerCase();
+  return (Array.isArray(data.documentTemplates) ? data.documentTemplates : []).find(
+    (template) => String(template.file_name || "").trim().toLowerCase() === expectedName,
+  ) || null;
+}
 
 const PREENTERED_BLANK_SERIES = ["40", "4026", "ЛМК", "ГИМС"];
 const PREENTERED_BLANK_SERIES_SET = new Set(PREENTERED_BLANK_SERIES.map((item) => item.toLowerCase()));
@@ -9855,8 +9869,13 @@ async function openDriverPrintFlow(options = {}) {
     const skipConfirmation = Boolean(options.skipConfirmation);
     const variant = DRIVER_PRINT_VARIANTS.find((item) => item.id === variantId);
     if (!variant || !flowState.currentBlank?.id) return;
-    if (!flowState.template) {
-      flowState.error = "Не найден шаблон водительской справки";
+    const variantTemplate = variant.id === "tractor_back"
+      ? findDocumentTemplateByExactFileName(TRACTOR_BACK_TEMPLATE_FILE_NAME)
+      : flowState.template;
+    if (!variantTemplate) {
+      flowState.error = variant.id === "tractor_back"
+        ? "Не найден новый шаблон оборота тракторной справки"
+        : "Не найден шаблон водительской справки";
       renderFlow();
       return;
     }
@@ -9868,7 +9887,7 @@ async function openDriverPrintFlow(options = {}) {
       const result = await apiRequest("/documents/print", {
         method: "POST",
         body: JSON.stringify({
-          template_id: flowState.template.id,
+          template_id: variantTemplate.id,
           client_id: flowState.clientId,
           encounter_id: flowState.visit.backendId ? Number(flowState.visit.backendId) : null,
           blank_form_id: Number(flowState.currentBlank.id),
