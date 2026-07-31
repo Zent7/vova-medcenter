@@ -9293,7 +9293,7 @@ function getDriverPrintCertificateType(series) {
   if (/^0?71у?$/.test(normalized)) return "071";
   if (/^0?72у?$/.test(normalized)) return "072";
   if (/^0?82у?$/.test(normalized)) return "082";
-  if (/^0?86у?$/.test(normalized)) return "086";
+  if (/^0?86у?(?:\s*\([мж]\))?$/.test(normalized)) return "086";
   if (/^0?95у?$/.test(normalized)) return "095";
   if (normalized.includes("гсу") || normalized.includes("001")) return "gsu";
   if (normalized.includes("гостайн") || normalized.includes("гос.тайн") || normalized.includes("989")) return "gostaina";
@@ -12293,13 +12293,16 @@ function bindContentEvents() {
         if (button) button.disabled = true;
         try {
           const centerId = await resolveCenterIdForVisit(visit, client);
+          const certificateType = getDriverPrintCertificateType(normalizedSeries);
+          const lookupSeries = isNumberedCertificatePrintType(certificateType)
+            ? getNumberedCertificateLookupSeriesForType(certificateType)
+            : normalizedSeries;
           const query = new URLSearchParams({
             blank_type: "driver_medical_certificate",
             center_id: String(centerId),
-            series: normalizedSeries,
+            series: lookupSeries,
           });
           let blank = null;
-          const certificateType = getDriverPrintCertificateType(normalizedSeries);
           const shouldAutoCreateImmediately =
             !isNumberedCertificatePrintType(certificateType) &&
             !isPreenteredBlankSeries(normalizedSeries) &&
