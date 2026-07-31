@@ -262,6 +262,35 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   align-items: center;
 }
 
+.workspace-center {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 5px 4px 10px;
+  border: 2px solid #147d72;
+  border-radius: 12px;
+  background: #e8f7f4;
+  box-shadow: 0 8px 18px rgba(15, 31, 56, 0.08);
+}
+
+.workspace-center[data-center="center-2"] {
+  border-color: #7452a8;
+  background: #f1ebfa;
+}
+
+.workspace-center__label {
+  color: #24524d;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.workspace-center[data-center="center-2"] .workspace-center__label {
+  color: #56387f;
+}
+
 .center-pill {
   padding: 6px 9px;
   border-radius: 999px;
@@ -281,7 +310,12 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
 
 .center-select {
   color: var(--text);
-  min-width: 170px;
+  min-width: 132px;
+  min-height: 28px;
+  border: 1px solid rgba(20, 80, 72, 0.35);
+  border-radius: 8px;
+  background: #ffffff;
+  font-weight: 800;
 }
 
 .ghost-button,
@@ -3892,6 +3926,25 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   font: 700 13px/1.2 "Arial Cyr", Arial, sans-serif;
 }
 
+.driver-print-classic__center {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 9px;
+  padding: 7px 9px;
+  border: 1px solid #317f76;
+  border-radius: 5px;
+  background: #e9f8f5;
+  color: #24524d;
+  font-size: 12px;
+}
+
+.driver-print-classic__center strong {
+  color: #163f3b;
+  font-size: 14px;
+}
+
 .driver-print-classic__fio,
 .driver-print-classic__input {
   height: 36px;
@@ -4059,7 +4112,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 }
 
 .driver-print-classic--legacy-certificate .driver-print-classic__lookup {
-  grid-template-columns: 72px 108px 138px;
+  grid-template-columns: 112px 100px 126px;
   gap: 9px;
   margin-bottom: 9px;
 }
@@ -4094,9 +4147,21 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 }
 
 .driver-print-classic--legacy-certificate .driver-print-classic__primary {
-  grid-template-columns: 62px 114px 104px;
+  grid-template-columns: 96px 104px 104px;
   gap: 9px;
-  margin: 0 0 46px 56px;
+  margin: 0 0 46px 22px;
+}
+
+.blanks-page__center {
+  display: inline-flex;
+  margin: 2px 0 5px;
+  padding: 5px 10px;
+  border: 1px solid #31877d;
+  border-radius: 999px;
+  background: #e9f8f5;
+  color: #174d47;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .driver-print-classic--legacy-certificate .driver-print-classic__actions--driver {
@@ -5769,6 +5834,15 @@ body[data-page="dashboard"] .center-pill {
   max-width: min(220px, calc(100% - 72px));
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-page="dashboard"] .workspace-center {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+body[data-page="dashboard"] .workspace-center__label {
   white-space: nowrap;
 }
 

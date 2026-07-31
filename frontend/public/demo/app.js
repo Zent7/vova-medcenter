@@ -11,6 +11,8 @@ function getLocalDateInputValue(value = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2"];
+
 const appState = {
   page: "dashboard",
   dashboardPage: 1,
@@ -21,7 +23,7 @@ const appState = {
     roleName: "",
   },
   selectedClientId: null,
-  centerFilter: "all",
+  centerFilter: WORKSPACE_CENTER_NAMES[0],
   clientSearch: "",
   clientEncounterDate: "",
   clientEncounterDateFrom: "",
@@ -139,6 +141,7 @@ const data = {
   blanksForms: [],
   blanksLoading: false,
   blanksLoaded: false,
+  blanksCenterId: null,
   blanksError: "",
   blanksFormError: "",
   blanksFormSaving: false,
@@ -401,6 +404,7 @@ const actionModal = document.getElementById("actionModal");
 const actionModalTitle = document.getElementById("actionModalTitle");
 const actionModalContent = document.getElementById("actionModalContent");
 const centerSelect = document.getElementById("centerSelect");
+const workspaceCenter = document.getElementById("workspaceCenter");
 const toast = document.getElementById("toast");
 
 const navItems = [
@@ -1099,7 +1103,9 @@ function applyPersistedDemoState() {
   if (savedAppState.selectedClientId !== undefined && savedAppState.selectedClientId !== null) {
     appState.selectedClientId = savedAppState.selectedClientId;
   }
-  if (typeof savedAppState.centerFilter === "string") appState.centerFilter = savedAppState.centerFilter;
+  if (WORKSPACE_CENTER_NAMES.includes(savedAppState.centerFilter)) {
+    appState.centerFilter = savedAppState.centerFilter;
+  }
   appState.clientSearch = "";
   appState.clientPeriodFilterApplied = savedAppState.clientPeriodFilterApplied === true;
   if (appState.clientPeriodFilterApplied) {
@@ -2690,6 +2696,27 @@ async function openAuthorizedFileUrl(url, { print = false, targetWindow = null }
 
 function normalizeCenterLookupValue(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function getWorkspaceCenterName() {
+  return WORKSPACE_CENTER_NAMES.includes(appState.centerFilter)
+    ? appState.centerFilter
+    : WORKSPACE_CENTER_NAMES[0];
+}
+
+function getCenterNameForContext(centerId, visit = null, client = null) {
+  const numericCenterId = Number(centerId || 0);
+  const center = data.centers.find((item) => Number(item?.id) === numericCenterId);
+  return String(center?.name || visit?.center || client?.center || getWorkspaceCenterName()).trim();
+}
+
+async function resolveWorkspaceCenterId() {
+  const centerName = getWorkspaceCenterName();
+  return resolveCenterIdForVisit({ center: centerName }, { center: centerName });
+}
+
+function renderPrintCenterContext(centerName) {
+  return `<div class="driver-print-classic__center"><span>Работа в медцентре:</span><strong>${escapeHtml(centerName || getWorkspaceCenterName())}</strong></div>`;
 }
 
 async function ensureCentersLoaded() {
@@ -6305,6 +6332,10 @@ function getCashVisitRows() {
     .slice()
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     .filter((visit) => isVisitInCashPeriod(visit))
+    .filter((visit) => {
+      const client = getClientPool().find((item) => String(item.id) === String(visit.clientId));
+      return matchesCenter(visit.center || client?.center);
+    })
     .map((visit) => {
       const client = getClientPool().find((item) => String(item.id) === String(visit.clientId));
       const serviceDetails = getVisitServiceDetails(visit);
@@ -6380,6 +6411,7 @@ function formatCashReportMoney(value) {
 }
 
 function renderCashReportPrintHtml(rows) {
+  const centerName = getWorkspaceCenterName();
   const { dateFrom, dateTo } = getCashReportPeriod();
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
   const discountTotal = rows.reduce((sum, row) => sum + row.discount, 0);
@@ -6530,7 +6562,7 @@ function renderCashReportPrintHtml(rows) {
 </head>
 <body>
   <h1>Отчет кассы</h1>
-  <div class="meta">Период: ${escapeHtml(periodLabel)} · Сформировано: ${escapeHtml(printedAt)}</div>
+  <div class="meta">Медцентр: ${escapeHtml(centerName)} · Период: ${escapeHtml(periodLabel)} · Сформировано: ${escapeHtml(printedAt)}</div>
 
   <section class="summary">
     <div><span>Обращений</span><strong>${rows.length.toLocaleString("ru-RU")}</strong></div>
@@ -6588,6 +6620,7 @@ function printCashReport() {
 
 function renderCashPage() {
   const rows = getCashVisitRows();
+  const centerName = getWorkspaceCenterName();
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
   const discountTotal = rows.reduce((sum, row) => sum + row.discount, 0);
   const cashTotal = rows.reduce((sum, row) => sum + row.cashAmount, 0);
@@ -6598,6 +6631,7 @@ function renderCashPage() {
     <section class="cash-page">
       <div class="card cash-toolbar">
         <div>
+          <p class="blanks-page__center">${escapeHtml(centerName)}</p>
           <p class="muted">По умолчанию показана текущая смена за сегодня. Период можно выбрать вручную.</p>
         </div>
         <div class="cash-toolbar__filters">
@@ -6975,7 +7009,7 @@ function renderOperatorVisitForm(selectedClient, activeVisit) {
         </label>
         <label>
           <span>Центр</span>
-          <input name="center" value="${escapeHtml(activeVisit.center || selectedClient.center || "Медцентр 1")}" />
+          <input name="center" value="${escapeHtml(activeVisit.center || selectedClient.center || getWorkspaceCenterName())}" readonly />
         </label>
         <label>
           <span>Оплата</span>
@@ -9322,12 +9356,14 @@ function getNumberedCertificateLookupSeriesForType(type) {
   return "";
 }
 
-function getNumberedCertificateDisplaySeries(series, certificateType = "") {
+function getNumberedCertificateDisplaySeries(series, certificateType = "", client = null) {
   const normalizedSeries = normalizeBlankSeries(series);
   const normalizedType = String(certificateType || getDriverPrintCertificateType(series) || "").toLowerCase();
   const seriesType = getDriverPrintCertificateType(normalizedSeries);
-  if (normalizedType === "086" && seriesType === "086") return "086";
-  if (normalizedType === "095" && seriesType === "095") return "095";
+  if (normalizedType === "086" && seriesType === "086") {
+    return client ? formatCertificate086SeriesForSex({ client }) : "086у";
+  }
+  if (normalizedType === "095" && seriesType === "095") return "095у";
   return normalizedSeries;
 }
 
@@ -9512,7 +9548,8 @@ function getDriverPrintBlankParts(blank, selectedSeries) {
   const number = series && fullNumber.startsWith(series)
     ? fullNumber.slice(series.length).trim()
     : fullNumber;
-  const primaryDate = formatApiDate(blank?.issued_at || blank?.created_at || new Date().toISOString());
+  const primaryDateSource = blank?.issued_at || blank?.created_at || "";
+  const primaryDate = primaryDateSource ? formatApiDate(primaryDateSource) : "";
   return {
     series,
     number,
@@ -9655,6 +9692,7 @@ async function openDriverPrintFlow(options = {}) {
 
   const clientId = client.backendId || client.id;
   const centerId = await resolveCenterIdForVisit(visit, client);
+  const centerName = getCenterNameForContext(centerId, visit, client);
   const blankType = resolveDriverPrintBlankType({
     template,
     selectedSeries: preselectedSeries,
@@ -9733,6 +9771,7 @@ async function openDriverPrintFlow(options = {}) {
     visit,
     clientId: Number(clientId),
     centerId: Number(centerId),
+    centerName,
     template,
     blankType,
     seriesOptions,
@@ -9996,10 +10035,10 @@ async function openDriverPrintFlow(options = {}) {
     const blankParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
     const findButtonDisabled = flowState.loading;
     const visibleSeries = flowState.legacyCertificateFlow
-      ? getNumberedCertificateDisplaySeries(flowState.selectedSeries, flowState.selectedCertificateType)
+      ? getNumberedCertificateDisplaySeries(flowState.selectedSeries, flowState.selectedCertificateType, client)
       : flowState.selectedSeries;
     const visiblePrimarySeries = flowState.legacyCertificateFlow
-      ? getNumberedCertificateDisplaySeries(blankParts.series || flowState.selectedSeries, flowState.selectedCertificateType)
+      ? getNumberedCertificateDisplaySeries(blankParts.series || flowState.selectedSeries, flowState.selectedCertificateType, client)
       : blankParts.series;
     const visibleCertificateType = flowState.selectedCertificateType || getDriverPrintCertificateType(flowState.selectedSeries);
     const certificatePrintDisabled = flowState.loading || !flowState.currentBlank?.id || !visibleCertificateType;
@@ -10012,6 +10051,7 @@ async function openDriverPrintFlow(options = {}) {
       "Печать результатов:",
       `
         <div class="driver-print-classic${flowState.legacyCertificateFlow ? " driver-print-classic--legacy-certificate" : ""}">
+          ${renderPrintCenterContext(flowState.centerName)}
           <input class="driver-print-classic__fio" value="${escapeHtml(client.fullName || "Клиент")}" readonly />
 
           <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
@@ -10075,7 +10115,7 @@ async function openDriverPrintFlow(options = {}) {
       const nextCertificateType = getDriverPrintCertificateType(normalizedSeries);
       flowState.selectedCertificateType = nextCertificateType || (flowState.legacyCertificateFlow ? flowState.selectedCertificateType : "");
       flowState.selectedSeries = flowState.legacyCertificateFlow
-        ? getNumberedCertificateDisplaySeries(normalizedSeries, flowState.selectedCertificateType)
+        ? getNumberedCertificateDisplaySeries(normalizedSeries, flowState.selectedCertificateType, client)
         : normalizedSeries;
       flowState.blankType = resolveDriverPrintBlankType({
         template: flowState.template,
@@ -10141,7 +10181,7 @@ async function openDriverPrintFlow(options = {}) {
           const resolvedSeries = normalizeBlankSeries(flowState.currentBlank.series);
           flowState.selectedCertificateType = getDriverPrintCertificateType(resolvedSeries) || flowState.selectedCertificateType;
           flowState.selectedSeries = flowState.legacyCertificateFlow
-            ? getNumberedCertificateDisplaySeries(resolvedSeries, flowState.selectedCertificateType)
+            ? getNumberedCertificateDisplaySeries(resolvedSeries, flowState.selectedCertificateType, client)
             : resolvedSeries;
           flowState.blankType = resolveDriverPrintBlankType({
             template: flowState.template,
@@ -10153,7 +10193,11 @@ async function openDriverPrintFlow(options = {}) {
         }
       } catch (error) {
         flowState.currentBlank = null;
-        flowState.error = humanizeApiError(error, "Не удалось подобрать свободный бланк");
+        const requestedSeriesLabel = normalizeBlankSeries(lookupSeries || flowState.selectedSeries) || "выбранной серии";
+        const message = humanizeApiError(error, "Не удалось подобрать свободный бланк");
+        flowState.error = message.includes("Свободные бланки по выбранной серии не найдены")
+          ? `В «${flowState.centerName}» нет свободных бланков серии ${requestedSeriesLabel}. Добавьте диапазон в разделе «Бланки» этого медцентра.`
+          : message;
       } finally {
         flowState.loading = false;
         renderFlow();
@@ -12089,6 +12133,7 @@ function bindContentEvents() {
         client?.referenceNumber ||
         client?.rawApiClient?.reference_number ||
         "";
+      const centerName = getCenterNameForContext(visit?.centerId || client?.centerId, visit, client);
       const selectedPrintBlanks = new Map();
       const certificatePrintGroup = CHAIRMAN_CERTIFICATE_PRINT_GROUPS.get(getChairmanFormConfigForVisit(visit).type) || null;
       const certificateTemplateMenu = Boolean(certificatePrintGroup);
@@ -12144,6 +12189,7 @@ function bindContentEvents() {
         certificateTemplateMenu
           ? `
           <div class="driver-print-classic chairman-print-results chairman-print-results--certificates">
+            ${renderPrintCenterContext(centerName)}
             <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
 
             <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
@@ -12162,6 +12208,7 @@ function bindContentEvents() {
         `
           : `
           <div class="driver-print-classic chairman-print-results">
+            ${renderPrintCenterContext(centerName)}
             <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
 
             <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
@@ -12514,6 +12561,23 @@ function renderApp() {
     appState.page = appState.auth.accessToken ? "employee" : "dashboard";
   }
   document.body.dataset.page = appState.page;
+  const workspaceCenterName = getWorkspaceCenterName();
+  document.body.dataset.center = workspaceCenterName === "Медцентр 2" ? "center-2" : "center-1";
+
+  if (centerSelect) {
+    centerSelect.value = workspaceCenterName;
+  }
+  if (workspaceCenter) {
+    workspaceCenter.dataset.center = document.body.dataset.center;
+    workspaceCenter.title = `Текущая работа: ${workspaceCenterName}`;
+  }
+
+  const selectedWorkspaceClient = getSelectedClient();
+  if (selectedWorkspaceClient && !matchesCenter(selectedWorkspaceClient.center)) {
+    appState.selectedClientId = null;
+    appState.selectedEncounterId = null;
+    appState.activeVisitId = null;
+  }
 
   if (authStatusLabel) {
     authStatusLabel.textContent = repairDemoText(
@@ -12554,10 +12618,28 @@ window.addEventListener("resize", () => {
 
 if (centerSelect) {
   centerSelect.addEventListener("change", (event) => {
-    appState.centerFilter = event.target.value;
+    const nextCenter = WORKSPACE_CENTER_NAMES.includes(event.target.value)
+      ? event.target.value
+      : WORKSPACE_CENTER_NAMES[0];
+    if (nextCenter === getWorkspaceCenterName()) return;
+    appState.centerFilter = nextCenter;
     appState.dashboardPage = 1;
+    appState.selectedClientId = null;
+    appState.selectedEncounterId = null;
+    appState.activeVisitId = null;
+    appState.clientSearch = "";
+    data.blanksLoaded = false;
+    data.blanksCenterId = null;
+    data.blanksStats = [];
+    data.blanksBatches = [];
+    data.blanksForms = [];
+    actionModal?.classList.add("hidden");
     persistDemoState();
     renderApp();
+    if (appState.page === "blanks" && typeof window.loadBlanksData === "function") {
+      window.loadBlanksData({ force: true });
+    }
+    showToast(`Рабочий медцентр: ${nextCenter}`);
   });
 }
 
@@ -12635,6 +12717,8 @@ window.printChairmanDocumentFromExam = printChairmanDocumentFromExam;
 window.getChairmanFormInfo = getChairmanFormInfo;
 window.openChairmanTemplateFile = openChairmanTemplateFile;
 window.API_BASE_URL = API_BASE_URL;
+window.getWorkspaceCenterName = getWorkspaceCenterName;
+window.resolveWorkspaceCenterId = resolveWorkspaceCenterId;
 window.apiRequest = apiRequest;
 window.humanizeApiError = humanizeApiError;
 window.mapApiService = mapApiService;

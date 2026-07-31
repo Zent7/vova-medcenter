@@ -56,7 +56,19 @@
     const force = options.force === true;
     const data = window.data;
     if (!data || data.blanksLoading) return;
-    if (data.blanksLoaded && !force) return;
+
+    let centerId = null;
+    try {
+      centerId = await window.resolveWorkspaceCenterId?.();
+    } catch (error) {
+      data.blanksError = window.humanizeApiError
+        ? window.humanizeApiError(error, "Не удалось определить текущий медцентр")
+        : String(error?.message || error || "Не удалось определить текущий медцентр");
+      if (window.appState?.page === "blanks") window.renderApp?.();
+      return;
+    }
+
+    if (data.blanksLoaded && Number(data.blanksCenterId) === Number(centerId) && !force) return;
 
     data.blanksLoading = true;
     data.blanksError = "";
@@ -65,11 +77,12 @@
     }
 
     try {
+      const centerQuery = new URLSearchParams({ center_id: String(centerId) }).toString();
       const [types, stats, batches, forms] = await Promise.all([
         window.apiRequest("/blanks/types"),
-        window.apiRequest("/blanks/stats"),
-        window.apiRequest("/blanks/batches"),
-        window.apiRequest("/blanks/forms?limit=1000"),
+        window.apiRequest(`/blanks/stats?${centerQuery}`),
+        window.apiRequest(`/blanks/batches?${centerQuery}`),
+        window.apiRequest(`/blanks/forms?limit=1000&${centerQuery}`),
       ]);
 
       data.blanksTypes = Array.isArray(types) ? types : [];
@@ -77,6 +90,7 @@
       data.blanksBatches = Array.isArray(batches) ? batches : [];
       data.blanksForms = Array.isArray(forms) ? forms : [];
       data.blanksLoaded = true;
+      data.blanksCenterId = Number(centerId);
 
       const activeBatchIds = new Set(data.blanksBatches.map((item) => String(item.id)));
       if (!activeBatchIds.has(String(window.appState?.blanksFilterBatchId || ""))) {
@@ -125,14 +139,15 @@
     const appState = window.appState || {};
     const batches = Array.isArray(data.blanksBatches) ? data.blanksBatches : [];
     const typeOptions = Array.isArray(data.blanksTypes) ? data.blanksTypes : [];
+    const centerName = window.getWorkspaceCenterName?.() || appState.centerFilter || "Медцентр";
 
     return `
       ${
         appState.blanksFormOpen
           ? `
             <form class="card blanks-batch-form" id="blanksBatchForm">
-              <h3>Добавить диапазон номеров</h3>
-              <p class="muted">Укажите серию и первый с последним номером. Все номера из диапазона будут добавлены автоматически.</p>
+              <h3>Добавить диапазон номеров — ${esc(centerName)}</h3>
+              <p class="muted">Диапазон будет принадлежать только выбранному медцентру. Укажите серию и первый с последним номером.</p>
               <div class="visit-form__grid">
                 <label class="field">
                   <span>Тип бланка</span>
@@ -357,13 +372,15 @@
   function renderBlanksPage() {
     const data = window.data || {};
     const appState = window.appState || {};
+    const centerName = window.getWorkspaceCenterName?.() || appState.centerFilter || "Медцентр";
 
     return `
       <section class="card">
         <div class="blanks-page__header">
           <div>
             <h3>Бланки</h3>
-            <p class="muted">Добавляйте диапазоны номеров и проверяйте, какие бланки свободны, выданы или испорчены.</p>
+            <p class="blanks-page__center">${esc(centerName)}</p>
+            <p class="muted">Показаны только диапазоны и номера выбранного медцентра.</p>
           </div>
           <div class="blanks-page__actions">
             <button type="button" class="primary-button" data-blanks-add-numbers ${appState.blanksFormOpen ? "disabled" : ""}>
@@ -452,11 +469,12 @@
       window.renderApp?.();
 
       try {
+        const centerId = await window.resolveWorkspaceCenterId?.();
         await window.apiRequest("/blanks/batches", {
           method: "POST",
           body: JSON.stringify({
             blank_type: formData.get("blank_type"),
-            center_id: 1,
+            center_id: Number(centerId),
             series: String(formData.get("series") || "").trim() || null,
             number_from: String(formData.get("number_from") || "").trim(),
             number_to: String(formData.get("number_to") || "").trim(),

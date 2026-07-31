@@ -23,6 +23,13 @@
             <h1 id="page-title">Главная</h1>
           </div>
           <div class="topbar-actions">
+            <label class="workspace-center" id="workspaceCenter">
+              <span class="workspace-center__label">Работа в медцентре</span>
+              <select class="center-select" id="centerSelect" aria-label="Текущий медцентр">
+                <option value="Медцентр 1">Медцентр 1</option>
+                <option value="Медцентр 2">Медцентр 2</option>
+              </select>
+            </label>
             <div class="center-pill">
               <strong id="authStatusLabel">Гость</strong>
             </div>
@@ -79,8 +86,8 @@
           : "/api/v1";
     </script>
     <script src="./services-data.js?v=20260731-short-service-names-v1"></script>
-    <script src="./app.js?v=20260731-remove-unused-templates-v5"></script>
-    <script src="./blanks-page.js?v=20260721-add-numbers"></script>
+    <script src="./app.js?v=20260731-center-workspaces-v1"></script>
+    <script src="./blanks-page.js?v=20260731-center-workspaces-v1"></script>
     <script src="./services-page.js?v=20260617-single-top-title"></script>
     <script src="./client-modal.js?v=20260721-service-encounter-rows"></script>
     <script src="./doctor-exam-modal.js?v=20260713-chairman-hide-driver-details"></script>
