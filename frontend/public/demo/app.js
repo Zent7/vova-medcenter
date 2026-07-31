@@ -9771,6 +9771,13 @@ async function openDriverPrintFlow(options = {}) {
       : flowState.selectedCertificateType
         ? [flowState.selectedCertificateType]
         : [];
+    if (certificateTypes.length === 1 && certificateTypes[0] === "071") {
+      const tractorPrintDisabled = flowState.loading || !flowState.currentBlank?.id || !flowState.template;
+      return `
+        <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_front" ${tractorPrintDisabled ? "disabled" : ""}>Лицевая</button>
+        <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_back" ${tractorPrintDisabled ? "disabled" : ""}>Оборотная</button>
+      `;
+    }
     if (certificateTypes.length) {
       return certificateTypes
         .map(
