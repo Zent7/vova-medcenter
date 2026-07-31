@@ -9024,6 +9024,7 @@ const DRIVER_PRINT_VARIANTS = [
   { id: "tractor_front", label: "Лицевая трактора", errorLabel: "лицевую сторону тракторной справки" },
   { id: "tractor_back", label: "Оборот трактора", errorLabel: "оборот тракторной справки" },
 ];
+const TRACTOR_FRONT_TEMPLATE_FILE_NAME = "Трактроная_новый-шаблон.docx";
 const TRACTOR_BACK_TEMPLATE_FILE_NAME = "трактор об ст.xls";
 
 function findDocumentTemplateByExactFileName(fileName) {
@@ -9893,13 +9894,17 @@ async function openDriverPrintFlow(options = {}) {
     const skipConfirmation = Boolean(options.skipConfirmation);
     const variant = DRIVER_PRINT_VARIANTS.find((item) => item.id === variantId);
     if (!variant || !flowState.currentBlank?.id) return;
-    const variantTemplate = variant.id === "tractor_back"
-      ? findDocumentTemplateByExactFileName(TRACTOR_BACK_TEMPLATE_FILE_NAME)
-      : flowState.template;
+    const variantTemplate = variant.id === "tractor_front"
+      ? findDocumentTemplateByExactFileName(TRACTOR_FRONT_TEMPLATE_FILE_NAME)
+      : variant.id === "tractor_back"
+        ? findDocumentTemplateByExactFileName(TRACTOR_BACK_TEMPLATE_FILE_NAME)
+        : flowState.template;
     if (!variantTemplate) {
-      flowState.error = variant.id === "tractor_back"
-        ? "Не найден новый шаблон оборота тракторной справки"
-        : "Не найден шаблон водительской справки";
+      flowState.error = variant.id === "tractor_front"
+        ? "Не найден шаблон лицевой стороны тракторной справки"
+        : variant.id === "tractor_back"
+          ? "Не найден шаблон оборотной стороны тракторной справки"
+          : "Не найден шаблон водительской справки";
       renderFlow();
       return;
     }
