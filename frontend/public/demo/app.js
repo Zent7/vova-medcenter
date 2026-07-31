@@ -8430,12 +8430,12 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   const find086Template = () => {
     const sex = getClientSexKey();
     if (sex === "male") {
-      return findDocxSafely(["086у.муж_шаблон", "086у муж шаблон", "086у.муж_шаблон_2", "086у муж шаблон 2"], ["086у.муж", "086у муж"], ["жен"]);
+      return findDocxSafely(["086у.муж_шаблон_2", "086у муж шаблон 2", "086у.муж_шаблон", "086у муж шаблон"], ["086у.муж", "086у муж"], ["жен"]);
     }
     if (sex === "female") {
       return findDocxSafely(["086у.жен_шаблон", "086у жен шаблон", "086у.жен_шаблон_2", "086у жен шаблон 2"], ["086у.жен", "086у жен"], ["муж"]);
     }
-    return findDocxSafely(["086у.муж_шаблон", "086у.жен_шаблон"], ["086"], []);
+    return findDocxSafely(["086у.муж_шаблон_2", "086у.жен_шаблон"], ["086"], []);
   };
   const findAmbulatoryExtractTemplate = () =>
     findTemplateSafely(

@@ -22,8 +22,11 @@ from app.services.new_xls_templates import (  # noqa: E402
     strip_new_xls_placeholder_padding,
 )
 from app.services.seed import SERVICE_CATALOG  # noqa: E402
-from app.services.template_catalog import load_template_catalog  # noqa: E402
-from app.services.template_catalog import TEMPLATE_DISPLAY_NAMES  # noqa: E402
+from app.services.template_catalog import (  # noqa: E402
+    FOLDER_TEMPLATE_SOURCE_NAMES,
+    TEMPLATE_DISPLAY_NAMES,
+    load_template_catalog,
+)
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
@@ -130,6 +133,12 @@ class NewXlsTemplatesTests(unittest.TestCase):
             {file_name: display_name_by_file[file_name] for file_name in TEMPLATE_DISPLAY_NAMES},
             TEMPLATE_DISPLAY_NAMES,
         )
+        description_by_file = {item["file_name"]: item["description"] for item in catalog}
+        for file_name, source_name in FOLDER_TEMPLATE_SOURCE_NAMES.items():
+            self.assertEqual(
+                description_by_file[file_name],
+                f"Подготовлен из папки клиента: {source_name}",
+            )
 
     def test_related_services_use_customer_excel_abbreviations(self):
         service_name_by_legacy_id = {legacy_id: name for legacy_id, _, name, _ in SERVICE_CATALOG}

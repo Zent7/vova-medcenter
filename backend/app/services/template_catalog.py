@@ -9,13 +9,50 @@ ACTIVE_XML_TEMPLATE_NAMES = {
     "ГИМС_шаблон_для_загрузки_из_файла.xml",
 }
 TEMPLATE_DISPLAY_NAMES = {
+    "070 новый шабл.docx": "070у",
+    "072 Сюрина ноый шабл.docx": "072 у СКК",
+    "082у_шаблон.docx": "082у",
+    "086у.жен_шаблон.docx": "086у (Ж)",
+    "086у.муж_шаблон_2.docx": "086у (М)",
+    "095У_справка_шаблон.docx": "095у",
+    "CпортЭКГ_шаблон.docx": "спорт",
+    "CправкаБассейн_шаблон.docx": "бассейн",
+    "АМБ_карты_профосмотр_шаблон.xls": "Проф",
+    "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls": "ВУ",
+    "Выписка из Амб карты (профа).xls": "Проф",
     "ГС НОВЫЙ ФОРМАТ.xls": "ГС",
     "ГИМС (судна).xls": "ГИМС",
-    "трактор об ст.xls": "071у",
     "ГТ.xls": "ГТ",
+    "Заключение29Н_шаблон.docx": "Проф",
+    "ЛМК_справка_шаблон.docx": "ЛМК справка",
+    "ЛМК_шаблон_2.docx": "ЛМК",
+    "Охрана_шаблон.docx": "002 (чод)",
+    "ПрофосмотрВыписка_шаблон.docx": "Проф",
+    "Псих. осв.docx": "342н псих осв",
+    "Справка_342н_псих_освид.xls": "342н псих осв",
     "СПОРТ.xls": "СПОРТ",
     "СКК 72 новый формат.xls": "072 у СКК",
     "СКК 070 новый формат.xls": "070у",
+    "трактор об ст.xls": "071у",
+    "Трактроная_новый-шаблон.docx": "071у",
+}
+FOLDER_TEMPLATE_SOURCE_NAMES = {
+    "070 новый шабл.docx": "070 новый шабл.rtf",
+    "072 Сюрина ноый шабл.docx": "072 Сюрина ноый шабл.docx",
+    "082у_шаблон.docx": "18)082 у.docx",
+    "086у.жен_шаблон.docx": "Медицинская справка 086 мед авто.docx",
+    "086у.муж_шаблон_2.docx": "086 попов я.docx",
+    "095У_справка_шаблон.docx": "spravka_posle_bolezni_095y (1) МЕД АВТО.doc",
+    "CпортЭКГ_шаблон.docx": "9)спортивная справка.docx",
+    "CправкаБассейн_шаблон.docx": "20)бассейн спр.docx",
+    "АМБ_карты_профосмотр_шаблон.xls": "ПРОФОСМОТР.xls",
+    "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls": "086 муж.xls; водительская лицевая.xls; водительская обратн ст.xls; ЛМК.xls",
+    "Выписка из Амб карты (профа).xls": "Выписка из Амб карты (профа).xls",
+    "ЛМК_справка_шаблон.docx": "лмк спр.docx",
+    "Охрана_шаблон.docx": "ОХРАНА ВОРД.docx",
+    "Псих. осв.docx": "Псих.docx",
+    "Справка_342н_псих_освид.xls": "псих освид.xls",
+    "Трактроная_новый-шаблон.docx": "тракт лицевая.xls",
 }
 
 
@@ -56,13 +93,17 @@ def load_template_catalog() -> list[dict[str, str]]:
         if path.suffix.lower() not in SUPPORTED_TEMPLATE_EXTENSIONS:
             continue
 
+        source_name = FOLDER_TEMPLATE_SOURCE_NAMES.get(path.name)
+        description = f"Подготовлен из папки клиента: {source_name}" if source_name else (
+            f"Подключенный шаблон {path.suffix.lower().lstrip('.')}"
+        )
         catalog.append(
             {
                 "code": f"{slugify_template_name(path.stem)}-{index}",
                 "name": TEMPLATE_DISPLAY_NAMES.get(path.name, path.stem),
                 "file_name": path.name,
                 "file_path": str(path),
-                "description": f"Подключенный шаблон {path.suffix.lower().lstrip('.')}",
+                "description": description,
                 "template_type": path.suffix.lower().lstrip("."),
                 "preferred_xlsx_available": path.suffix.lower() == ".xls" and path.stem in xlsx_stems,
             }
