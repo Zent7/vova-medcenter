@@ -1625,8 +1625,20 @@ function getChairmanFormTypeForVisit(visit) {
   if (serviceText.includes("086")) return "certificate086";
   if (serviceText.includes("095")) return "certificate095";
   if (serviceText.includes("сэмт") || serviceText.includes("semt") || serviceText.includes("196")) return "semt196";
-  if (serviceText.includes("001") || serviceText.includes("гсу") || serviceText.includes("госслуж")) return "gsu";
-  if (serviceText.includes("989") || serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return "gostaina";
+  if (
+    services.some((service) => Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id) === 2) ||
+    serviceText.includes("001") ||
+    serviceText.includes("гсу") ||
+    serviceText.includes("госслуж") ||
+    /(^|\s)гс($|\s)/.test(serviceText)
+  ) return "gsu";
+  if (
+    services.some((service) => Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id) === 11) ||
+    serviceText.includes("989") ||
+    serviceText.includes("гостайн") ||
+    serviceText.includes("гос.тайн") ||
+    /(^|\s)гт($|\s)/.test(serviceText)
+  ) return "gostaina";
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return "psych342";
   if (serviceText.includes("чод") || serviceText.includes("охран")) return "guard";
   if (services.some(isCertificateService)) return "certificate";
@@ -8614,10 +8626,10 @@ const CHAIRMAN_CERTIFICATE_PRINT_GROUPS = new Map([
   ["sport", { currentType: "sport", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
   ["pool", { currentType: "pool", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
   ["gto", { currentType: "gto", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
-  ["gostaina", { currentType: "gostaina", items: [["gostaina", "ГТ (гостайна)"], ["gsu", "ГС (госслужба)"]] }],
-  ["gsu", { currentType: "gsu", items: [["gostaina", "ГТ (гостайна)"], ["gsu", "ГС (госслужба)"]] }],
-  ["certificate072", { currentType: "072", items: [["072", "Справка 072у"], ["070", "Справка 070у"]] }],
-  ["certificate070", { currentType: "070", items: [["072", "Справка 072у"], ["070", "Справка 070у"]] }],
+  ["gostaina", { currentType: "gostaina", items: [["gostaina", "ГТ"], ["gsu", "ГС"]] }],
+  ["gsu", { currentType: "gsu", items: [["gostaina", "ГТ"], ["gsu", "ГС"]] }],
+  ["certificate072", { currentType: "072", items: [["072", "072 у СКК"], ["070", "070у"]] }],
+  ["certificate070", { currentType: "070", items: [["072", "072 у СКК"], ["070", "070у"]] }],
   ["certificate095", { currentType: "095", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
   ["certificate086", { currentType: "086", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
   ["semt196", { currentType: "semt196", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
@@ -9121,18 +9133,18 @@ const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["13098", "13098"],
 ]);
 const CERTIFICATE_PRINT_TYPE_LABELS = {
-  "070": "Справка 070У",
-  "071": "Справка 071У",
-  "072": "Справка 072У",
+  "070": "070у",
+  "071": "071у",
+  "072": "072 у СКК",
   "082": "Справка 082У",
   "086": "Справка 086У",
   "095": "Справка 095У",
-  gsu: "Справка 001 ГСУ",
-  gostaina: "Справка гостайна",
+  gsu: "ГС",
+  gostaina: "ГТ",
   psych342: "Справка 342н",
   gto: "Справка ГТО",
   pool: "Справка в бассейн",
-  sport: "Справка Спорт",
+  sport: "СПОРТ",
   ekg: "ЭКГ",
   lmk: "ЛМК",
   gims: "ГИМС",
@@ -9149,6 +9161,11 @@ const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
 const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071у"],
+  ["070у", "070у"],
+  ["072 у скк", "072 у СКК"],
+  ["гс", "ГС"],
+  ["гт", "ГТ"],
+  ["гимс", "ГИМС"],
   ["профосмотр", "29Н"],
   ["первичный профосмотр 29н", "Проф"],
   ["санаторно-курортная карта", "072 у СКК"],

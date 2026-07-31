@@ -8,6 +8,15 @@ ACTIVE_XML_TEMPLATE_NAMES = {
     "Чод_новый.xml",
     "ГИМС_шаблон_для_загрузки_из_файла.xml",
 }
+TEMPLATE_DISPLAY_NAMES = {
+    "ГС НОВЫЙ ФОРМАТ.xls": "ГС",
+    "ГИМС (судна).xls": "ГИМС",
+    "трактор об ст.xls": "071у",
+    "ГТ.xls": "ГТ",
+    "СПОРТ.xls": "СПОРТ",
+    "СКК 72 новый формат.xls": "072 у СКК",
+    "СКК 070 новый формат.xls": "070у",
+}
 
 
 def template_is_active_by_default(file_name: str, *, preferred_xlsx_available: bool = False) -> bool:
@@ -50,7 +59,7 @@ def load_template_catalog() -> list[dict[str, str]]:
         catalog.append(
             {
                 "code": f"{slugify_template_name(path.stem)}-{index}",
-                "name": path.stem,
+                "name": TEMPLATE_DISPLAY_NAMES.get(path.name, path.stem),
                 "file_name": path.name,
                 "file_path": str(path),
                 "description": f"Подключенный шаблон {path.suffix.lower().lstrip('.')}",

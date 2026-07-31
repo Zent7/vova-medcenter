@@ -21,7 +21,9 @@ from app.services.new_xls_templates import (  # noqa: E402
     NEW_XLS_TEMPLATE_SPECS,
     strip_new_xls_placeholder_padding,
 )
+from app.services.seed import SERVICE_CATALOG  # noqa: E402
 from app.services.template_catalog import load_template_catalog  # noqa: E402
+from app.services.template_catalog import TEMPLATE_DISPLAY_NAMES  # noqa: E402
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
@@ -119,9 +121,33 @@ class NewXlsTemplatesTests(unittest.TestCase):
         ]
 
     def test_catalog_contains_all_new_templates(self):
-        catalog_names = {item["file_name"] for item in load_template_catalog()}
+        catalog = load_template_catalog()
+        catalog_names = {item["file_name"] for item in catalog}
         expected_names = {spec.file_name for spec in NEW_XLS_TEMPLATE_SPECS}
         self.assertTrue(expected_names.issubset(catalog_names))
+        display_name_by_file = {item["file_name"]: item["name"] for item in catalog}
+        self.assertEqual(
+            {file_name: display_name_by_file[file_name] for file_name in TEMPLATE_DISPLAY_NAMES},
+            TEMPLATE_DISPLAY_NAMES,
+        )
+
+    def test_related_services_use_customer_excel_abbreviations(self):
+        service_name_by_legacy_id = {legacy_id: name for legacy_id, _, name, _ in SERVICE_CATALOG}
+        self.assertEqual(
+            {
+                legacy_id: service_name_by_legacy_id[legacy_id]
+                for legacy_id in (2, 5, 7, 11, 24, 31, 37)
+            },
+            {
+                2: "ГС",
+                5: "спорт",
+                7: "071У",
+                11: "ГТ",
+                24: "072 у СКК",
+                31: "070у",
+                37: "ГИМС",
+            },
+        )
 
     def test_templates_are_single_sheet_and_free_of_source_examples(self):
         legacy_values = (

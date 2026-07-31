@@ -176,7 +176,7 @@ window.servicesData = {
 
     {
       id: 24,
-      name: "Санаторно-курортная карта 072У",
+      name: "072 у СКК",
       groupId: 7,
       price: 2500,
       notes: "",
@@ -186,7 +186,7 @@ window.servicesData = {
     },
     {
       id: 31,
-      name: "Справка для получения путевки 070У",
+      name: "070у",
       groupId: 7,
       price: 2000,
       notes: "",
@@ -196,7 +196,7 @@ window.servicesData = {
     },
     {
       id: 2,
-      name: "Справка формы 001 ГСУ",
+      name: "ГС",
       groupId: 7,
       price: 1800,
       notes: "",
@@ -236,7 +236,7 @@ window.servicesData = {
     },
     {
       id: 11,
-      name: "Справка для работы с гостайной формы 989Н",
+      name: "ГТ",
       groupId: 7,
       price: 1800,
       notes: "",
