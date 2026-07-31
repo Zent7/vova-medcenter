@@ -9,13 +9,10 @@ ACTIVE_XML_TEMPLATE_NAMES = {
     "ГИМС_шаблон_для_загрузки_из_файла.xml",
 }
 TEMPLATE_DISPLAY_NAMES = {
-    "070 новый шабл.docx": "070у",
-    "072 Сюрина ноый шабл.docx": "072 у СКК",
     "082у_шаблон.docx": "082у",
     "086у.жен_шаблон.docx": "086у (Ж)",
     "086у.муж_шаблон_2.docx": "086у (М)",
     "095У_справка_шаблон.docx": "095у",
-    "CпортЭКГ_шаблон.docx": "спорт",
     "CправкаБассейн_шаблон.docx": "бассейн",
     "АМБ_карты_профосмотр_шаблон.xls": "Проф",
     "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls": "ВУ",
@@ -37,13 +34,10 @@ TEMPLATE_DISPLAY_NAMES = {
     "Трактроная_новый-шаблон.docx": "071у",
 }
 FOLDER_TEMPLATE_SOURCE_NAMES = {
-    "070 новый шабл.docx": "070 новый шабл.rtf",
-    "072 Сюрина ноый шабл.docx": "072 Сюрина ноый шабл.docx",
     "082у_шаблон.docx": "18)082 у.docx",
     "086у.жен_шаблон.docx": "Медицинская справка 086 мед авто.docx",
     "086у.муж_шаблон_2.docx": "086 попов я.docx",
     "095У_справка_шаблон.docx": "spravka_posle_bolezni_095y (1) МЕД АВТО.doc",
-    "CпортЭКГ_шаблон.docx": "9)спортивная справка.docx",
     "CправкаБассейн_шаблон.docx": "20)бассейн спр.docx",
     "АМБ_карты_профосмотр_шаблон.xls": "ПРОФОСМОТР.xls",
     "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls": "086 муж.xls; водительская лицевая.xls; водительская обратн ст.xls; ЛМК.xls",
@@ -54,6 +48,43 @@ FOLDER_TEMPLATE_SOURCE_NAMES = {
     "Справка_342н_псих_освид.xls": "псих освид.xls",
     "Трактроная_новый-шаблон.docx": "тракт лицевая.xls",
 }
+ACTIVE_TEMPLATE_FILE_NAMES = frozenset(
+    {
+        "082у_шаблон.docx",
+        "086у.жен_шаблон.docx",
+        "086у.муж_шаблон_2.docx",
+        "095У_справка_шаблон.docx",
+        "13082.docx",
+        "13098.docx",
+        "Cправка_мед. осмотр_шаблон.docx",
+        "CправкаБассейн_шаблон.docx",
+        "АМБ_карты_профосмотр_шаблон.xls",
+        "Водительская(новая).xml",
+        "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls",
+        "Выписка из Амб карты (профа).xls",
+        "ГИМС (судна).xls",
+        "ГИМС_шаблон_для_загрузки_из_файла.xml",
+        "ГС НОВЫЙ ФОРМАТ.xls",
+        "ГТ.xls",
+        "ГТО1144_шаблон.docx",
+        "Договор_шаблон_2.docx",
+        "Заключение29Н_шаблон.docx",
+        "ЛМК_справка_шаблон.docx",
+        "ЛМК_шаблон_2.docx",
+        "Охрана_шаблон.docx",
+        "ПрофосмотрВыписка_шаблон.docx",
+        "Псих. осв.docx",
+        "СЕРТ МОРСКАЯ шаблон.docx",
+        "СКК 070 новый формат.xls",
+        "СКК 72 новый формат.xls",
+        "СПОРТ.xls",
+        "Справка_342н_псих_освид.xls",
+        "трактор об ст.xls",
+        "Трактроная_новый-шаблон.docx",
+        "Чод_новый.xml",
+        "ЭКГ_шаблон.docx",
+    }
+)
 
 
 def template_is_active_by_default(file_name: str, *, preferred_xlsx_available: bool = False) -> bool:
@@ -82,7 +113,11 @@ def load_template_catalog() -> list[dict[str, str]]:
     paths = [
         path
         for path in sorted(root.iterdir(), key=lambda item: item.name.lower())
-        if path.is_file() and path.suffix.lower() in SUPPORTED_TEMPLATE_EXTENSIONS
+        if (
+            path.is_file()
+            and path.name in ACTIVE_TEMPLATE_FILE_NAMES
+            and path.suffix.lower() in SUPPORTED_TEMPLATE_EXTENSIONS
+        )
     ]
     xlsx_stems = {path.stem for path in paths if path.suffix.lower() == ".xlsx"}
 

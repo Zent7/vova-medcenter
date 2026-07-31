@@ -25,13 +25,15 @@ from app.services.document_generator import (  # noqa: E402
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
 DATED_CERTIFICATE_TEMPLATES = (
-    "070 новый шабл.docx",
-    "072У_шаблон.docx",
-    "CпортЭКГ_шаблон.docx",
     "CправкаБассейн_шаблон.docx",
-    "Гос.тайна_шаблон.docx",
-    "ГСУ001_шаблон.docx",
     "ГТО1144_шаблон.docx",
+)
+DATED_XLS_CERTIFICATE_TEMPLATES = (
+    "ГС НОВЫЙ ФОРМАТ.xls",
+    "ГТ.xls",
+    "СКК 070 новый формат.xls",
+    "СКК 72 новый формат.xls",
+    "СПОРТ.xls",
 )
 
 
@@ -88,6 +90,17 @@ class ChairmanCertificateDateTests(unittest.TestCase):
         template = SimpleNamespace(file_name="Договор_шаблон.docx", file_path=None)
 
         self.assertEqual(_chairman_certificate_date_context_overrides(template, [self.exam]), {})
+
+    def test_mail_xls_templates_use_chairman_exam_date(self):
+        for template_name in DATED_XLS_CERTIFICATE_TEMPLATES:
+            with self.subTest(template=template_name):
+                template = SimpleNamespace(file_name=template_name, file_path=None)
+
+                overrides = _chairman_certificate_date_context_overrides(template, [self.exam])
+
+                self.assertEqual(overrides["VisitDate"], "05.07.26")
+                self.assertEqual(overrides["VisitDate_DATEMONTH"], "июля")
+                self.assertEqual(overrides["VisitDate_YEAR"], "2026")
 
     def test_070_birth_date_digit_tokens_follow_client_birth_date(self):
         client = Client(

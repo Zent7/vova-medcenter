@@ -8479,20 +8479,20 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     return findTemplateByPreferredKeys(xmlTemplates, ["водительская(новая)"]);
   }
 
-  if (normalizedType === "070") return findNewXls(["скк 070 новый формат"]) || findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
+  if (normalizedType === "070") return findNewXls(["скк 070 новый формат"]);
   if (normalizedType === "071") return findDocxSafely(["cправка_мед. осмотр_шаблон", "справка_мед. осмотр_шаблон", "справка шаблон"], ["071", "мед. осмотр"]);
-  if (normalizedType === "072") return findNewXls(["скк 72 новый формат"]) || findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], ["13072"]);
+  if (normalizedType === "072") return findNewXls(["скк 72 новый формат"]);
   if (normalizedType === "082") return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
   if (normalizedType === "086") return find086Template();
   if (normalizedType === "095") return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
   if (normalizedType === "semt196") return findDocxSafely(["сэмт196_шаблон", "сэмт-196_шаблон"], ["сэмт", "196"], []);
-  if (normalizedType === "gsu") return findNewXls(["гс новый формат"]) || findDocxSafely(["гсу001_шаблон"], ["гсу001", "001"], []);
-  if (normalizedType === "gostaina") return findNewXls(["гт"]) || findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гостайн", "гос.тайн", "989"], []);
+  if (normalizedType === "gsu") return findNewXls(["гс новый формат"]);
+  if (normalizedType === "gostaina") return findNewXls(["гт"]);
   if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);
   if (normalizedType === "ambulatory_extract") return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]);
   if (normalizedType === "gto") return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
-  if (normalizedType === "sport") return findNewXls(["спорт"]) || findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
+  if (normalizedType === "sport") return findNewXls(["спорт"]);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
   if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
   if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
@@ -8526,12 +8526,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "13098") return findDocxSafely(["13098"], ["13098"], []);
 
   if (normalizedType === "driver" || (normalizedType !== "medical" && serviceText.includes("водител"))) {
-    return (
-      findXls(["все нужные шаблоны", "водительская", "тракторная"]) ||
-      findDocx(["водительскаясправка_шаблон.docx", "водительскаясправка_шаблон"]) ||
-      findDocx(["водитель"]) ||
-      null
-    );
+    return findXls(["все нужные шаблоны", "водительская", "тракторная"]) || null;
   }
 
   if (serviceText.includes("082") || serviceText.includes("границ")) return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
@@ -8539,21 +8534,21 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("095")) return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
   if (serviceText.includes("бассейн")) return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (serviceText.includes("070") || serviceText.includes("путевк")) {
-    return findNewXls(["скк 070 новый формат"]) || findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
+    return findNewXls(["скк 070 новый формат"]);
   }
   if (serviceText.includes("гто")) return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
   if (serviceText.includes("гимс")) return findNewXls(["гимс судна"]) || findDocxSafely(["гимс"], ["гимс"], []);
-  if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findNewXls(["гт"]) || findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гос.тайна"], []);
+  if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findNewXls(["гт"]);
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
-  if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findNewXls(["гс новый формат"]) || findDocxSafely(["гсу001_шаблон"], ["гсу001"], []);
+  if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findNewXls(["гс новый формат"]);
   if (serviceText.includes("охран") || serviceText.includes("чод")) return findChodXlsTemplate() || findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   if (serviceText.includes("трактор")) return findDocx(["трактроная", "трактор"]) || null;
-  if (serviceText.includes("спорт")) return findNewXls(["спорт"]) || findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
+  if (serviceText.includes("спорт")) return findNewXls(["спорт"]);
   if (serviceText.includes("экг")) return findStandaloneEkgTemplate();
-  if (serviceText.includes("лмк")) return findDocxSafely(["лмк_шаблон"], ["лмк"], []);
+  if (serviceText.includes("лмк")) return findDocxSafely(["лмк_справка_шаблон", "лмк_шаблон_2"], ["лмк"], []);
   if (serviceText.includes("профосмотр") || serviceText.includes("29н")) return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр"], ["выписка"]);
   if (serviceText.includes("санатор")) {
-    return findNewXls(["скк 72 новый формат"]) || findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], []);
+    return findNewXls(["скк 72 новый формат"]);
   }
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) {
     return findDocxSafely(["серт морская шаблон"], ["морская", "marine", "seafarer"], ["драг"]);
@@ -8562,7 +8557,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   const haystack = `${normalizedType} ${(visit?.serviceNames || []).join(" ")}`.toLowerCase();
   return (
     docxTemplates.find((template) => haystack && haystack.includes(String(template.name || "").toLowerCase())) ||
-    findDocx(["справка_шаблон"]) ||
     docxTemplates[0] ||
     null
   );

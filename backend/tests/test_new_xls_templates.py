@@ -23,6 +23,7 @@ from app.services.new_xls_templates import (  # noqa: E402
 )
 from app.services.seed import SERVICE_CATALOG  # noqa: E402
 from app.services.template_catalog import (  # noqa: E402
+    ACTIVE_TEMPLATE_FILE_NAMES,
     FOLDER_TEMPLATE_SOURCE_NAMES,
     TEMPLATE_DISPLAY_NAMES,
     load_template_catalog,
@@ -126,6 +127,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
     def test_catalog_contains_all_new_templates(self):
         catalog = load_template_catalog()
         catalog_names = {item["file_name"] for item in catalog}
+        self.assertEqual(catalog_names, set(ACTIVE_TEMPLATE_FILE_NAMES))
         expected_names = {spec.file_name for spec in NEW_XLS_TEMPLATE_SPECS}
         self.assertTrue(expected_names.issubset(catalog_names))
         display_name_by_file = {item["file_name"]: item["name"] for item in catalog}
