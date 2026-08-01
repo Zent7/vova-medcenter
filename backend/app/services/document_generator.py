@@ -2824,6 +2824,91 @@ def _fill_new_tractor_back_xls_sheet(
     _write_xls_pairs(target_sheet, source_sheet, pairs)
 
 
+def _fill_new_tractor_front_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    issue_date = encounter.encounter_date if encounter else None
+    address = {
+        "subject": context.get("SubjectCalc", ""),
+        "district": context.get("DistrictCalc", ""),
+        "city": context.get("CityCalc", ""),
+        "street": context.get("StreetCalc", ""),
+        "house": context.get("HouseNumberCalc", ""),
+        "body": context.get("HouseBodyCalc", ""),
+        "apartment": context.get("ApartmentNumberCalc", ""),
+    }
+    if not any(address.values()) and context.get("AddressCalc"):
+        parsed_address = _split_address(context.get("AddressCalc", ""))
+        address = {
+            "subject": parsed_address.get("subject", ""),
+            "district": parsed_address.get("district", ""),
+            "city": parsed_address.get("city", ""),
+            "street": parsed_address.get("street", ""),
+            "house": parsed_address.get("house", ""),
+            "body": parsed_address.get("body", ""),
+            "apartment": parsed_address.get("apartment", ""),
+        }
+    has_address = any(address.values())
+    blank_number = _first_non_empty(
+        context.get("BlankNumber"),
+        context.get("BlankFullNumber"),
+        context.get("ReferenceNumber"),
+    )
+    exam_lines = []
+    for role_id in ("therapist", "ophthalmologist", "neurologist", "otolaryngologist"):
+        exam = exams_by_role.get(role_id)
+        exam_lines.append(_exam_conclusion_line(exam) if exam is not None else "")
+
+    values = [
+        ((7, 3), blank_number),
+        ((7, 30), blank_number),
+        ((14, 2), context.get("ClientCalc", "")),
+        ((14, 28), context.get("ClientCalc", "")),
+        ((15, 8), context.get("BirthDateCalc_DAY", "")),
+        ((15, 15), context.get("BirthDateCalc_DATEMONTH", "")),
+        ((15, 22), context.get("BirthDateCalc_YEAR", "")),
+        ((15, 35), context.get("BirthDateCalc_DAY", "")),
+        ((15, 41), context.get("BirthDateCalc_DATEMONTH", "")),
+        ((15, 48), context.get("BirthDateCalc_YEAR", "")),
+        ((17, 12), address["subject"]),
+        ((17, 38), address["subject"]),
+        ((18, 4), _xls_blank_or_dash(address["district"]) if has_address else ""),
+        ((18, 31), _xls_blank_or_dash(address["district"]) if has_address else ""),
+        ((19, 6), address["city"]),
+        ((19, 32), address["city"]),
+        ((20, 2), address["street"]),
+        ((20, 30), address["street"]),
+        ((21, 2), address["house"]),
+        ((21, 29), address["house"]),
+        ((22, 2), _xls_blank_or_dash(address["body"]) if has_address else ""),
+        ((22, 9), address["apartment"]),
+        ((22, 29), _xls_blank_or_dash(address["body"]) if has_address else ""),
+        ((22, 36), address["apartment"]),
+        ((23, 12), context.get("SNILS", "")),
+        ((23, 39), context.get("SNILS", "")),
+        ((26, 2), str(issue_date.day) if issue_date else ""),
+        ((26, 11), MONTH_NAMES.get(issue_date.month, "") if issue_date else ""),
+        ((26, 21), str(issue_date.year) if issue_date else ""),
+        ((26, 29), str(issue_date.day) if issue_date else ""),
+        ((26, 38), MONTH_NAMES.get(issue_date.month, "") if issue_date else ""),
+        ((26, 47), str(issue_date.year) if issue_date else ""),
+        ((29, 12), exam_lines[0]),
+        ((29, 39), exam_lines[0]),
+        ((31, 12), exam_lines[1]),
+        ((31, 39), exam_lines[1]),
+        ((35, 12), exam_lines[2]),
+        ((35, 39), exam_lines[2]),
+        ((37, 12), exam_lines[3]),
+        ((37, 39), exam_lines[3]),
+    ]
+    _write_xls_pairs(target_sheet, source_sheet, values)
+
+
 def _fill_new_gims_xls_sheet(
     source_sheet,
     target_sheet,
@@ -2909,6 +2994,8 @@ def _fill_new_xls_sheets(
             _fill_new_sport_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
         elif sheet_name == "ГТ":
             _fill_new_gostaina_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
+        elif sheet_name == "Тр.Лиц":
+            _fill_new_tractor_front_xls_sheet(source_sheet, target_sheet, context, client, encounter, exams_by_role)
         elif sheet_name == "Тр.Об":
             _fill_new_tractor_back_xls_sheet(source_sheet, target_sheet, context, exams_by_role)
         elif sheet_name == "Суда":
@@ -3246,7 +3333,7 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
     sheets_by_variant = {
         "driver_front": DRIVER_XLS_FRONT_SHEET_NAMES,
         "driver_back": DRIVER_XLS_BACK_SHEET_NAMES,
-        "tractor_front": ("Тракторная Лицевая",),
+        "tractor_front": ("Тр.Лиц", "Тракторная Лицевая"),
         "tractor_back": ("Тр.Об", "Тракторная оборотная"),
         "ambulatory_extract": ("ПЗ2",),
         "prof_ambulatory_extract": ("ПЗ2",),
