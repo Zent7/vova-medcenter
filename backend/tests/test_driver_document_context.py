@@ -228,6 +228,47 @@ class DriverDocumentContextTests(unittest.TestCase):
             self.assertEqual(back_sheet.cell_value(row_index, 29), expected)
             self.assertEqual(back_sheet.cell_value(row_index, 62), expected)
 
+    def test_driver_xls_front_sheet_writes_issue_date_as_text(self):
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
+        source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
+        target_book = copy_xls_workbook(source_book)
+        test_client = client()
+        context = {
+            "ClientCalc": "Иванов Иван Иванович",
+            "BirthDateCalc_DAY": "11",
+            "BirthDateCalc_DATEMONTH": "февраля",
+            "BirthDateCalc_YEAR": "1991",
+            "SubjectCalc": "Россия",
+            "DistrictCalc": "",
+            "CityCalc": "Москва",
+            "StreetCalc": "Тестовая",
+            "HouseNumberCalc": "1",
+            "HouseBodyCalc": "",
+            "ApartmentNumberCalc": "2",
+            "VisitDate_DATEMONTH": "июля",
+            "InstrumentalExamination": "Без отклонений",
+            "LaboratoryStudy": "Без отклонений",
+        }
+
+        _fill_driver_xls_sheets(
+            source_book,
+            target_book,
+            context,
+            test_client,
+            SimpleNamespace(encounter_date=date(2026, 7, 31)),
+            {},
+        )
+
+        output_path = Path(tempfile.gettempdir()) / "driver_xls_front_date_test.xls"
+        target_book.save(str(output_path))
+        result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
+        front_sheet = result_book.sheet_by_name("Водительская Лицевая")
+
+        for col_index, expected in [(15, "31"), (19, "июля"), (23, "2026"), (41, "31"), (45, "июля"), (49, "2026")]:
+            cell = front_sheet.cell(23, col_index)
+            self.assertEqual(cell.value, expected)
+            self.assertEqual(cell.ctype, xlrd.XL_CELL_TEXT)
+
 
 if __name__ == "__main__":
     unittest.main()

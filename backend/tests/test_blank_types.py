@@ -136,9 +136,14 @@ class BlankTypeTests(unittest.TestCase):
             lmk_templates = db.query(DocumentTemplate).filter(
                 DocumentTemplate.file_name.ilike("%ЛМК%")
             ).all()
+            driver_template = db.query(DocumentTemplate).filter(
+                DocumentTemplate.file_name == "ВУ.xls"
+            ).one()
 
             self.assertEqual(gims_template.blank_type, BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE)
             self.assertTrue(gims_template.requires_numbered_blank)
+            self.assertEqual(driver_template.blank_type, BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE)
+            self.assertTrue(driver_template.requires_numbered_blank)
             self.assertTrue(lmk_templates)
             self.assertTrue(all(item.blank_type == BLANK_TYPE_LMK_MEDICAL_CERTIFICATE for item in lmk_templates))
             self.assertTrue(all(item.requires_numbered_blank for item in lmk_templates))
