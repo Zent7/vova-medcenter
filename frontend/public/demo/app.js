@@ -9052,7 +9052,7 @@ const DRIVER_PRINT_VARIANTS = [
   { id: "tractor_front", label: "Лицевая трактора", errorLabel: "лицевую сторону тракторной справки" },
   { id: "tractor_back", label: "Оборот трактора", errorLabel: "оборот тракторной справки" },
 ];
-const TRACTOR_FRONT_TEMPLATE_FILE_NAME = "Трактроная_новый-шаблон.docx";
+const TRACTOR_FRONT_TEMPLATE_FILE_NAME = "трактор лиц ст.xls";
 const TRACTOR_BACK_TEMPLATE_FILE_NAME = "трактор об ст.xls";
 
 function findDocumentTemplateByExactFileName(fileName) {
