@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from decimal import Decimal
+import re
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -607,7 +608,7 @@ def _ensure_foundation_catalog(db: Session) -> None:
         template.output_format = template.output_format or template.template_type
         if template.visit_type_id is None:
             template_name = f"{template.name} {template.file_name}".lower()
-            if "вод" in template_name or "driver" in template_name:
+            if "вод" in template_name or "driver" in template_name or re.search(r"(?:^|\W)ву(?:$|\W)", template_name):
                 template.visit_type_id = visit_type_by_code.get("driver").id if visit_type_by_code.get("driver") else None
             elif "лмк" in template_name:
                 template.visit_type_id = visit_type_by_code.get("lmk_new").id if visit_type_by_code.get("lmk_new") else None

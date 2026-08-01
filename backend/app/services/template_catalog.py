@@ -15,7 +15,7 @@ TEMPLATE_DISPLAY_NAMES = {
     "095У_справка_шаблон.docx": "095у",
     "CправкаБассейн_шаблон.docx": "бассейн",
     "АМБ_карты_профосмотр_шаблон.xls": "Проф",
-    "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls": "ВУ",
+    "ВУ.xls": "ВУ",
     "Выписка из Амб карты (профа).xls": "Проф",
     "ГС НОВЫЙ ФОРМАТ.xls": "ГС",
     "ГИМС (судна).xls": "ГИМС",
@@ -40,7 +40,7 @@ FOLDER_TEMPLATE_SOURCE_NAMES = {
     "095У_справка_шаблон.docx": "spravka_posle_bolezni_095y (1) МЕД АВТО.doc",
     "CправкаБассейн_шаблон.docx": "20)бассейн спр.docx",
     "АМБ_карты_профосмотр_шаблон.xls": "ПРОФОСМОТР.xls",
-    "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls": "086 муж.xls; водительская лицевая.xls; водительская обратн ст.xls; ЛМК.xls",
+    "ВУ.xls": "086 муж.xls; водительская лицевая.xls; водительская обратн ст.xls; ЛМК.xls",
     "Выписка из Амб карты (профа).xls": "Выписка из Амб карты (профа).xls",
     "ЛМК_справка_шаблон.docx": "лмк спр.docx",
     "Охрана_шаблон.docx": "ОХРАНА ВОРД.docx",
@@ -60,7 +60,7 @@ ACTIVE_TEMPLATE_FILE_NAMES = frozenset(
         "CправкаБассейн_шаблон.docx",
         "АМБ_карты_профосмотр_шаблон.xls",
         "Водительская(новая).xml",
-        "ВСЕ НУЖНЫЕ ШАБЛОНЫ.xls",
+        "ВУ.xls",
         "Выписка из Амб карты (профа).xls",
         "ГИМС (судна).xls",
         "ГИМС_шаблон_для_загрузки_из_файла.xml",
@@ -148,7 +148,7 @@ def load_template_catalog() -> list[dict[str, str]]:
 
 def template_visit_type_code(template_name: str) -> str | None:
     normalized = template_name.lower()
-    if "вод" in normalized or "driver" in normalized:
+    if "вод" in normalized or "driver" in normalized or re.search(r"(?:^|\W)ву(?:$|\W)", normalized):
         return "driver"
     if "трактор" in normalized or "tractor" in normalized or "071" in normalized:
         return "tractor"
@@ -246,7 +246,7 @@ def sync_document_template_catalog(db) -> int:
         elif "трактор" in haystack or "tractor" in haystack or "071" in haystack:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE
-        elif ("вод" in haystack) or ("driver" in haystack):
+        elif ("вод" in haystack) or ("driver" in haystack) or re.search(r"(?:^|\W)ву(?:$|\W)", haystack):
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
 

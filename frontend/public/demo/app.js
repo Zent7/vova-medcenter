@@ -8560,7 +8560,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "13098") return findDocxSafely(["13098"], ["13098"], []);
 
   if (normalizedType === "driver" || (normalizedType !== "medical" && serviceText.includes("водител"))) {
-    return findXls(["все нужные шаблоны", "водительская", "тракторная"]) || null;
+    return findTemplateSafely(xlsTemplates, ["ву"], ["водительская"], ["тракторная"]) || null;
   }
 
   if (serviceText.includes("082") || serviceText.includes("границ")) return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
