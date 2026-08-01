@@ -2304,12 +2304,12 @@ def _fill_driver_xls_sheets(
                 ((22, 12), context.get("ApartmentNumberCalc", "")),
                 ((22, 31), _xls_blank_or_dash(context.get("HouseBodyCalc"))),
                 ((22, 38), context.get("ApartmentNumberCalc", "")),
-                ((23, 15), issue_date.day),
+                ((23, 15), str(issue_date.day)),
                 ((23, 19), context.get("VisitDate_DATEMONTH", "")),
-                ((23, 23), issue_date.year),
-                ((23, 41), issue_date.day),
+                ((23, 23), str(issue_date.year)),
+                ((23, 41), str(issue_date.day)),
                 ((23, 45), context.get("VisitDate_DATEMONTH", "")),
-                ((23, 49), issue_date.year),
+                ((23, 49), str(issue_date.year)),
                 ((28, 12), driver_lines[0]),
                 ((28, 39), driver_lines[0]),
                 ((30, 12), driver_lines[1]),
@@ -3982,7 +3982,7 @@ def _sport_context_overrides(exams: list[DoctorExam]) -> dict[str, str]:
 
 def _get_journal_info(template: DocumentTemplate) -> tuple[str, str] | None:
     name = f"{template.name} {template.file_name}".lower()
-    if "вод" in name or "driver" in name:
+    if "вод" in name or "driver" in name or re.search(r"(?:^|\W)ву(?:$|\W)", name):
         return ("journal_344", "Журнал 344 водительских заключений")
     if "оруж" in name or "002" in name:
         return ("journal_441", "Журнал 441 оружейных заключений")
