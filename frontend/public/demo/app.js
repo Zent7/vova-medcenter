@@ -9717,6 +9717,9 @@ async function openDriverPrintFlow(options = {}) {
 
   const availableSeriesOptions = Array.isArray(seriesOptions) ? seriesOptions.slice() : [];
   const storedSeries = getStoredDriverPrintSeries();
+  const isPreselectedSeriesAvailable = availableSeriesOptions.some(
+    (item) => normalizeBlankSeries(item?.series).toLowerCase() === preselectedSeries.toLowerCase(),
+  );
   const isStoredSeriesAvailable = availableSeriesOptions.some(
     (item) => normalizeBlankSeries(item?.series).toLowerCase() === storedSeries.toLowerCase(),
   );
@@ -9776,7 +9779,7 @@ async function openDriverPrintFlow(options = {}) {
     blankType,
     seriesOptions,
     selectedSeries:
-      preselectedSeries ||
+      (preselectedSeries && (isPreselectedSeriesAvailable || !availableSeriesOptions.length) ? preselectedSeries : "") ||
       (isStoredSeriesAvailable ? storedSeries : "") ||
       defaultSeries ||
       normalizeBlankSeries(seriesOptions[0]?.series),
