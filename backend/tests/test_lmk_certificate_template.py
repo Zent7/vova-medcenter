@@ -30,6 +30,24 @@ def docx_text(path: Path) -> str:
 
 
 class LmkCertificateTemplateTests(unittest.TestCase):
+    def test_lmk_certificate_template_declares_ignorable_namespaces(self):
+        template_path = (
+            Path(__file__).resolve().parents[2]
+            / "assets"
+            / "templates"
+            / "Templates"
+            / "\u041b\u041c\u041a_\u0441\u043f\u0440\u0430\u0432\u043a\u0430_\u0448\u0430\u0431\u043b\u043e\u043d.docx"
+        )
+        with zipfile.ZipFile(template_path) as archive:
+            xml_text = archive.read("word/document.xml").decode("utf-8")
+
+        root_start = xml_text.index("<w:document")
+        root_tag = xml_text[root_start : xml_text.index(">", root_start)]
+        ignorable = re.search(r'mc:Ignorable="([^"]+)"', root_tag)
+        self.assertIsNotNone(ignorable)
+        for prefix in ignorable.group(1).split():
+            self.assertIn(f"xmlns:{prefix}=", root_tag)
+
     def test_lmk_certificate_template_replaces_patient_tokens(self):
         template_path = (
             Path(__file__).resolve().parents[2]

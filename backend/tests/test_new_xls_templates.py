@@ -60,6 +60,10 @@ class NewXlsTemplatesTests(unittest.TestCase):
         self.encounter = SimpleNamespace(encounter_date=date(2026, 7, 30))
         self.context = {
             "ClientCalc": "Проверкин Алексей Сергеевич",
+            "LastName": "Проверкин",
+            "FirstName": "Алексей",
+            "MiddleName": "Сергеевич",
+            "FirstMiddleCalc": "Алексей Сергеевич",
             "BirthDateCalc_DAY": "12",
             "BirthDateCalc_DATEMONTH": "апреля",
             "BirthDateCalc_YEAR": "1988",
@@ -86,6 +90,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
             "MKB10": "M21.4",
             "Conclusion": "Допущен",
             "Doctor": "Контекстный Врач",
+            "CompanyName": "ООО Тест",
+            "Post": "Инженер",
             "PoolValidUntil": "30.01.2027",
             "SportEkg": "",
             "SportEkgConclusion": "",
@@ -277,6 +283,15 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 (14, 28): "Проверкин Алексей Сергеевич",
                 (36, 9): "Председатель Тестов",
                 (36, 31): "Председатель Тестов",
+            },
+            " ЛМК!": {
+                (10, 5): "Проверкин",
+                (12, 5): "Алексей Сергеевич",
+                (15, 5): "12.04.1988",
+                (17, 5): "Санкт-Петербург",
+                (21, 1): "Невский проспект, д. 10, корп. 2, кв. 15",
+                (25, 4): "Инженер",
+                (28, 0): "ООО Тест",
             },
         }
 
