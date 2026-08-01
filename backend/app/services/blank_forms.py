@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import Integer, and_, case, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,10 @@ from app.models.generated_document import GeneratedDocument
 from app.models.medical_record import MedicalRecordEntry
 from app.models.user import User
 from app.services.audit import write_audit_log
+
+
+AUTO_NUMBER_BATCH_COMMENT = "Автонумерация по сокращению услуги"
+AUTO_NUMBER_LOCK_NAMESPACE = 1_870_341_624
 
 
 class BlankServiceError(Exception):
@@ -426,6 +430,22 @@ def create_auto_number_form(
     if blank_type_record is None or not blank_type_record.is_active:
         raise BlankServiceError(f"Неизвестный тип бланка: {blank_type}")
 
+    # Автоматические номера образуют одну последовательность внутри медцентра,
+    # независимо от типа справки и её серии. Строгие бланки из вручную
+    # заведённых партий в этот счётчик не входят.
+    #
+    # PostgreSQL advisory lock не позволяет двум параллельным запросам получить
+    # один и тот же следующий номер, даже если они создают разные серии.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    cast(AUTO_NUMBER_LOCK_NAMESPACE, Integer),
+                    cast(int(center_id or 0), Integer),
+                )
+            )
+        )
+
     batch = db.execute(
         select(BlankBatch)
         .where(
@@ -433,7 +453,7 @@ def create_auto_number_form(
             BlankBatch.blank_type == blank_type,
             BlankBatch.center_id.is_(center_id) if center_id is None else BlankBatch.center_id == center_id,
             BlankBatch.series == series_clean,
-            BlankBatch.comment == "Автонумерация по сокращению услуги",
+            BlankBatch.comment == AUTO_NUMBER_BATCH_COMMENT,
         )
         .order_by(BlankBatch.id.asc())
         .limit(1)
@@ -449,17 +469,18 @@ def create_auto_number_form(
             number_width=7,
             quantity=0,
             received_at=date.today(),
-            comment="Автонумерация по сокращению услуги",
+            comment=AUTO_NUMBER_BATCH_COMMENT,
             created_by_user_id=user_id,
         )
         db.add(batch)
         db.flush()
 
     max_number = db.execute(
-        select(func.max(BlankForm.number_value)).where(
-            BlankForm.blank_type == blank_type,
+        select(func.max(BlankForm.number_value))
+        .join(BlankBatch, BlankBatch.id == BlankForm.batch_id)
+        .where(
+            BlankBatch.comment == AUTO_NUMBER_BATCH_COMMENT,
             BlankForm.center_id.is_(center_id) if center_id is None else BlankForm.center_id == center_id,
-            BlankForm.series == series_clean,
         )
     ).scalar_one_or_none()
     next_number = int(max_number or 0) + 1
