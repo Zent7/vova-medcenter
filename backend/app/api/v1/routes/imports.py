@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import posixpath
 import re
 import zipfile
 from collections import OrderedDict
@@ -24,6 +25,7 @@ from app.models.encounter import Encounter
 from app.models.encounter_service import EncounterService
 from app.models.service import Service
 from app.models.user import User
+from app.models.visit_type import VisitType
 from app.api.v1.routes.encounters import sync_primary_payment
 from app.services.audit import write_audit_log
 from app.services.medical_autofill import autofill_completed_doctors_for_service
@@ -44,41 +46,86 @@ LEGACY_DATA_PATHS = [
     ROOT_DIR / "frontend" / "public" / "demo" / "legacy-data.js",
 ]
 
-CLIENT_IMPORT_HEADERS = OrderedDict(
-    [
-        ("patient_number", "№ пациента"),
-        ("last_name", "Фамилия"),
-        ("first_name", "Имя"),
-        ("middle_name", "Отчество"),
-        ("birth_date", "Дата рождения"),
-        ("sex", "Пол"),
-        ("phone", "Телефон"),
-        ("email", "E-mail"),
-        ("document_type", "Тип документа"),
-        ("document_series", "Серия документа"),
-        ("document_number", "Номер документа"),
-        ("document_issued_by", "Кем выдан"),
-        ("document_issued_date", "Дата выдачи"),
-        ("snils", "СНИЛС"),
-        ("registration_text", "Регистрация"),
-        ("address_text", "Адрес проживания"),
-        ("organization", "Организация"),
-        ("service", "Услуга"),
-        ("encounter_date", "Дата обращения"),
-        ("admission_category", "Категория допуска"),
-        ("reference_number", "№ справки"),
-        ("notes", "Примечание"),
-    ]
-)
+CLIENT_IMPORT_HEADER_ALIASES = {
+    "patient_number": ("№ пациента", "Номер пациента"),
+    "last_name": ("Фамилия",),
+    "first_name": ("Имя",),
+    "middle_name": ("Отчество",),
+    "birth_date": ("Дата рождения", "Дата рождения (формат 31.12.2026)"),
+    "sex": ("Пол",),
+    "phone": ("Телефон",),
+    "email": ("E-mail", "Email", "Электронная почта"),
+    "document_type": ("Тип документа",),
+    "document_series": ("Серия документа",),
+    "document_number": ("Номер документа", "№ документа"),
+    "document_issued_by": ("Кем выдан",),
+    "document_issued_date": ("Дата выдачи",),
+    "snils": ("СНИЛС",),
+    "registration_text": ("Регистрация", "Адрес регистрации"),
+    "registration_region": ("Адрес Регистрация-ОБЛОСТЬ", "Область регистрации"),
+    "registration_city": ("Адрес Регистрация-ГОРОД", "Город регистрации"),
+    "registration_street": ("Адрес Регистрация-УЛИЦА", "Улица регистрации"),
+    "registration_house": ("Адрес Регистрация-НОМЕР ДОМА", "Номер дома", "Дом"),
+    "registration_building": ("корпус, литер, строение", "Корпус", "Строение"),
+    "registration_apartment": ("квартира", "Квартира"),
+    "address_text": ("Адрес проживания",),
+    "organization": ("Организация", "Название Организация", "Название организации"),
+    "profession": ("Должность", "Профессия"),
+    "indications": ("Вредные произв. Факторы", "Вредные производственные факторы"),
+    "flg": ("ФЛГ от", "ФЛГ"),
+    "service": ("Услуга",),
+    "encounter_date": ("Дата обращения",),
+    "admission_category": ("Категория допуска",),
+    "reference_number": ("№ справки", "Номер справки"),
+    "notes": ("Примечание",),
+}
+
+NEW_CLIENT_TEMPLATE_MARKERS = {
+    "registration_region",
+    "registration_city",
+    "registration_street",
+    "registration_house",
+    "registration_building",
+    "registration_apartment",
+    "profession",
+    "indications",
+    "flg",
+}
+
+MEDICAL_DOCUMENT_IMPORT_RULES = {
+    "лмк": ("lmk_new", 18, ("ЛМК",)),
+    "продление лмк": ("lmk_extend", 19, ("Продление ЛМК",)),
+    "проф": ("prof", 16, ("Профосмотр",)),
+    "профосмотр": ("prof", 16, ("Профосмотр",)),
+    "водительская": ("driver", 8, ("Медицинская комиссия", "Водительская справка")),
+    "водительская справка": ("driver", 8, ("Медицинская комиссия", "Водительская справка")),
+    "тракторная": ("tractor", 7, ("071У", "Справка 071У")),
+    "тракторная справка": ("tractor", 7, ("071У", "Справка 071У")),
+    "гимс": ("gims", 37, ("ГИМС",)),
+}
+
+
+def _normalize_header_key(value: str | None) -> str:
+    text = str(value or "").strip().casefold().replace("ё", "е").replace("№", " номер ")
+    text = re.sub(r"\([^)]*\)", " ", text)
+    text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 HEADER_TO_FIELD = {
-    re.sub(r"\s+", " ", header.strip().lower()): field
-    for field, header in CLIENT_IMPORT_HEADERS.items()
+    _normalize_header_key(header): field
+    for field, aliases in CLIENT_IMPORT_HEADER_ALIASES.items()
+    for header in aliases
 }
 XLSX_NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
     "pkg": "http://schemas.openxmlformats.org/package/2006/relationships",
 }
+
+
+class ClientImportHeaderError(ValueError):
+    pass
 
 
 def extract_window_json(source: str, variable_name: str) -> Any:
@@ -157,7 +204,7 @@ def normalize_text(value: Any) -> str | None:
 
 
 def normalize_header(value: str | None) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+    return _normalize_header_key(value)
 
 
 def parse_int(value: Any) -> int | None:
@@ -190,30 +237,39 @@ def read_xlsx_shared_strings(archive: zipfile.ZipFile) -> list[str]:
     return values
 
 
-def resolve_first_sheet_path(archive: zipfile.ZipFile) -> str:
+def resolve_sheet_paths(archive: zipfile.ZipFile) -> list[str]:
     workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
     workbook_rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     rel_targets = {
         rel.attrib["Id"]: rel.attrib["Target"]
         for rel in workbook_rels.findall("pkg:Relationship", XLSX_NS)
     }
-    sheet = workbook_root.find("main:sheets/main:sheet", XLSX_NS)
-    if sheet is None:
+    sheets = workbook_root.findall("main:sheets/main:sheet", XLSX_NS)
+    if not sheets:
         raise ValueError("В Excel-файле не найден лист с данными")
-    relation_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
-    target = rel_targets.get(relation_id or "")
-    if not target:
-        raise ValueError("Не удалось открыть первый лист Excel-файла")
-    normalized_target = target.lstrip("/")
-    return normalized_target if normalized_target.startswith("xl/") else f"xl/{normalized_target}"
+
+    paths: list[str] = []
+    for sheet in sheets:
+        relation_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+        target = rel_targets.get(relation_id or "")
+        if not target:
+            continue
+        normalized_target = target.lstrip("/")
+        if not normalized_target.startswith("xl/"):
+            normalized_target = posixpath.normpath(posixpath.join("xl", normalized_target))
+        if normalized_target in archive.namelist():
+            paths.append(normalized_target)
+    if not paths:
+        raise ValueError("Не удалось открыть листы Excel-файла")
+    return paths
 
 
-def read_xlsx_rows(content: bytes) -> list[dict[str, Any]]:
-    with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        shared_strings = read_xlsx_shared_strings(archive)
-        sheet_path = resolve_first_sheet_path(archive)
-        root = ET.fromstring(archive.read(sheet_path))
-
+def read_xlsx_sheet_rows(
+    archive: zipfile.ZipFile,
+    sheet_path: str,
+    shared_strings: list[str],
+) -> list[dict[int, str | None]]:
+    root = ET.fromstring(archive.read(sheet_path))
     rows: list[dict[int, str | None]] = []
     for row in root.findall(".//main:sheetData/main:row", XLSX_NS):
         cells: dict[int, str | None] = {}
@@ -233,56 +289,111 @@ def read_xlsx_rows(content: bytes) -> list[dict[str, Any]]:
                 value = cell.findtext("main:v", default=None, namespaces=XLSX_NS)
             cells[column_index] = normalize_text(value)
         rows.append(cells)
+    return rows
 
-    return rows_to_client_records(rows)
+
+def read_xlsx_rows(content: bytes) -> list[dict[str, Any]]:
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        shared_strings = read_xlsx_shared_strings(archive)
+        for sheet_path in resolve_sheet_paths(archive):
+            rows = read_xlsx_sheet_rows(archive, sheet_path, shared_strings)
+            try:
+                return rows_to_client_records(rows)
+            except ClientImportHeaderError:
+                continue
+    raise ClientImportHeaderError("В Excel-шаблоне не хватает обязательных колонок Фамилия и Имя")
 
 
 def read_xls_rows(content: bytes) -> list[dict[str, Any]]:
     book = xlrd.open_workbook(file_contents=content)
-    sheet = book.sheet_by_index(0)
-    rows: list[dict[int, str | None]] = []
-    for row_index in range(sheet.nrows):
-        cells: dict[int, str | None] = {}
-        for column_index in range(sheet.ncols):
-            cell = sheet.cell(row_index, column_index)
-            if cell.ctype in {xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK}:
-                cells[column_index] = None
-            elif cell.ctype == xlrd.XL_CELL_DATE:
-                cells[column_index] = xlrd.xldate_as_datetime(cell.value, book.datemode).strftime("%d.%m.%y")
-            elif cell.ctype == xlrd.XL_CELL_NUMBER:
-                number = float(cell.value)
-                cells[column_index] = str(int(number)) if number.is_integer() else str(number)
-            else:
-                cells[column_index] = normalize_text(cell.value)
-        rows.append(cells)
-    return rows_to_client_records(rows)
+    for sheet in book.sheets():
+        rows: list[dict[int, str | None]] = []
+        for row_index in range(sheet.nrows):
+            cells: dict[int, str | None] = {}
+            for column_index in range(sheet.ncols):
+                cell = sheet.cell(row_index, column_index)
+                if cell.ctype in {xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK}:
+                    cells[column_index] = None
+                elif cell.ctype == xlrd.XL_CELL_DATE:
+                    cells[column_index] = xlrd.xldate_as_datetime(cell.value, book.datemode).strftime("%d.%m.%y")
+                elif cell.ctype == xlrd.XL_CELL_NUMBER:
+                    number = float(cell.value)
+                    cells[column_index] = str(int(number)) if number.is_integer() else str(number)
+                else:
+                    cells[column_index] = normalize_text(cell.value)
+            rows.append(cells)
+        try:
+            return rows_to_client_records(rows)
+        except ClientImportHeaderError:
+            continue
+    raise ClientImportHeaderError("В Excel-шаблоне не хватает обязательных колонок Фамилия и Имя")
+
+
+def compose_registration_text(row: dict[str, Any]) -> str | None:
+    explicit = normalize_text(row.get("registration_text"))
+    if explicit:
+        return explicit
+
+    parts = [
+        normalize_text(row.get("registration_region")),
+        normalize_text(row.get("registration_city")),
+        normalize_text(row.get("registration_street")),
+    ]
+    house = normalize_text(row.get("registration_house"))
+    building = normalize_text(row.get("registration_building"))
+    apartment = normalize_text(row.get("registration_apartment"))
+    if house:
+        parts.append(house if re.match(r"^(?:д\.?|дом)\s*", house, re.I) else f"д. {house}")
+    if building:
+        parts.append(
+            building
+            if re.match(r"^(?:корп\.?|корпус|стр\.?|строение|литер)\s*", building, re.I)
+            else f"корп./стр. {building}"
+        )
+    if apartment:
+        parts.append(apartment if re.match(r"^(?:кв\.?|квартира)\s*", apartment, re.I) else f"кв. {apartment}")
+    return ", ".join(part for part in parts if part) or None
 
 
 def rows_to_client_records(rows: list[dict[int, str | None]]) -> list[dict[str, Any]]:
     if not rows:
         return []
 
-    header_row = rows[0]
+    header_index = -1
     columns: dict[int, str] = {}
-    for index, value in header_row.items():
-        field_name = HEADER_TO_FIELD.get(normalize_header(value))
-        if field_name:
-            columns[index] = field_name
+    for candidate_index, header_row in enumerate(rows[:50]):
+        candidate_columns: dict[int, str] = {}
+        for index, value in header_row.items():
+            field_name = HEADER_TO_FIELD.get(normalize_header(value))
+            if field_name:
+                candidate_columns[index] = field_name
+        if "last_name" in candidate_columns.values() and "first_name" in candidate_columns.values():
+            header_index = candidate_index
+            columns = candidate_columns
+            break
 
-    if "last_name" not in columns.values() or "first_name" not in columns.values():
-        raise ValueError("В Excel-шаблоне не хватает обязательных колонок Фамилия и Имя")
+    if header_index < 0:
+        raise ClientImportHeaderError("В Excel-шаблоне не хватает обязательных колонок Фамилия и Имя")
+
+    if NEW_CLIENT_TEMPLATE_MARKERS.intersection(columns.values()):
+        columns = {
+            index: "medical_document_type" if field_name == "document_type" else field_name
+            for index, field_name in columns.items()
+        }
 
     records: list[dict[str, Any]] = []
-    for row_number, row in enumerate(rows[1:], start=2):
+    for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         payload: dict[str, Any] = {"row_number": row_number}
-        has_any_value = False
         for column_index, field_name in columns.items():
             value = normalize_text(row.get(column_index))
-            if value:
-                has_any_value = True
             payload[field_name] = value
 
-        if not has_any_value:
+        client_values = [
+            value
+            for field_name, value in payload.items()
+            if field_name not in {"row_number", "medical_document_type"}
+        ]
+        if not any(client_values):
             continue
 
         payload["patient_number"] = parse_int(payload.get("patient_number"))
@@ -290,6 +401,10 @@ def rows_to_client_records(rows: list[dict[int, str | None]]) -> list[dict[str, 
             raw_value = payload.get(field_name)
             payload[f"_{field_name}_invalid"] = bool(raw_value and parse_optional_date(raw_value) is None)
             payload[field_name] = parse_optional_date(raw_value)
+        flg_date = parse_optional_date(payload.get("flg"))
+        if flg_date is not None:
+            payload["flg"] = flg_date.strftime("%d.%m.%Y")
+        payload["registration_text"] = compose_registration_text(payload)
         records.append(payload)
 
     return records
@@ -376,26 +491,66 @@ def build_service_lookup(services: list[Service]) -> dict[str, list[Service]]:
     return lookup
 
 
+def resolve_medical_document_rule(value: object) -> tuple[str, int, tuple[str, ...]] | None:
+    key = _normalize_header_key(normalize_text(value))
+    return MEDICAL_DOCUMENT_IMPORT_RULES.get(key)
+
+
 def resolve_import_service(
     row: dict[str, Any],
     service_lookup: dict[str, list[Service]],
+    services: list[Service],
 ) -> Service | None:
     value = normalize_text(row.get("service"))
-    if not value:
-        return None
-    matches = service_lookup.get(normalize_service_lookup(value), [])
-    if len(matches) == 1:
-        return matches[0]
     row_number = row.get("row_number", "?")
-    if len(matches) > 1:
+    if value:
+        matches = service_lookup.get(normalize_service_lookup(value), [])
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(
+                f'Строка {row_number}: услуга "{value}" неоднозначна. '
+                "Выберите вариант из выпадающего списка с ценой."
+            )
         raise ValueError(
-            f'Строка {row_number}: услуга "{value}" неоднозначна. '
-            "Выберите вариант из выпадающего списка с ценой."
+            f'Строка {row_number}: услуга "{value}" не найдена или неактивна. '
+            "Выберите значение из выпадающего списка."
         )
+
+    document_type = normalize_text(row.get("medical_document_type"))
+    if not document_type:
+        return None
+    rule = resolve_medical_document_rule(document_type)
+    if rule is None:
+        raise ValueError(
+            f'Строка {row_number}: тип документа "{document_type}" не распознан. '
+            "Допустимы ЛМК, Продление ЛМК, Проф, Водительская, Тракторная и ГИМС."
+        )
+
+    _, preferred_legacy_id, fallback_names = rule
+    preferred = [service for service in services if service.legacy_source_id == preferred_legacy_id]
+    if preferred:
+        return sorted(preferred, key=lambda service: service.id)[0]
+    for name in fallback_names:
+        matches = service_lookup.get(normalize_service_lookup(name), [])
+        if matches:
+            return sorted(matches, key=lambda service: service.id)[0]
     raise ValueError(
-        f'Строка {row_number}: услуга "{value}" не найдена или неактивна. '
-        "Выберите значение из выпадающего списка."
+        f'Строка {row_number}: для типа документа "{document_type}" не найдена активная услуга.'
     )
+
+
+def resolve_import_visit_type(
+    row: dict[str, Any],
+    visit_type_by_code: dict[str, VisitType],
+) -> VisitType | None:
+    document_type = normalize_text(row.get("medical_document_type"))
+    if not document_type:
+        return None
+    rule = resolve_medical_document_rule(document_type)
+    if rule is None:
+        return None
+    return visit_type_by_code.get(rule[0])
 
 
 def get_import_services(db: Session) -> list[Service]:
@@ -404,6 +559,13 @@ def get_import_services(db: Session) -> list[Service]:
         .where(Service.is_active.is_(True))
         .order_by(Service.name.asc(), Service.price.asc(), Service.id.asc())
     ).scalars().all()
+
+
+def get_import_visit_types(db: Session) -> dict[str, VisitType]:
+    visit_types = db.execute(
+        select(VisitType).where(VisitType.is_active.is_(True)).order_by(VisitType.id.asc())
+    ).scalars().all()
+    return {visit_type.code: visit_type for visit_type in visit_types}
 
 
 def get_import_center(db: Session, actor_user_id: int | None) -> Center | None:
@@ -490,6 +652,8 @@ def get_next_patient_number(db: Session, used_numbers: set[int]) -> int:
 
 
 def build_client_payload(row: dict[str, Any], patient_number: int) -> dict[str, Any]:
+    registration_text = compose_registration_text(row)
+    organization = normalize_text(row.get("organization"))
     return {
         "patient_number": patient_number,
         "last_name": normalize_text(row.get("last_name")) or "Без фамилии",
@@ -505,14 +669,25 @@ def build_client_payload(row: dict[str, Any], patient_number: int) -> dict[str, 
         "document_issued_by": normalize_text(row.get("document_issued_by")),
         "document_issued_date": row.get("document_issued_date"),
         "snils": normalize_text(row.get("snils")),
-        "registration_text": normalize_text(row.get("registration_text")),
-        "address_text": normalize_text(row.get("address_text")) or normalize_text(row.get("registration_text")),
-        "organization": normalize_text(row.get("organization")),
+        "registration_text": registration_text,
+        "address_text": normalize_text(row.get("address_text")) or registration_text,
+        "organization": organization,
+        "work_place": organization,
+        "profession": normalize_text(row.get("profession")),
+        "indications": normalize_text(row.get("indications")),
+        "flg": normalize_text(row.get("flg")),
         "admission_category": normalize_text(row.get("admission_category")),
         "reference_number": normalize_text(row.get("reference_number")),
         "notes": normalize_text(row.get("notes")),
         "legacy_payload_json": json_safe_import_row(row),
     }
+
+
+def update_existing_client_from_import(client: Client, client_payload: dict[str, Any]) -> None:
+    for key, value in client_payload.items():
+        if value is None and key != "legacy_payload_json":
+            continue
+        setattr(client, key, value)
 
 
 @router.post("/demo-legacy")
@@ -654,7 +829,7 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
     resolved_services: dict[int, Service | None] = {}
     try:
         for row in rows:
-            resolved_services[int(row["row_number"])] = resolve_import_service(row, service_lookup)
+            resolved_services[int(row["row_number"])] = resolve_import_service(row, service_lookup, services)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -722,9 +897,14 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
     actor_user_id = get_system_user_id(db)
     services = get_import_services(db)
     service_lookup = build_service_lookup(services)
+    visit_type_by_code = get_import_visit_types(db)
     try:
         resolved_services = {
-            int(row["row_number"]): resolve_import_service(row, service_lookup)
+            int(row["row_number"]): resolve_import_service(row, service_lookup, services)
+            for row in rows
+        }
+        resolved_visit_types = {
+            int(row["row_number"]): resolve_import_visit_type(row, visit_type_by_code)
             for row in rows
         }
     except ValueError as exc:
@@ -759,8 +939,7 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
                 created += 1
             else:
                 client = existing_client
-                for key, value in client_payload.items():
-                    setattr(client, key, value)
+                update_existing_client_from_import(client, client_payload)
                 updated += 1
             db.flush()
 
@@ -769,9 +948,11 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
                 continue
 
             encounter_date = row.get("encounter_date") or date.today()
+            visit_type = resolved_visit_types[int(row["row_number"])]
             encounter = Encounter(
                 center_id=import_center.id,
                 client_id=client.id,
+                visit_type_id=visit_type.id if visit_type is not None else None,
                 created_by_user_id=actor_user_id,
                 encounter_date=encounter_date,
                 payment_type="cash",
