@@ -6022,7 +6022,7 @@ function renderClientImportPage() {
           </div>
           <a
             class="primary-button"
-            href="./client-import-template.xlsx?v=20260729-services-v1"
+            href="./client-import-template.xlsx?v=20260802-client-format-v2"
             download="client-import-template.xlsx"
           >Скачать шаблон Excel</a>
         </div>
@@ -6033,7 +6033,7 @@ function renderClientImportPage() {
             <ol>
               <li>Скачать шаблон.</li>
               <li>Заполнить обязательные поля: фамилию, имя и дату рождения.</li>
-              <li>При необходимости выбрать услугу из выпадающего списка.</li>
+              <li>Выбрать тип документа и заполнить данные клиента на первом листе.</li>
               <li>Выбрать заполненный файл ниже.</li>
               <li>Сначала посмотреть предпросмотр, потом загрузить в базу.</li>
             </ol>
@@ -6043,7 +6043,8 @@ function renderClientImportPage() {
             <ul>
               <li>создавать новых клиентов;</li>
               <li>обновлять существующих по СНИЛС, документу или ФИО + дате рождения;</li>
-              <li>создавать обращение по выбранной услуге;</li>
+              <li>самостоятельно определять услугу и вид обращения по типу документа;</li>
+              <li>собирать адрес из области, города, улицы, дома, корпуса и квартиры;</li>
               <li>поддерживает файлы <code>.xlsx</code> и <code>.xls</code>.</li>
             </ul>
           </div>
