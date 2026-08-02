@@ -9395,6 +9395,12 @@ function isPreenteredBlankSeries(series) {
   return PREENTERED_BLANK_SERIES_SET.has(normalizeBlankSeries(series).toLowerCase());
 }
 
+function shouldCreateNextSharedCertificateNumber(series, certificateType = "") {
+  const normalizedType = String(certificateType || getDriverPrintCertificateType(series) || "").toLowerCase();
+  if (isNumberedCertificatePrintType(normalizedType)) return false;
+  return !isPreenteredBlankSeries(series) || canAutoCreateChairmanBlankSeries(series);
+}
+
 function buildServiceSeriesAbbreviation(service, options = {}) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
@@ -9804,7 +9810,11 @@ async function openDriverPrintFlow(options = {}) {
     flowState.selectedSeries = flowState.selectedSeries || normalizeBlankSeries(seriesOptions[0]?.series);
   }
 
-  if (!flowState.currentBlank && isPreenteredBlankSeries(flowState.selectedSeries)) {
+  if (
+    !flowState.currentBlank &&
+    isPreenteredBlankSeries(flowState.selectedSeries) &&
+    !shouldCreateNextSharedCertificateNumber(flowState.selectedSeries, flowState.selectedCertificateType)
+  ) {
     try {
       const query = new URLSearchParams({
         blank_type: flowState.blankType,
@@ -10168,18 +10178,11 @@ async function openDriverPrintFlow(options = {}) {
           }
           return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         };
-        const shouldAutoCreateImmediately =
-          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
-          !isPreenteredBlankSeries(requestedSeries) &&
-          !canAutoCreateChairmanBlankSeries(requestedSeries);
-        try {
-          flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
-        } catch (error) {
-          if (isNumberedCertificatePrintType(flowState.selectedCertificateType) || !canAutoCreateChairmanBlankSeries(requestedSeries)) {
-            throw error;
-          }
-          flowState.currentBlank = await fetchNextBlank(true);
-        }
+        const autoCreate = shouldCreateNextSharedCertificateNumber(
+          requestedSeries,
+          flowState.selectedCertificateType,
+        );
+        flowState.currentBlank = await fetchNextBlank(autoCreate);
         if (flowState.currentBlank?.series) {
           const resolvedSeries = normalizeBlankSeries(flowState.currentBlank.series);
           flowState.selectedCertificateType = getDriverPrintCertificateType(resolvedSeries) || flowState.selectedCertificateType;
@@ -10245,9 +10248,10 @@ async function openDriverPrintFlow(options = {}) {
           flowState.seriesOptions,
         );
         const requestedSeries = lookupSeries || flowState.selectedSeries;
-        const autoCreate =
-          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
-          !isPreenteredBlankSeries(requestedSeries);
+        const autoCreate = shouldCreateNextSharedCertificateNumber(
+          requestedSeries,
+          flowState.selectedCertificateType,
+        );
 
         if (currentBlank.status === "free") {
           await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/spoil`, {
@@ -12305,21 +12309,9 @@ function bindContentEvents() {
             center_id: String(centerId),
             series: lookupSeries,
           });
-          let blank = null;
-          const shouldAutoCreateImmediately =
-            !isNumberedCertificatePrintType(certificateType) &&
-            !isPreenteredBlankSeries(normalizedSeries) &&
-            !canAutoCreateChairmanBlankSeries(normalizedSeries);
-          try {
-            if (shouldAutoCreateImmediately) query.set("auto_create", "true");
-            blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
-          } catch (error) {
-            if (isNumberedCertificatePrintType(certificateType) || !canAutoCreateChairmanBlankSeries(normalizedSeries)) {
-              throw error;
-            }
-            query.set("auto_create", "true");
-            blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
-          }
+          const autoCreate = shouldCreateNextSharedCertificateNumber(normalizedSeries, certificateType);
+          if (autoCreate) query.set("auto_create", "true");
+          const blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
           selectedPrintBlanks.set(normalizedSeries, blank);
           const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
           const resolvedBlankNumber = blankParts.number || blankParts.fullNumber || "";
