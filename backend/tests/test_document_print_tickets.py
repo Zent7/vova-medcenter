@@ -12,9 +12,10 @@ from app.api.v1.routes import documents  # noqa: E402
 
 
 class DummyRequest:
-    def __init__(self, url: str, host: str):
+    def __init__(self, url: str, host: str, method: str = "GET"):
         self.url = url
         self.headers = {"host": host}
+        self.method = method
 
     def url_for(self, route_name, **path_params):
         return self.url
@@ -47,6 +48,24 @@ class DocumentPrintTicketTests(unittest.TestCase):
             documents._download_print_ticket(token)
 
         self.assertNotIn(token, documents._print_tickets)
+
+    def test_print_ticket_supports_word_metadata_requests(self):
+        token = "word-office-2019"
+        file_path = Path(__file__).resolve()
+        documents._print_tickets[token] = (file_path, datetime.now(timezone.utc) + timedelta(minutes=1))
+        url = f"http://localhost:8000/documents/print-ticket/{token}/document.docx"
+
+        options_response = documents._serve_print_ticket(token, DummyRequest(url, "localhost:8000", "OPTIONS"))
+        head_response = documents._serve_print_ticket(token, DummyRequest(url, "localhost:8000", "HEAD"))
+
+        self.assertEqual(options_response.status_code, 204)
+        self.assertEqual(options_response.headers["allow"], "GET, HEAD, OPTIONS")
+        self.assertEqual(head_response.status_code, 200)
+        self.assertEqual(head_response.headers["content-length"], str(file_path.stat().st_size))
+        self.assertEqual(head_response.body, b"")
+
+    def test_print_ticket_lifetime_allows_word_to_finish_opening(self):
+        self.assertGreaterEqual(documents._PRINT_TICKET_TTL_SECONDS, 600)
 
     def test_public_ticket_url_uses_configured_https_origin(self):
         original_origin = documents.settings.public_frontend_origin

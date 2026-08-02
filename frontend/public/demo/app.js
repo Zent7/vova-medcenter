@@ -1925,6 +1925,10 @@ function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   return new Set(roleCodes);
 }
 
+function isDoctorRoleVisibleForClient(roleCode, client) {
+  return !(roleCode === "gynecologist" && getClientSexKey(client) === "male");
+}
+
 function getVisitClientForDoctorRules(visit, clientOverride = null) {
   const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
   if (getClientSexKey(client) || !visit?.clientSex) return client;
@@ -5362,7 +5366,10 @@ function buildExcelRows(clients) {
     const completedDoctors = getCompletedDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
     const existingDoctors = getExistingDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
     const suppressedDoctors = getSuppressedDoctorRoleIdsForDashboardVisit(currentVisit, status);
-    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors, existingDoctors);
+    const markDoctor = (roleCode) =>
+      isDoctorRoleVisibleForClient(roleCode, client)
+        ? buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors, existingDoctors)
+        : { value: "", title: "", state: "empty" };
 
     return {
       id: client.id,
