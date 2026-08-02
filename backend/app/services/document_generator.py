@@ -2971,6 +2971,42 @@ def _fill_new_gims_xls_sheet(
     _write_xls_pairs(target_sheet, source_sheet, values)
 
 
+def _fill_new_lmk_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+) -> None:
+    first_middle = " ".join(
+        part
+        for part in [context.get("FirstName", ""), context.get("MiddleName", "")]
+        if part
+    )
+    address_line = context.get("AddressCalc", "")
+    city = context.get("CityCalc", "").strip()
+    if city and address_line:
+        city_match = re.search(
+            rf"(?:^|,)\s*(?:г(?:ород)?\.?\s*)?{re.escape(city)}\s*,?\s*",
+            address_line,
+            flags=re.IGNORECASE,
+        )
+        if city_match and address_line[city_match.end() :].strip():
+            address_line = address_line[city_match.end() :].strip()
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            ((10, 5), context.get("LastName") or getattr(client, "last_name", "") or ""),
+            ((12, 5), context.get("FirstMiddleCalc") or first_middle),
+            ((15, 5), _new_xls_date_text(client.birth_date)),
+            ((17, 5), context.get("CityCalc", "")),
+            ((21, 1), address_line),
+            ((25, 4), context.get("Post") or context.get("PositionApplied", "")),
+            ((28, 0), context.get("CompanyName") or context.get("WorkPlace", "")),
+        ],
+    )
+
+
 def _fill_new_xls_sheets(
     source_book,
     target_book,
@@ -3000,6 +3036,8 @@ def _fill_new_xls_sheets(
             _fill_new_tractor_back_xls_sheet(source_sheet, target_sheet, context, exams_by_role)
         elif sheet_name == "Суда":
             _fill_new_gims_xls_sheet(source_sheet, target_sheet, context, encounter, exams_by_role)
+        elif sheet_name == " ЛМК!":
+            _fill_new_lmk_xls_sheet(source_sheet, target_sheet, context, client)
 
 
 def _fill_amb_opo_xls_sheet(
@@ -3348,6 +3386,7 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
         "gsu": ("ГС",),
         "gostaina": ("ГТ",),
         "gims": ("Суда",),
+        "lmk": (" ЛМК!",),
         "guard": ("ЧОД",),
         "chod": ("ЧОД",),
         "ekg": ("ЭЭГ",),

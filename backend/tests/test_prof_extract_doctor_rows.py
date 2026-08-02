@@ -496,10 +496,12 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         )
 
     def test_certificate_print_variant_keeps_only_selected_sheet(self):
-        template_path = next(
-            path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.name.startswith("ВСЕ")
+        template_path = (
+            Path(__file__).resolve().parents[2]
+            / "assets"
+            / "templates"
+            / "Templates"
+            / "ВУ.xls"
         )
         output_path = Path(tempfile.gettempdir()) / "certificate_print_variant_test.xls"
         source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
@@ -512,10 +514,12 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(book.sheet_names(), ["Спорт"])
 
     def test_guard_print_variant_fills_and_keeps_only_chod_sheet(self):
-        template_path = next(
-            path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.name.startswith("ВСЕ")
+        template_path = (
+            Path(__file__).resolve().parents[2]
+            / "assets"
+            / "templates"
+            / "Templates"
+            / "ВУ.xls"
         )
         output_path = Path(tempfile.gettempdir()) / "chod_print_variant_test.xls"
         context = {
