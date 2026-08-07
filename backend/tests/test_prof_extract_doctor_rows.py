@@ -53,6 +53,13 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             if path.name.startswith("Выписка")
         )
 
+    def _prof_ambulatory_template_path(self) -> Path:
+        return next(
+            path
+            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
+            if path.name.startswith("АМБ_")
+        )
+
     def _client(self):
         return SimpleNamespace(
             birth_date=date(1990, 1, 2),
@@ -494,6 +501,33 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             pz2_sheet.cell_value(PROF_EXTRACT_DOCTOR_ROWS[0][2], PROF_EXTRACT_DOCTOR_COL),
             "Терапевт Казаков И.В.",
         )
+
+    def test_prof_ambulatory_print_keeps_filled_card_and_uses_selected_number(self):
+        output_path = Path(tempfile.gettempdir()) / "prof_ambulatory_print_variant_test.xls"
+        encounter = SimpleNamespace(encounter_date=date(2026, 8, 7))
+        context = self._context()
+        context["BlankNumber"] = "ЛМК0000291"
+        exams = [
+            exam("therapist", "Казаков И.В.", completed_at=datetime(2026, 8, 7, 9, 30)),
+        ]
+
+        _generate_prof_amb_xls(
+            self._prof_ambulatory_template_path(),
+            output_path,
+            context,
+            self._client(),
+            encounter,
+            exams,
+            print_variant="prof_ambulatory",
+        )
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["Амб"])
+        sheet = book.sheet_by_index(0)
+        self.assertEqual(sheet.cell_value(15, 54), "ЛМК0000291")
+        self.assertEqual(sheet.cell_value(17, 43), "Тестов Тест Тестович")
+        self.assertEqual(sheet.cell_value(*PROF_AMB_EXAM_BLOCKS[0]["title_cell"]), "Врач терапевт")
+        self.assertEqual(sheet.cell_value(*PROF_AMB_EXAM_BLOCKS[0]["doctor_cell"]), "Казаков И.В.")
 
     def test_certificate_print_variant_keeps_only_selected_sheet(self):
         template_path = (

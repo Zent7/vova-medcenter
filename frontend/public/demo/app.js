@@ -8722,6 +8722,8 @@ const XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE = new Map([
   ["guard", "guard"],
   ["chod", "chod"],
   ["ekg", "ekg"],
+  ["ambulatory_extract", "ambulatory_extract"],
+  ["prof_ambulatory", "prof_ambulatory"],
 ]);
 
 function getXlsPrintVariantForDocumentType(type) {
@@ -8905,8 +8907,9 @@ function shouldAutoGenerateXmlForCertificate(type) {
 async function printDocumentForVisit(type, client, visit, options = {}) {
   const normalizedType = String(type || "").toLowerCase();
   const printOptions = { ...options };
-  if (normalizedType === "ambulatory_extract" && !printOptions.printVariant) {
-    printOptions.printVariant = "ambulatory_extract";
+  const xlsPrintVariant = getXlsPrintVariantForDocumentType(normalizedType);
+  if (xlsPrintVariant && !printOptions.printVariant) {
+    printOptions.printVariant = xlsPrintVariant;
   }
   const documentItem = await createDocumentForVisit(type, client, visit, { ...printOptions, print: true });
   await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });

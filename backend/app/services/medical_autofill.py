@@ -165,6 +165,11 @@ def _ensure_medical_record_entry(
 
 def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, service_id: int) -> None:
     client_sex = db.scalar(select(Client.sex).where(Client.id == encounter.client_id))
+    suppressed_role_codes = {
+        str(value).strip()
+        for value in (encounter.suppressed_doctor_role_ids or [])
+        if str(value).strip()
+    }
     roles = db.execute(
         select(DoctorRole)
         .join(ServiceDoctorRole, ServiceDoctorRole.doctor_role_id == DoctorRole.id)
@@ -180,6 +185,8 @@ def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, se
 
     record = _ensure_medical_record(db, encounter)
     for role in roles:
+        if role.code in suppressed_role_codes:
+            continue
         if not should_include_doctor_role_for_client_sex(role.code, client_sex):
             continue
         phrase_text = _default_phrase_for_role(db, role, service_id)

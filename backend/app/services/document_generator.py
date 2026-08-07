@@ -53,6 +53,7 @@ from app.services.document_context import (
     _split_address,
     build_document_context,
 )
+from app.services.medical_autofill import autofill_completed_doctors_for_service
 from app.services.new_xls_templates import (
     NEW_XLS_TEMPLATE_BY_FILE,
     NEW_XLS_TEMPLATE_BY_SHEET,
@@ -3184,7 +3185,7 @@ def _generate_prof_amb_xls(
     work_place = ", ".join(part for part in [context.get("CompanyName", ""), context.get("Post", "")] if part and part != "не указано")
 
     header_values: list[tuple[tuple[int, int], object]] = [
-        ((15, 54), context.get("ReferenceNumber", "")),
+        ((15, 54), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
         ((16, 47), _xls_excel_date(visit_date)),
         ((17, 43), context.get("ClientCalc", "")),
         ((18, 35), context.get("SexCalc", "")),
@@ -3289,7 +3290,7 @@ def _generate_prof_amb_xlsx(
     work_place = ", ".join(part for part in [context.get("CompanyName", ""), context.get("Post", "")] if part and part != "не указано")
 
     header_values: list[tuple[tuple[int, int], object]] = [
-        ((15, 54), context.get("ReferenceNumber", "")),
+        ((15, 54), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
         ((16, 47), _xls_excel_date(visit_date)),
         ((17, 43), context.get("ClientCalc", "")),
         ((18, 35), context.get("SexCalc", "")),
@@ -3375,7 +3376,7 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
         "tractor_back": ("Тр.Об", "Тракторная оборотная"),
         "ambulatory_extract": ("ПЗ2",),
         "prof_ambulatory_extract": ("ПЗ2",),
-        "prof_ambulatory": ("Амб !",),
+        "prof_ambulatory": ("Амб", "Амб !"),
         "070": ("CKK",),
         "072": ("CKK72",),
         "086": ("086",),
@@ -4364,6 +4365,25 @@ def _append_blank_entry_to_medical_record(
     )
 
 
+def _is_ambulatory_document_request(template: DocumentTemplate, print_variant: str) -> bool:
+    if print_variant in {"ambulatory_extract", "prof_ambulatory_extract", "prof_ambulatory"}:
+        return True
+    template_name = f"{template.name} {template.file_name}".casefold()
+    return "амб" in template_name
+
+
+def _autofill_ambulatory_encounter_data(db: Session, encounter: Encounter | None) -> None:
+    if encounter is None:
+        return
+    service_ids = db.execute(
+        select(EncounterService.service_id)
+        .where(EncounterService.encounter_id == encounter.id)
+        .order_by(EncounterService.id.asc())
+    ).scalars().all()
+    for service_id in service_ids:
+        autofill_completed_doctors_for_service(db, encounter, service_id)
+
+
 def generate_document(
     db: Session,
     *,
@@ -4410,6 +4430,8 @@ def generate_document(
     output_file_name = f"{template_path.stem}_{client.id}_{timestamp}{template_path.suffix}"
     output_path = output_dir / output_file_name
 
+    if _is_ambulatory_document_request(template, print_variant_value):
+        _autofill_ambulatory_encounter_data(db, encounter)
     runtime_values = _load_encounter_document_values(db, client, encounter)
     required_blank_type = (
         None
