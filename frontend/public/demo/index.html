@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MedCenters Demo</title>
-    <link rel="stylesheet" href="./styles.css?v=20260729-chairman-blank-replacement-v2" />
+    <link rel="stylesheet" href="./styles.css?v=20260809-sanatorium-chairman-card-v1" />
   </head>
   <body>
     <div class="app-shell">
@@ -77,19 +77,21 @@
     </div>
 
     <script src="./doctor-presets.js?v=20260611-doctor-presets-utf8"></script>
-    <script src="./doctor-templates.js?v=20260706-doctor-preset-sync"></script>
+    <script src="./doctor-templates.js?v=20260809-sanatorium-chairman-card-v1"></script>
     <script src="./service-cards.js?v=20260712-certificate-chairman-print"></script>
     <script>
       window.DEMO_API_BASE_URL =
         window.location.hostname === "demo.med-center.online"
           ? "https://api.med-center.online/api/v1"
-          : "/api/v1";
+          : ["localhost", "127.0.0.1"].includes(window.location.hostname)
+            ? "http://127.0.0.1:8000/api/v1"
+            : "/api/v1";
     </script>
     <script src="./services-data.js?v=20260731-short-service-names-v1"></script>
     <script src="./app.js?v=20260807-lmk-prof-ambulatory-fill"></script>
     <script src="./blanks-page.js?v=20260731-center-workspaces-v1"></script>
     <script src="./services-page.js?v=20260617-single-top-title"></script>
     <script src="./client-modal.js?v=20260721-service-encounter-rows"></script>
-    <script src="./doctor-exam-modal.js?v=20260713-chairman-hide-driver-details"></script>
+    <script src="./doctor-exam-modal.js?v=20260809-sanatorium-chairman-card-v1"></script>
   </body>
 </html>

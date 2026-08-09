@@ -2879,6 +2879,183 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   font-size: 12px;
 }
 
+.sanatorium-chairman-window {
+  width: min(1480px, 98vw);
+  background: #f5f1e8;
+}
+
+.sanatorium-chairman-form {
+  display: grid;
+  gap: 12px;
+  color: #1d2b36;
+}
+
+.sanatorium-patient-strip {
+  display: grid;
+  grid-template-columns: 170px minmax(320px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #aeb8bf;
+  border-radius: 10px;
+  background: #fffefa;
+}
+
+.sanatorium-patient-strip label,
+.sanatorium-wide-field,
+.sanatorium-field-grid label,
+.sanatorium-course-grid label,
+.sanatorium-code-grid label,
+.sanatorium-signers label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sanatorium-patient-strip label > span,
+.sanatorium-wide-field > span,
+.sanatorium-field-grid label > span,
+.sanatorium-course-grid label > span,
+.sanatorium-code-grid label > span,
+.sanatorium-signers label > span {
+  color: #394b59;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sanatorium-patient-strip__flags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-bottom: 1px;
+}
+
+.sanatorium-wide-field {
+  padding: 10px 12px;
+  border: 1px solid #aeb8bf;
+  border-radius: 10px;
+  background: #fffefa;
+}
+
+.sanatorium-wide-field--compact {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.sanatorium-chairman-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(390px, 0.92fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.sanatorium-card-page {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #9aa7b1;
+  border-radius: 12px;
+  background: linear-gradient(rgba(35, 74, 95, 0.045) 1px, transparent 1px) 0 46px / 100% 30px, #fffefa;
+  box-shadow: 0 5px 18px rgba(23, 48, 74, 0.08);
+}
+
+.sanatorium-card-page h3,
+.sanatorium-card-page h4 { margin: 0; color: #17304a; }
+.sanatorium-card-page h3 { padding-bottom: 9px; border-bottom: 2px solid #6e899b; font-size: 17px; }
+.sanatorium-card-page h4 { font-size: 14px; }
+
+.sanatorium-subsection {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(23, 48, 74, 0.2);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.sanatorium-subsection--accent { border-color: #759986; background: #f1f8f3; }
+
+.sanatorium-field-grid,
+.sanatorium-course-grid,
+.sanatorium-code-grid { display: grid; gap: 10px; }
+.sanatorium-field-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sanatorium-field-grid--three,
+.sanatorium-course-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sanatorium-code-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.sanatorium-diagnosis-row {
+  display: grid;
+  grid-template-columns: minmax(145px, 0.72fr) minmax(210px, 1.5fr) auto 102px;
+  gap: 8px;
+  align-items: center;
+}
+
+.sanatorium-diagnosis-row > label,
+.sanatorium-diagnosis-row > span { color: #394b59; font-size: 12px; font-weight: 700; }
+.sanatorium-card-input--mkb { text-transform: uppercase; }
+.sanatorium-card-textarea { min-height: 72px; background: rgba(255, 255, 255, 0.96); }
+
+.sanatorium-card-page .doctor-classic-input,
+.sanatorium-card-page .doctor-classic-select,
+.sanatorium-card-page .doctor-classic-textarea,
+.sanatorium-patient-strip .doctor-classic-input,
+.sanatorium-chairman-form > .sanatorium-wide-field .doctor-classic-textarea {
+  border-color: #a9b4bc;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(23, 48, 74, 0.05) inset;
+}
+
+.sanatorium-radio-fieldset,
+.sanatorium-season-fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(23, 48, 74, 0.22);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.sanatorium-radio-fieldset legend,
+.sanatorium-season-fieldset legend { padding: 0 5px; color: #17304a; font-size: 13px; font-weight: 700; }
+.sanatorium-radio-fieldset label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.sanatorium-radio-fieldset input { width: 17px; height: 17px; }
+.sanatorium-signers { border-color: #7894a5; background: #f4f8fa; }
+
+.sanatorium-chairman-actions {
+  position: sticky;
+  bottom: -16px;
+  z-index: 2;
+  margin: 0 -16px -16px;
+  padding: 12px 16px;
+  border-top: 1px solid #b8c2c9;
+  background: rgba(245, 241, 232, 0.96);
+  box-shadow: 0 -8px 20px rgba(23, 48, 74, 0.08);
+  backdrop-filter: blur(5px);
+}
+
+@media (max-width: 1100px) {
+  .sanatorium-chairman-grid,
+  .sanatorium-patient-strip { grid-template-columns: 1fr; }
+  .sanatorium-patient-strip__flags { justify-content: flex-start; }
+  .sanatorium-diagnosis-row { grid-template-columns: 1fr 112px; }
+  .sanatorium-diagnosis-row > label { grid-column: 1 / -1; }
+}
+
+@media (max-width: 720px) {
+  .sanatorium-field-grid--two,
+  .sanatorium-field-grid--three,
+  .sanatorium-course-grid,
+  .sanatorium-code-grid,
+  .sanatorium-diagnosis-row { grid-template-columns: 1fr; }
+  .sanatorium-diagnosis-row > label,
+  .sanatorium-diagnosis-row > span { grid-column: auto; }
+}
+
 .chairman-blood .doctor-classic-select {
   min-width: 136px;
   padding-right: 34px;
