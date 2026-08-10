@@ -418,6 +418,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         context = {
             "ReferenceNumber": "123",
+            "BlankNumber": "ЛМК0000291",
             "ClientCalc": "Тестов Тест Тестович",
             "SexCalc": "мужской",
             "SubjectCalc": "Санкт-Петербург",
@@ -467,6 +468,11 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         date_row, date_col = PROF_AMB_EXAM_BLOCKS[dermatologist_index]["date_cell"]
         self.assertEqual(amb_sheet.cell_value(date_row, date_col), "24.06.26")
         pz2_sheet = book.sheet_by_name("ПЗ2")
+        self.assertEqual(pz2_sheet.cell_value(17, 31), "ЛМК0000291")
+        self.assertEqual(
+            xlrd.xldate_as_datetime(pz2_sheet.cell_value(18, 14), book.datemode).date(),
+            date(2026, 6, 24),
+        )
         pz2_doctor_row = PROF_EXTRACT_DOCTOR_ROWS[dermatologist_index][2]
         self.assertEqual(
             pz2_sheet.cell_value(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL),

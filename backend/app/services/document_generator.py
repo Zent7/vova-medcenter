@@ -3146,6 +3146,23 @@ def _fill_prof_extract_doctor_rows(
         )
 
 
+def _fill_prof_extract_header(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    encounter: Encounter | None,
+) -> None:
+    issue_date = encounter.encounter_date if encounter else date.today()
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            ((17, 31), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
+            ((18, 14), _xls_excel_date(issue_date)),
+        ],
+    )
+
+
 def _find_prof_amb_sheet_index(source_book) -> int | None:
     for index, sheet_name in enumerate(source_book.sheet_names()):
         normalized = str(sheet_name or "").strip().lower().replace("!", "").strip()
@@ -3248,6 +3265,7 @@ def _generate_prof_amb_xls(
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
+        _fill_prof_extract_header(pz2_source, pz2_target, context, encounter)
         _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
 
     chod_source, chod_target, _ = _sheet_pair(source_book, target_book, "ЧОД")
@@ -3353,6 +3371,7 @@ def _generate_prof_amb_xlsx(
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
+        _fill_prof_extract_header(pz2_source, pz2_target, context, encounter)
         _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
 
     chod_source, chod_target, _ = _sheet_pair(source_book, target_book, "ЧОД")
