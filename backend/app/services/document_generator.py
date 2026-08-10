@@ -3146,19 +3146,54 @@ def _fill_prof_extract_doctor_rows(
         )
 
 
-def _fill_prof_extract_header(
+def _fill_prof_extract_fields(
     source_sheet,
     target_sheet,
     context: dict[str, str],
     encounter: Encounter | None,
+    client: Client,
+    exams_by_role: dict[str, DoctorExam],
 ) -> None:
     issue_date = encounter.encounter_date if encounter else date.today()
+    service_text = str(context.get("Services") or "").casefold()
+    is_preliminary = "предвар" in service_text
+    preliminary_date = _xls_excel_date(issue_date) if is_preliminary else ""
+    periodic_date = "" if is_preliminary else _xls_excel_date(issue_date)
+    blank_number = _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))
+    company_name = _first_non_empty(context.get("CompanyName"), context.get("WorkPlace"))
+    position = _first_non_empty(context.get("Post"), context.get("PositionApplied"))
+    if position == "не указано":
+        position = ""
+    harmfulness = context.get("Harmfulness", "")
+    if harmfulness == "не указано":
+        harmfulness = ""
+    therapist = _exam_export_with_client_doctor(exams_by_role.get("therapist"), client, "therapist")
+    chairman = _build_exam_export(exams_by_role.get("chairman"))
+    signer = _first_non_empty(chairman.get("doctor"), therapist.get("doctor"), context.get("Doctor"))
     _write_xls_pairs(
         target_sheet,
         source_sheet,
         [
-            ((17, 31), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
+            ((10, 39), blank_number),
+            ((10, 42), preliminary_date),
+            ((17, 31), blank_number),
+            ((17, 42), periodic_date),
             ((18, 14), _xls_excel_date(issue_date)),
+            ((20, 8), context.get("LastNameCalc", "")),
+            ((21, 4), context.get("FirstNameCalc", "")),
+            ((21, 23), context.get("PatronymicCalc", "")),
+            ((22, 6), _first_non_empty(context.get("SexFull"), context.get("SexCalc"))),
+            ((22, 24), _xls_excel_date(client.birth_date)),
+            ((28, 1), context.get("AddressCalc", "")),
+            ((31, 30), context.get("Phone", "")),
+            ((35, 11), company_name),
+            ((38, 26), company_name),
+            ((41, 17), _first_non_empty(context.get("Department"), context.get("Subdivision"))),
+            ((44, 2), position),
+            ((49, 1), harmfulness),
+            ((71, 42), position),
+            ((74, 42), harmfulness),
+            ((78, 73), signer),
         ],
     )
 
@@ -3265,7 +3300,7 @@ def _generate_prof_amb_xls(
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
-        _fill_prof_extract_header(pz2_source, pz2_target, context, encounter)
+        _fill_prof_extract_fields(pz2_source, pz2_target, context, encounter, client, exams_by_role)
         _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
 
     chod_source, chod_target, _ = _sheet_pair(source_book, target_book, "ЧОД")
@@ -3371,7 +3406,7 @@ def _generate_prof_amb_xlsx(
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
-        _fill_prof_extract_header(pz2_source, pz2_target, context, encounter)
+        _fill_prof_extract_fields(pz2_source, pz2_target, context, encounter, client, exams_by_role)
         _fill_prof_extract_doctor_rows(source_book, pz2_source, pz2_target, exams_by_role, encounter, client)
 
     chod_source, chod_target, _ = _sheet_pair(source_book, target_book, "ЧОД")

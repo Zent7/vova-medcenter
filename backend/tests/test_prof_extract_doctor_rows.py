@@ -420,18 +420,24 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             "ReferenceNumber": "123",
             "BlankNumber": "ЛМК0000291",
             "ClientCalc": "Тестов Тест Тестович",
+            "LastNameCalc": "Тестов",
+            "FirstNameCalc": "Тест",
+            "PatronymicCalc": "Тестович",
             "SexCalc": "мужской",
+            "SexFull": "мужской",
             "SubjectCalc": "Санкт-Петербург",
             "DistrictCalc": "",
             "CityCalc": "Санкт-Петербург",
             "StreetCalc": "Невский 1",
             "AddressCalc": "Санкт-Петербург, Невский 1",
-            "Phone": "",
+            "Phone": "+7 999 123-45-67",
             "SNILS": "",
             "DocumentSeries": "1234",
             "DocumentNumber": "567890",
             "CompanyName": "ООО Тест",
             "Post": "Пекарь",
+            "Harmfulness": "Приказ 29н, пункт 4.2.5",
+            "Services": "Периодический профосмотр",
             "Conclusion": "Годен",
             "BirthDateCalc_DAY": "02",
             "BirthDateCalc_DATEMONTH": "января",
@@ -468,11 +474,34 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         date_row, date_col = PROF_AMB_EXAM_BLOCKS[dermatologist_index]["date_cell"]
         self.assertEqual(amb_sheet.cell_value(date_row, date_col), "24.06.26")
         pz2_sheet = book.sheet_by_name("ПЗ2")
+        self.assertEqual(pz2_sheet.cell_value(10, 39), "ЛМК0000291")
+        self.assertEqual(pz2_sheet.cell_value(10, 42), "")
         self.assertEqual(pz2_sheet.cell_value(17, 31), "ЛМК0000291")
+        self.assertEqual(
+            xlrd.xldate_as_datetime(pz2_sheet.cell_value(17, 42), book.datemode).date(),
+            date(2026, 6, 24),
+        )
         self.assertEqual(
             xlrd.xldate_as_datetime(pz2_sheet.cell_value(18, 14), book.datemode).date(),
             date(2026, 6, 24),
         )
+        self.assertEqual(pz2_sheet.cell_value(20, 8), "Тестов")
+        self.assertEqual(pz2_sheet.cell_value(21, 4), "Тест")
+        self.assertEqual(pz2_sheet.cell_value(21, 23), "Тестович")
+        self.assertEqual(pz2_sheet.cell_value(22, 6), "мужской")
+        self.assertEqual(
+            xlrd.xldate_as_datetime(pz2_sheet.cell_value(22, 24), book.datemode).date(),
+            date(1990, 1, 2),
+        )
+        self.assertEqual(pz2_sheet.cell_value(28, 1), "Санкт-Петербург, Невский 1")
+        self.assertEqual(pz2_sheet.cell_value(31, 30), "+7 999 123-45-67")
+        self.assertEqual(pz2_sheet.cell_value(35, 11), "ООО Тест")
+        self.assertEqual(pz2_sheet.cell_value(38, 26), "ООО Тест")
+        self.assertEqual(pz2_sheet.cell_value(44, 2), "Пекарь")
+        self.assertEqual(pz2_sheet.cell_value(49, 1), "Приказ 29н, пункт 4.2.5")
+        self.assertEqual(pz2_sheet.cell_value(71, 42), "Пекарь")
+        self.assertEqual(pz2_sheet.cell_value(74, 42), "Приказ 29н, пункт 4.2.5")
+        self.assertEqual(pz2_sheet.cell_value(78, 73), "Казаков И.В.")
         pz2_doctor_row = PROF_EXTRACT_DOCTOR_ROWS[dermatologist_index][2]
         self.assertEqual(
             pz2_sheet.cell_value(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL),
@@ -507,6 +536,16 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             pz2_sheet.cell_value(PROF_EXTRACT_DOCTOR_ROWS[0][2], PROF_EXTRACT_DOCTOR_COL),
             "Терапевт Казаков И.В.",
         )
+        generated_values = {
+            str(pz2_sheet.cell_value(row_index, col_index))
+            for row_index in range(pz2_sheet.nrows)
+            for col_index in range(pz2_sheet.ncols)
+        }
+        self.assertNotIn("336238", generated_values)
+        self.assertNotIn("Слепухин", generated_values)
+        self.assertNotIn("Александр", generated_values)
+        self.assertNotIn("Алексеевич", generated_values)
+        self.assertNotIn("ООО Золотодобывающая компания «Дальневосточник»", generated_values)
 
     def test_prof_ambulatory_print_keeps_filled_card_and_uses_selected_number(self):
         output_path = Path(tempfile.gettempdir()) / "prof_ambulatory_print_variant_test.xls"
