@@ -44,6 +44,12 @@ alembic downgrade -1                                   # roll back one step
 
 Default DB: `postgresql+psycopg://medcenters:medcenters@127.0.0.1:5434/medcenters`
 
+## Mandatory Git and PR Delivery
+
+After every task that changes project files, all agents and subagents MUST complete the delivery workflow: commit the changes, push the branch, and open a pull request. Do not stop after making local changes, and do not hand off changed files without a PR. This rule applies to every file-changing task unless the user explicitly says not to create a PR.
+
+If credentials, permissions, conflicts, or an unavailable remote prevent creating the PR, report the exact blocker and leave the work in a recoverable branch. After opening the PR, verify that it is mergeable and report any conflicts. Opening the PR is the final handoff; do not merge it unless the user explicitly asks.
+
 ## Backend Architecture
 
 **Stack**: FastAPI + SQLAlchemy 2.0 (async-style sync sessions) + Pydantic v2 + Alembic + PostgreSQL 16
