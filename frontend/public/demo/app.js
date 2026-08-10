@@ -1444,13 +1444,50 @@ function getDoctorRoleCodeSetFromService(service, detail = {}) {
   return new Set(roleCodes);
 }
 
+function getSuppressedDoctorRoleCodesForVisit(visit) {
+  return new Set(
+    (Array.isArray(visit?.suppressedDoctorRoleIds) ? visit.suppressedDoctorRoleIds : [])
+      .map((roleId) => String(roleId || "").trim())
+      .filter(Boolean),
+  );
+}
+
+function normalizeDoctorRoleIds(roleIds) {
+  return Array.from(
+    new Set(
+      (Array.isArray(roleIds) ? roleIds : [])
+        .map((roleId) => String(roleId || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function suppressDoctorRoleForVisit(visit, doctorRoleId) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!visit || !roleId) return;
+  const suppressed = getSuppressedDoctorRoleCodesForVisit(visit);
+  suppressed.add(roleId);
+  visit.suppressedDoctorRoleIds = Array.from(suppressed);
+}
+
+function restoreDoctorRoleForVisit(visit, doctorRoleId) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!visit || !roleId || !Array.isArray(visit.suppressedDoctorRoleIds)) return;
+  visit.suppressedDoctorRoleIds = visit.suppressedDoctorRoleIds.filter(
+    (value) => String(value || "").trim() !== roleId,
+  );
+  if (!visit.suppressedDoctorRoleIds.length) delete visit.suppressedDoctorRoleIds;
+}
+
 function getRequiredDoctorRoleCountsForVisit(visit) {
   const serviceDetails = getVisitServiceDetails(visit);
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
   const counts = new Map();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
     getDoctorRoleCodeSetFromService(service, detail).forEach((code) => {
+      if (suppressedRoles.has(code)) return;
       const current = counts.get(code) || 0;
       counts.set(code, code === "chairman" && isCertificateService(service) ? current + 1 : Math.max(current, 1));
     });
@@ -1477,11 +1514,14 @@ function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
 
 function getRequiredDoctorRoleCodesForVisit(visit) {
   const serviceDetails = getVisitServiceDetails(visit);
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
   const result = new Set();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
-    getDoctorRoleCodeSetFromService(service, detail).forEach((code) => result.add(code));
+    getDoctorRoleCodeSetFromService(service, detail).forEach((code) => {
+      if (!suppressedRoles.has(code)) result.add(code);
+    });
   });
   return Array.from(result);
 }
@@ -1672,12 +1712,15 @@ function hasCompletedDoctorExamHistory(clientId, doctorRoleId, currentVisitId = 
   );
 }
 
-function buildDoctorMark(roleCode, requiredDoctors, completedDoctors) {
+function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors = new Set()) {
   const requiredCount = requiredDoctors instanceof Map
     ? Number(requiredDoctors.get(roleCode) || 0)
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
+  if (suppressedDoctors.has(roleCode)) {
+    return { value: "", title: "" };
+  }
   if (completedDoctors.has(roleCode)) {
     return { value: "✓", title: "Врач пройден в текущем обращении" };
   }
@@ -2587,6 +2630,7 @@ async function syncVisitToBackend(visit, client) {
         payment_type: visit.paymentType || "cash",
         total_amount: Number(visit.amount || calculateVisitAmountByIds(getSelectedVisitServiceIds(visit), getVisitServiceDetails(visit))),
         comment: visit.comment || "",
+        suppressed_doctor_role_ids: Array.from(getSuppressedDoctorRoleCodesForVisit(visit)),
         status: visit.status || "draft",
       };
 
@@ -2596,6 +2640,7 @@ async function syncVisitToBackend(visit, client) {
       });
       visit.backendId = encounter.id;
       visit.status = encounter.status || visit.status || "draft";
+      visit.suppressedDoctorRoleIds = normalizeDoctorRoleIds(encounter.suppressed_doctor_role_ids);
 
       const selectedServiceIds = getSelectedVisitServiceIds(visit);
       const serviceDetails = getVisitServiceDetails(visit);
@@ -2687,6 +2732,9 @@ async function loadEncountersForClient(client) {
         return result;
       }, {});
       const existingVisit = existingVisitsByBackendId.get(String(encounter.id));
+      const suppressedDoctorRoleIds = normalizeDoctorRoleIds(
+        encounter.suppressed_doctor_role_ids || existingVisit?.suppressedDoctorRoleIds || [],
+      );
       mappedVisits.push({
         ...(existingVisit || {}),
         id: `encounter-${encounter.id}`,
@@ -2701,6 +2749,7 @@ async function loadEncountersForClient(client) {
         paymentType: encounter.payment_type || "cash",
         amount: Number(encounter.total_amount || 0),
         comment: encounter.comment || "",
+        suppressedDoctorRoleIds,
         examIds: [],
         documentIds: [],
         status: encounter.status || "draft",
@@ -2778,6 +2827,9 @@ function mapDashboardDoctorStatus(status) {
     encounterId: status?.encounter_id || null,
     encounterStatus: status?.encounter_status || null,
     services,
+    suppressedDoctorRoleIds: Array.isArray(status?.suppressed_doctor_role_ids)
+      ? status.suppressed_doctor_role_ids.slice()
+      : [],
     completedDoctorRoleIds: Array.isArray(status?.completed_doctor_role_ids)
       ? status.completed_doctor_role_ids.slice()
       : [],
@@ -2801,6 +2853,9 @@ function getDashboardDoctorStatusVisit(client) {
       result[service.serviceId] = service.detail;
       return result;
     }, {}),
+    suppressedDoctorRoleIds: Array.isArray(status.suppressedDoctorRoleIds)
+      ? status.suppressedDoctorRoleIds.slice()
+      : [],
     status: status.encounterStatus || "draft",
   };
 }
@@ -2938,13 +2993,16 @@ function getDoctorExamById(examId) {
   return data.doctorExams.find((item) => String(item.id) === String(examId)) || null;
 }
 
-function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
+function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
   ensureVisitsStore();
+
+  const { restoreSuppressed = true } = options;
+  const visit = data.visits.find((item) => String(item.id) === String(visitId));
+  if (restoreSuppressed) restoreDoctorRoleForVisit(visit, doctorRoleId);
 
   let exam = getDoctorExam(clientId, visitId, doctorRoleId);
   if (exam) {
     if (doctorRoleId === "chairman") {
-      const visit = data.visits.find((item) => String(item.id) === String(visitId));
       const nextFields = applyCertificateDefaultsToChairmanFields(exam.fields || {}, visit);
       if (JSON.stringify(nextFields) !== JSON.stringify(exam.fields || {})) {
         exam.fields = nextFields;
@@ -2973,7 +3031,6 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
   };
 
   if (doctorRoleId === "chairman") {
-    const visit = data.visits.find((item) => String(item.id) === String(visitId));
     if (visit) {
       exam.fields = applyDriverSelectionsToChairmanFields(exam.fields, getDriverDetailFromVisit(visit), visit);
       exam.fields = applyCertificateDefaultsToChairmanFields(exam.fields, visit);
@@ -2982,7 +3039,6 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
 
   data.doctorExams.push(exam);
 
-  const visit = data.visits.find((item) => item.id === visitId);
   if (visit && !visit.examIds.includes(exam.id)) {
     visit.examIds.push(exam.id);
   }
@@ -2998,7 +3054,7 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
   const createdOrExisting = [];
 
   requiredRoleCodes.forEach((doctorRoleId) => {
-    const exam = getOrCreateDoctorExam(client.id, visit.id, doctorRoleId);
+    const exam = getOrCreateDoctorExam(client.id, visit.id, doctorRoleId, { restoreSuppressed: false });
     if (!exam) return;
 
     if (!exam.isCompleted && exam.status !== "draft") {
@@ -3385,18 +3441,22 @@ async function deleteDoctorExam(examId) {
     visit.examIds = Array.isArray(visit.examIds)
       ? visit.examIds.filter((value) => String(value) !== String(exam.id))
       : [];
+    suppressDoctorRoleForVisit(visit, exam.doctorRoleId);
   }
 
   persistDemoState();
 
-  if (!exam.backendId) {
-    return true;
-  }
-
   try {
-    await apiRequest(`/doctor-exams/${encodeURIComponent(exam.backendId)}`, {
-      method: "DELETE",
-    });
+    if (exam.backendId) {
+      await apiRequest(`/doctor-exams/${encodeURIComponent(exam.backendId)}`, {
+        method: "DELETE",
+      });
+    } else {
+      const client = getClientPool().find((item) => String(item.id) === String(exam.clientId));
+      if (!visit?.backendId || !client) return true;
+      const syncedVisit = await syncVisitToBackend(visit, client);
+      if (!syncedVisit) throw new Error("Не удалось сохранить удаление врача");
+    }
     await refreshDashboardDoctorStatusForExam(exam, { render: false });
     return true;
   } catch (error) {
@@ -3406,6 +3466,7 @@ async function deleteDoctorExam(examId) {
       if (!visit.examIds.includes(exam.id)) {
         visit.examIds.push(exam.id);
       }
+      restoreDoctorRoleForVisit(visit, exam.doctorRoleId);
     }
     persistDemoState();
     showToast("Не удалось удалить карточку врача");
@@ -3867,7 +3928,8 @@ function buildExcelRows(clients) {
     const currentVisit = getDashboardDoctorStatusVisit(client);
     const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit) : new Map();
     const completedDoctors = new Set(status?.completedDoctorRoleIds || []);
-    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors);
+    const suppressedDoctors = new Set(status?.suppressedDoctorRoleIds || []);
+    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors);
 
     return {
       id: client.id,

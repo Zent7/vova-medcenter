@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class EncounterBase(BaseModel):
@@ -13,6 +13,7 @@ class EncounterBase(BaseModel):
     total_amount: Decimal = Decimal("0.00")
     final_result: str | None = None
     comment: str | None = None
+    suppressed_doctor_role_ids: list[str] = Field(default_factory=list)
 
 
 class EncounterCreate(EncounterBase):
@@ -26,6 +27,7 @@ class EncounterUpdate(BaseModel):
     total_amount: Decimal | None = None
     final_result: str | None = None
     comment: str | None = None
+    suppressed_doctor_role_ids: list[str] | None = None
     status: str | None = None
 
 

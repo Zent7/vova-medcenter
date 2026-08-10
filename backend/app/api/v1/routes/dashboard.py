@@ -47,16 +47,23 @@ def get_client_doctor_statuses(
         return []
 
     encounter_rows = db.execute(
-        select(Encounter.id, Encounter.client_id, Encounter.status)
+        select(Encounter.id, Encounter.client_id, Encounter.status, Encounter.suppressed_doctor_role_ids)
         .where(Encounter.deleted_at.is_(None), Encounter.client_id.in_(unique_client_ids))
         .order_by(Encounter.client_id.asc(), Encounter.created_at.desc(), Encounter.id.desc())
     ).all()
 
-    latest_encounter_by_client: dict[int, tuple[int, str]] = {}
-    for encounter_id, client_id, encounter_status in encounter_rows:
-        latest_encounter_by_client.setdefault(client_id, (encounter_id, encounter_status))
+    latest_encounter_by_client: dict[int, tuple[int, str, list[str]]] = {}
+    for encounter_id, client_id, encounter_status, suppressed_doctor_role_ids in encounter_rows:
+        latest_encounter_by_client.setdefault(
+            client_id,
+            (
+                encounter_id,
+                encounter_status,
+                suppressed_doctor_role_ids if isinstance(suppressed_doctor_role_ids, list) else [],
+            ),
+        )
 
-    encounter_ids = [encounter_id for encounter_id, _ in latest_encounter_by_client.values()]
+    encounter_ids = [encounter_id for encounter_id, _, _ in latest_encounter_by_client.values()]
     services_by_encounter: dict[int, list[DashboardClientDoctorStatusService]] = defaultdict(list)
     completed_roles_by_encounter: dict[int, list[str]] = defaultdict(list)
 
@@ -91,7 +98,7 @@ def get_client_doctor_statuses(
             result.append(DashboardClientDoctorStatus(client_id=client_id))
             continue
 
-        encounter_id, encounter_status = encounter
+        encounter_id, encounter_status, suppressed_doctor_role_ids = encounter
         result.append(
             DashboardClientDoctorStatus(
                 client_id=client_id,
@@ -99,6 +106,7 @@ def get_client_doctor_statuses(
                 encounter_status=encounter_status,
                 services=services_by_encounter[encounter_id],
                 completed_doctor_role_ids=completed_roles_by_encounter[encounter_id],
+                suppressed_doctor_role_ids=suppressed_doctor_role_ids,
             )
         )
     return result
