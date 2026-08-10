@@ -46,11 +46,28 @@ def exam(role_id, doctor_name, *, is_completed=True, completed_at=None, conclusi
 
 
 class ProfExtractDoctorRowsTests(unittest.TestCase):
+    def _templates_dir(self) -> Path:
+        return Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
+
     def _prof_template_path(self) -> Path:
         return next(
             path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
+            for path in self._templates_dir().glob("*.xls")
             if path.name.startswith("Выписка")
+        )
+
+    def _ambulatory_template_path(self) -> Path:
+        return next(
+            path
+            for path in self._templates_dir().glob("*.xls")
+            if path.name.startswith("АМБ_")
+        )
+
+    def _vu_template_path(self) -> Path:
+        return next(
+            path
+            for path in self._templates_dir().glob("*.xls")
+            if path.name == "ВУ.xls" or path.name.startswith("ВСЕ")
         )
 
     def _client(self):
@@ -495,12 +512,61 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             "Терапевт Казаков И.В.",
         )
 
-    def test_certificate_print_variant_keeps_only_selected_sheet(self):
-        template_path = next(
-            path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.name.startswith("ВСЕ")
+    def test_ambulatory_extract_print_variant_fills_patient_fields(self):
+        output_path = Path(tempfile.gettempdir()) / "lmk_ambulatory_extract_fields_test.xls"
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        context = {
+            **self._context(),
+            "BlankNumber": "ЛМК 0000123",
+            "LastNameCalc": "Тестов",
+            "FirstNameCalc": "Тест",
+            "PatronymicCalc": "Тестович",
+            "Phone": "+7 999 123-45-67",
+        }
+
+        _generate_prof_amb_xls(
+            self._prof_template_path(),
+            output_path,
+            context,
+            self._client(),
+            encounter,
+            [exam("therapist", "Казаков И.В.")],
+            print_variant="ambulatory_extract",
         )
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["ПЗ2"])
+        sheet = book.sheet_by_index(0)
+        self.assertEqual(sheet.cell_value(10, 39), "ЛМК 0000123")
+        self.assertEqual(sheet.cell_value(20, 8), "Тестов")
+        self.assertEqual(sheet.cell_value(21, 4), "Тест")
+        self.assertEqual(sheet.cell_value(21, 23), "Тестович")
+        self.assertEqual(sheet.cell_value(31, 30), "+7 999 123-45-67")
+        self.assertEqual(sheet.cell_value(35, 11), "ООО Тест")
+
+    def test_prof_ambulatory_print_variant_keeps_and_fills_amb_sheet(self):
+        output_path = Path(tempfile.gettempdir()) / "lmk_ambulatory_card_fields_test.xls"
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+
+        _generate_prof_amb_xls(
+            self._ambulatory_template_path(),
+            output_path,
+            self._context(),
+            self._client(),
+            encounter,
+            [exam("therapist", "Казаков И.В.")],
+            print_variant="prof_ambulatory",
+        )
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["Амб"])
+        sheet = book.sheet_by_index(0)
+        self.assertEqual(sheet.cell_value(17, 43), "Тестов Тест Тестович")
+        self.assertEqual(sheet.cell_value(18, 35), "мужской")
+        self.assertEqual(sheet.cell_value(38, 44), "ООО Тест, Пекарь")
+
+    def test_certificate_print_variant_keeps_only_selected_sheet(self):
+        template_path = self._vu_template_path()
         output_path = Path(tempfile.gettempdir()) / "certificate_print_variant_test.xls"
         source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
         target_book = copy_xls_workbook(source_book)
@@ -512,11 +578,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(book.sheet_names(), ["Спорт"])
 
     def test_guard_print_variant_fills_and_keeps_only_chod_sheet(self):
-        template_path = next(
-            path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.name.startswith("ВСЕ")
-        )
+        template_path = self._vu_template_path()
         output_path = Path(tempfile.gettempdir()) / "chod_print_variant_test.xls"
         context = {
             **self._context(),
