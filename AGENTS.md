@@ -50,6 +50,8 @@ After every task that changes project files, all agents and subagents MUST compl
 
 If credentials, permissions, conflicts, or an unavailable remote prevent creating the PR, report the exact blocker and leave the work in a recoverable branch. After opening the PR, verify that it is mergeable and report any conflicts. Opening the PR is the final handoff; do not merge it unless the user explicitly asks.
 
+For every live-site or deployment-related change, the final delivery PR MUST be opened immediately for Ravil against `ravilushqa/homelab:main`. A PR only in `Zent7/vova-medcenter` is not the final delivery handoff. Prepare the corresponding `Zent7/homelab` deployment branch and report the `ravilushqa/homelab` PR URL to the user.
+
 ## Backend Architecture
 
 **Stack**: FastAPI + SQLAlchemy 2.0 (async-style sync sessions) + Pydantic v2 + Alembic + PostgreSQL 16
