@@ -2890,6 +2890,122 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   color: #1d2b36;
 }
 
+.certificate082-chairman-window {
+  width: min(1040px, 96vw);
+  background: #f7f4ec;
+}
+
+.certificate082-chairman-form {
+  display: grid;
+  gap: 18px;
+  min-height: min(700px, 82vh);
+  padding: 20px 24px 24px;
+  color: #1d2b36;
+}
+
+.certificate082-patient-row {
+  display: grid;
+  grid-template-columns: 170px minmax(300px, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+}
+
+.certificate082-patient-row label,
+.certificate082-requirements,
+.certificate082-health-status {
+  display: grid;
+  gap: 6px;
+}
+
+.certificate082-patient-row label > span,
+.certificate082-requirements > span,
+.certificate082-health-status > span {
+  color: #455664;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.certificate082-patient-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 7px;
+}
+
+.certificate082-requirements {
+  grid-template-columns: 155px minmax(0, 1fr);
+  align-items: start;
+}
+
+.certificate082-requirements > span {
+  padding-top: 11px;
+  font-size: 15px;
+}
+
+.certificate082-requirements__input {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.certificate082-results {
+  display: grid;
+  gap: 10px;
+}
+
+.certificate082-result-row {
+  display: grid;
+  grid-template-columns: 155px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.certificate082-result-row > span {
+  color: #263a49;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.certificate082-result-input {
+  min-height: 46px;
+  resize: vertical;
+  background: #fff;
+}
+
+.certificate082-health-status {
+  grid-template-columns: 220px minmax(240px, 360px);
+  align-items: center;
+  margin-top: 4px;
+}
+
+.certificate082-health-status > span {
+  color: #263a49;
+  font-size: 16px;
+}
+
+.certificate082-health-status .doctor-classic-select {
+  min-height: 42px;
+  background: #fff;
+  font-size: 15px;
+}
+
+.certificate082-actions {
+  align-self: end;
+  margin-top: auto;
+}
+
+@media (max-width: 780px) {
+  .certificate082-patient-row,
+  .certificate082-requirements,
+  .certificate082-result-row,
+  .certificate082-health-status {
+    grid-template-columns: 1fr;
+  }
+
+  .certificate082-patient-flags {
+    padding-bottom: 0;
+  }
+}
+
 .sanatorium-quick-entry { overflow: hidden; border: 1px solid #d2b94b; border-radius: 10px; background: #fffbea; box-shadow: 0 3px 12px rgba(104, 81, 0, 0.09); }
 .sanatorium-quick-entry > summary { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px; color: #4f420b; cursor: pointer; list-style: none; background: #fff3a7; }
 .sanatorium-quick-entry > summary::-webkit-details-marker { display: none; }

@@ -1082,6 +1082,101 @@
     `;
   }
 
+  function renderCertificate082ChairmanClassic(template, exam, client, chairmanInfo) {
+    const fields = exam.fields || {};
+    const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
+    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
+    const healthOptions = [
+      "Здоров",
+      "Не здоров",
+      "Годен",
+      "Не годен",
+      "Практически здоров",
+      "I группа здоровья",
+      "II группа здоровья",
+      "III группа здоровья",
+      "IV группа здоровья",
+      "V группа здоровья",
+    ];
+    const currentHealthStatus = String(fields.healthStatus || fields.conclusion || "Здоров");
+    const selectOptions = healthOptions.includes(currentHealthStatus)
+      ? healthOptions
+      : [currentHealthStatus, ...healthOptions];
+    const resultRow = (label, name, value = "") => `
+      <label class="certificate082-result-row">
+        <span>${escapeHtml(label)}</span>
+        <textarea class="doctor-classic-textarea certificate082-result-input" name="${escapeHtml(name)}">${escapeHtml(value)}</textarea>
+      </label>
+    `;
+
+    return `
+      <div class="doctor-classic-backdrop" data-doctor-exam-modal>
+        <div class="chairman-window certificate082-chairman-window">
+          <div class="doctor-classic-titlebar">
+            <div class="doctor-classic-title doctor-classic-title--stacked">
+              <span>${escapeHtml(chairmanInfo.label || "Председатель: справка 082у")}</span>
+              <small>${escapeHtml(chairmanInfo.templateName || "Справка 082у")}</small>
+            </div>
+            <button type="button" class="doctor-classic-close" data-doctor-exam-close>×</button>
+          </div>
+
+          <form
+            class="chairman-form chairman-form--certificate082 certificate082-chairman-form"
+            data-doctor-exam-form
+            data-exam-id="${escapeHtml(exam.id)}"
+            data-doctor-role-id="${escapeHtml(template.id)}"
+            data-chairman-form-type="certificate082"
+          >
+            <div class="certificate082-patient-row">
+              <label>
+                <span>Дата рождения</span>
+                <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
+              </label>
+              <label class="certificate082-patient-row__fio">
+                <span>Ф.И.О.</span>
+                <input class="doctor-classic-input doctor-classic-input--fio" type="text" name="patientFullName" value="${escapeHtml(fullName)}" readonly />
+              </label>
+              <div class="certificate082-patient-flags">
+                ${renderCheckboxField("hasGlasses", !!fields.hasGlasses, "очки")}
+                ${renderCheckboxField("hasHearingAid", !!fields.hasHearingAid, "слуховой аппарат")}
+              </div>
+            </div>
+
+            <label class="certificate082-requirements">
+              <span>Мед. требования</span>
+              <div class="chairman-requirements-control">
+                <textarea class="doctor-classic-textarea certificate082-requirements__input" name="medicalRequirements" data-medical-requirements-input>${escapeHtml(fields.medicalRequirements ?? "")}</textarea>
+                <button type="button" class="chairman-requirements-picker-btn" data-medical-requirements-open title="Выбрать из сохранённых" aria-label="Выбрать из сохранённых">...</button>
+              </div>
+            </label>
+
+            <section class="certificate082-results" aria-label="Результаты обследований">
+              ${resultRow("ФЛГ", "fluorography", fields.fluorography ?? "")}
+              ${resultRow("ЭКГ", "ekgConclusion", fields.ekgConclusion || fields.ekg || "")}
+              ${resultRow("СПИД", "hivResult", fields.hivResult ?? "")}
+              ${resultRow("Гепатиты", "hepatitisResult", fields.hepatitisResult ?? "")}
+              ${resultRow("Страна", "country", fields.country ?? "")}
+            </section>
+
+            <label class="certificate082-health-status">
+              <span>По состоянию здоровья</span>
+              <select class="doctor-classic-select" name="healthStatus">
+                ${selectOptions.map((option) => `<option value="${escapeHtml(option)}" ${option === currentHealthStatus ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+              </select>
+            </label>
+
+            <input type="hidden" name="conclusion" value="${escapeHtml(currentHealthStatus)}" data-certificate082-conclusion />
+
+            <div class="chairman-actions certificate082-actions">
+              <button type="submit" class="chairman-action-btn">Сохранить</button>
+              <button type="button" class="chairman-action-btn" data-doctor-exam-close>Отмена</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
   function renderChairmanClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
@@ -1094,6 +1189,9 @@
     const chairmanType = chairmanInfo.type || "default";
     if (["certificate070", "certificate072"].includes(chairmanType)) {
       return renderSanatoriumChairmanClassic(template, exam, client, chairmanInfo);
+    }
+    if (chairmanType === "certificate082") {
+      return renderCertificate082ChairmanClassic(template, exam, client, chairmanInfo);
     }
     const keepEkgFieldsManual = ["lmk", "prof"].includes(chairmanType);
     const ekgValue = emptyLegacyValue(fields.ekg, ['Медицинский центр ООО "ЦМО "ЮЛМЕД" ЭКГ от 07.04.2025']);
@@ -1992,6 +2090,16 @@
     }
 
     if (form.dataset.doctorRoleId === "chairman") {
+      if (form.dataset.chairmanFormType === "certificate082") {
+        const healthStatus = form.elements.healthStatus;
+        const conclusion = form.querySelector("[data-certificate082-conclusion]");
+        const syncHealthConclusion = () => {
+          if (conclusion && healthStatus) conclusion.value = healthStatus.value;
+        };
+        healthStatus?.addEventListener("change", syncHealthConclusion);
+        syncHealthConclusion();
+      }
+
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");
       if (medicalRequirementsInput) {
         let medicalRequirementsRememberTimer = null;

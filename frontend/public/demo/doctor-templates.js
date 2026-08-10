@@ -803,6 +803,12 @@
     { key: "ekgConclusion", label: "Заключение ЭКГ", type: "textarea", defaultValue: "" },
     { key: "fluorography", label: "Флюорография", type: "text", defaultValue: "" },
 
+    // Поля компактной карточки председателя для справки 082/у.
+    { key: "hivResult", label: "Результат обследования на ВИЧ", type: "textarea", defaultValue: "" },
+    { key: "hepatitisResult", label: "Результат обследования на гепатиты", type: "textarea", defaultValue: "" },
+    { key: "country", label: "Страна назначения", type: "text", defaultValue: "" },
+    { key: "healthStatus", label: "По состоянию здоровья", type: "select", options: ["Здоров", "Не здоров", "Годен", "Не годен", "Практически здоров", "I группа здоровья", "II группа здоровья", "III группа здоровья", "IV группа здоровья", "V группа здоровья"], defaultValue: "Здоров" },
+
     { key: "bloodGroup", label: "Группа крови", type: "select", options: ["0 (I)", "A (II)", "B (III)", "AB (IV)"], defaultValue: "0 (I)" },
     { key: "rhesusFactor", label: "Резус-фактор", type: "select", options: ["Rh(+)", "Rh(-)"], defaultValue: "Rh(+)" },
     { key: "bloodSource", label: "Кровь - откуда данные", type: "text", defaultValue: "" },
