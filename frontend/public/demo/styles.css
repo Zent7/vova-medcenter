@@ -2998,6 +2998,62 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 .sanatorium-card-input--mkb { text-transform: uppercase; }
 .sanatorium-card-textarea { min-height: 72px; background: rgba(255, 255, 255, 0.96); }
 
+.sanatorium-research-panel {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(23, 48, 74, 0.22);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.sanatorium-research-study {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(0, 2fr);
+  gap: 10px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid rgba(23, 48, 74, 0.15);
+  border-radius: 8px;
+  background: #fffefa;
+}
+
+.sanatorium-research-study__heading {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  align-items: start;
+}
+
+.sanatorium-research-study__heading > strong {
+  align-self: start;
+  color: #17304a;
+  font-size: 13px;
+}
+
+.sanatorium-research-study__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sanatorium-research-field {
+  display: grid;
+  flex: 1 1 128px;
+  gap: 4px;
+  min-width: 110px;
+}
+
+.sanatorium-research-field > span {
+  color: #394b59;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sanatorium-research-field--date { min-width: 118px; }
+.sanatorium-research-notes { margin-top: 1px; }
+.sanatorium-research-notes .sanatorium-card-textarea { min-height: 52px; }
+
 .sanatorium-card-page .doctor-classic-input,
 .sanatorium-card-page .doctor-classic-select,
 .sanatorium-card-page .doctor-classic-textarea,
@@ -3054,6 +3110,8 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   .sanatorium-diagnosis-row { grid-template-columns: 1fr; }
   .sanatorium-diagnosis-row > label,
   .sanatorium-diagnosis-row > span { grid-column: auto; }
+  .sanatorium-research-study,
+  .sanatorium-research-study__heading { grid-template-columns: 1fr; }
 }
 
 .chairman-blood .doctor-classic-select {
