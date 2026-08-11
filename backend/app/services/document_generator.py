@@ -83,6 +83,7 @@ CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
         "спорт.xls",
     }
 )
+CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES = frozenset({"082у_шаблон.docx"})
 
 ET.register_namespace("soapenv", SOAP_NS)
 ET.register_namespace("mb", MIAC_NS)
@@ -300,6 +301,17 @@ def _replace_text_tokens(xml_text: str, context: dict[str, str]) -> str:
         for pattern in patterns:
             xml_text = re.sub(pattern, value, xml_text)
     return xml_text
+
+
+def _replace_chairman_082_static_country(
+    template_path: Path,
+    xml_text: str,
+    context: dict[str, str],
+) -> str:
+    if template_path.name.casefold() not in CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES:
+        return xml_text
+    country = escape_xml_text(str(context.get("Country", "") or "").strip())
+    return xml_text.replace(">Болгария<", f">{country}<")
 
 
 def _append_bookmark_value(tree: ET.ElementTree, context: dict[str, str]) -> ET.ElementTree:
@@ -545,6 +557,7 @@ def _generate_docx(
                     xml_text = file_bytes.decode("utf-8")
                     namespace_declarations = _document_namespace_declarations(xml_text)
                     xml_text = _replace_text_tokens(xml_text, context)
+                    xml_text = _replace_chairman_082_static_country(template_path, xml_text, context)
                     xml_text = _replace_prof_29n_static_doctor_names(xml_text, context)
                     if cleanup_xml:
                         xml_text = _cleanup_contract_xml(xml_text)
@@ -3934,6 +3947,37 @@ def _chairman_certificate_date_context_overrides(
     return _chairman_exam_date_context_overrides(exams)
 
 
+def _chairman_082_context_overrides(
+    template: DocumentTemplate,
+    exams: list[DoctorExam],
+    blank_form: BlankForm | None,
+) -> dict[str, str]:
+    candidates = [getattr(template, "file_name", None), getattr(template, "file_path", None)]
+    file_names = {
+        Path(str(candidate)).name.casefold()
+        for candidate in candidates
+        if str(candidate or "").strip()
+    }
+    if not file_names.intersection(CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES):
+        return {}
+
+    chairman = _exam_map(exams).get("chairman")
+    fields = (chairman.fields_json or {}) if chairman is not None else {}
+    overrides = {
+        "Country": _first_field_value(fields, "country", "destinationCountry", "destination_country"),
+    }
+    if blank_form is not None:
+        full_number = str(blank_form.full_number or "").strip()
+        series = str(blank_form.series or "").strip()
+        if series and full_number.casefold().startswith(series.casefold()):
+            sequence_number = full_number[len(series) :].strip()
+        else:
+            sequence_number = str(blank_form.number_value or "").strip()
+        overrides["ReferenceNumber"] = sequence_number
+        overrides["SeriesNumberCalc"] = sequence_number
+    return overrides
+
+
 def _sport_context_overrides(exams: list[DoctorExam]) -> dict[str, str]:
     empty_overrides = {
         "SportDiagnosis": "",
@@ -4517,6 +4561,7 @@ def generate_document(
             context["BlankSeries"] = blank_form.series or ""
             context["BlankFullNumber"] = blank_form.full_number
             context["DocumentNumber"] = blank_form.full_number
+        context.update(_chairman_082_context_overrides(template, document_exams, blank_form))
         if is_side_print:
             context["ReferenceNumber"] = ""
             context["SeriesNumberCalc"] = ""
