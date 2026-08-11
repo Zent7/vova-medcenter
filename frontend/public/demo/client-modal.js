@@ -1247,7 +1247,22 @@ function openClientModal(clientId = null, options = {}) {
     ["lastName", "firstName", "middleName"].forEach((fieldName) => {
       formData.set(fieldName, formatClientNameInputValue(formData.get(fieldName)));
     });
-    const encounterDateText = String(
+    const birthDateText = String(formData.get("birthDate") || "").trim();
+    const passportDateText = String(formData.get("passportDate") || "").trim();
+    const birthDateIso = window.parseRuDateToIso?.(birthDateText, "") || "";
+    const passportDateIso = window.parseRuDateToIso?.(passportDateText, "") || "";
+    const invalidDateField = birthDateText && !birthDateIso
+      ? { name: "birthDate", label: "дату рождения" }
+      : passportDateText && !passportDateIso
+        ? { name: "passportDate", label: "дату выдачи документа" }
+        : null;
+    if (invalidDateField) {
+      const input = form.elements.namedItem(invalidDateField.name);
+      input?.focus?.();
+      showToast(`Проверьте ${invalidDateField.label}: нужна существующая дата в формате ДД.ММ.ГГГГ`);
+      return;
+    }
+    const encounterDateText = String(
       editingClient?.encounterDate || editingClient?.lastVisit || formatDateTime(new Date()),
     ).trim();
     const center = appState.centerFilter === "all" ? "Медцентр 1" : appState.centerFilter;
@@ -1343,7 +1358,7 @@ function openClientModal(clientId = null, options = {}) {
           last_name: String(formData.get("lastName") || "").trim() || "Без фамилии",
           first_name: String(formData.get("firstName") || "").trim() || "Без имени",
           middle_name: String(formData.get("middleName") || "").trim() || null,
-          birth_date: window.parseRuDateToIso?.(formData.get("birthDate")) || "1900-01-01",
+          birth_date: birthDateIso || "1900-01-01",
           sex: String(formData.get("gender") || "").toLowerCase().startsWith("ж") ? "F" : "M",
           phone: String(formData.get("phone") || "").trim() || null,
           email: String(formData.get("email") || "").trim() || null,
@@ -1351,7 +1366,7 @@ function openClientModal(clientId = null, options = {}) {
           document_series: String(formData.get("passportSeries") || "").trim() || null,
           document_number: String(formData.get("passportNumber") || "").trim() || null,
           document_issued_by: String(formData.get("issuedBy") || "").trim() || null,
-          document_issued_date: window.parseRuDateToIso?.(formData.get("passportDate"), "") || null,
+          document_issued_date: passportDateIso || null,
           snils: String(formData.get("snils") || "").trim() || null,
           address_text: addressText || null,
           profession: String(formData.get("profession") || "").trim() || null,
