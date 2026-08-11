@@ -2431,14 +2431,14 @@ function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressed
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
+  if (suppressedDoctors.has(roleCode)) {
+    return { value: "", title: "", state: "empty" };
+  }
   if (completedDoctors.has(roleCode)) {
     return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
   }
   if (existingDoctors.has(roleCode)) {
     return { value: "✓", title: "Карточка врача добавлена в текущем обращении", state: "existing" };
-  }
-  if (suppressedDoctors.has(roleCode)) {
-    return { value: "", title: "", state: "empty" };
   }
   if (requiredCount > 0) {
     const requiredTitle = requiredCount > 1
