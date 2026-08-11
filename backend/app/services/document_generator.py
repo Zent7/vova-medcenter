@@ -53,7 +53,6 @@ from app.services.document_context import (
     _split_address,
     build_document_context,
 )
-from app.services.medical_autofill import autofill_completed_doctors_for_service
 from app.services.new_xls_templates import (
     NEW_XLS_TEMPLATE_BY_FILE,
     NEW_XLS_TEMPLATE_BY_SHEET,
@@ -4440,25 +4439,6 @@ def _append_blank_entry_to_medical_record(
     )
 
 
-def _is_ambulatory_document_request(template: DocumentTemplate, print_variant: str) -> bool:
-    if print_variant in {"ambulatory_extract", "prof_ambulatory_extract", "prof_ambulatory"}:
-        return True
-    template_name = f"{template.name} {template.file_name}".casefold()
-    return "амб" in template_name
-
-
-def _autofill_ambulatory_encounter_data(db: Session, encounter: Encounter | None) -> None:
-    if encounter is None:
-        return
-    service_ids = db.execute(
-        select(EncounterService.service_id)
-        .where(EncounterService.encounter_id == encounter.id)
-        .order_by(EncounterService.id.asc())
-    ).scalars().all()
-    for service_id in service_ids:
-        autofill_completed_doctors_for_service(db, encounter, service_id)
-
-
 def generate_document(
     db: Session,
     *,
@@ -4505,8 +4485,6 @@ def generate_document(
     output_file_name = f"{template_path.stem}_{client.id}_{timestamp}{template_path.suffix}"
     output_path = output_dir / output_file_name
 
-    if _is_ambulatory_document_request(template, print_variant_value):
-        _autofill_ambulatory_encounter_data(db, encounter)
     runtime_values = _load_encounter_document_values(db, client, encounter)
     required_blank_type = (
         None
