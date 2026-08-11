@@ -912,6 +912,35 @@
     const rawClient = client?.rawApiClient || {};
     const chairmanName = fieldValue("chairmanName", exam.doctorName || "");
     const attendingDoctorName = fieldValue("attendingDoctorName", therapistExam?.doctorName || "");
+    const quickEntryMarkup = chairmanType === "certificate070" ? `
+      <details class="sanatorium-quick-entry" open>
+        <summary>
+          <span>Быстрый ввод</span>
+          <small>Поля, выделенные жёлтым на рабочем образце</small>
+        </summary>
+        <div class="sanatorium-quick-entry__body">
+          <label class="sanatorium-quick-subject">
+            <span>Код субъекта РФ</span>
+            ${quickInput("subjectCode", fieldValue("subjectCode"), { placeholder: "Например, 23" })}
+          </label>
+          <div class="sanatorium-quick-diagnoses">
+            ${quickDiagnosisRow("Основное заболевание", "diagnosis", "mkb10")}
+            ${quickDiagnosisRow("Сопутствующее заболевание", "comorbidDiagnosis", "comorbidMkb10")}
+            ${quickDiagnosisRow("Осложнение основного заболевания", "complicationDiagnosis", "complicationMkb10")}
+            ${quickDiagnosisRow("Причина инвалидности", "disabilityDiagnosis", "disabilityMkb10")}
+            ${quickDiagnosisRow("Диагноз направления", "referralDiagnosis", "referralMkb10")}
+          </div>
+          <div class="sanatorium-quick-seasons">
+            <span>Рекомендуемый сезон</span>
+            <button type="button" data-sanatorium-quick-season="all">Круглогодично</button>
+            <button type="button" data-sanatorium-quick-season="seasonWinter">Зима</button>
+            <button type="button" data-sanatorium-quick-season="seasonSpring">Весна</button>
+            <button type="button" data-sanatorium-quick-season="seasonSummer">Лето</button>
+            <button type="button" data-sanatorium-quick-season="seasonAutumn">Осень</button>
+          </div>
+        </div>
+      </details>
+    ` : "";
 
     return `
       <div class="doctor-classic-backdrop" data-doctor-exam-modal>
@@ -936,33 +965,7 @@
               <span>Поля собраны по рабочему эскизу председателя и сохраняются в осмотр для печати формы ${escapeHtml(formLabel)}.</span>
             </div>
 
-            <details class="sanatorium-quick-entry" open>
-              <summary>
-                <span>Быстрый ввод</span>
-                <small>Поля, выделенные жёлтым на рабочем образце</small>
-              </summary>
-              <div class="sanatorium-quick-entry__body">
-                <label class="sanatorium-quick-subject">
-                  <span>Код субъекта РФ</span>
-                  ${quickInput("subjectCode", fieldValue("subjectCode"), { placeholder: "Например, 23" })}
-                </label>
-                <div class="sanatorium-quick-diagnoses">
-                  ${quickDiagnosisRow("Основное заболевание", "diagnosis", "mkb10")}
-                  ${quickDiagnosisRow("Сопутствующее заболевание", "comorbidDiagnosis", "comorbidMkb10")}
-                  ${quickDiagnosisRow("Осложнение основного заболевания", "complicationDiagnosis", "complicationMkb10")}
-                  ${quickDiagnosisRow("Причина инвалидности", "disabilityDiagnosis", "disabilityMkb10")}
-                  ${quickDiagnosisRow("Диагноз направления", "referralDiagnosis", "referralMkb10")}
-                </div>
-                <div class="sanatorium-quick-seasons">
-                  <span>Рекомендуемый сезон</span>
-                  <button type="button" data-sanatorium-quick-season="all">Круглогодично</button>
-                  <button type="button" data-sanatorium-quick-season="seasonWinter">Зима</button>
-                  <button type="button" data-sanatorium-quick-season="seasonSpring">Весна</button>
-                  <button type="button" data-sanatorium-quick-season="seasonSummer">Лето</button>
-                  <button type="button" data-sanatorium-quick-season="seasonAutumn">Осень</button>
-                </div>
-              </div>
-            </details>
+            ${quickEntryMarkup}
 
             <div class="sanatorium-patient-strip">
               <label><span>Дата рождения</span>${textInput("birthDate", birthDate, { dateMask: true })}</label>
@@ -2033,7 +2036,7 @@
     const form = modal.querySelector("[data-doctor-exam-form]");
     if (!form) return;
 
-    if (["certificate070", "certificate072"].includes(form.dataset.chairmanFormType || "")) {
+    if (form.dataset.chairmanFormType === "certificate070") {
       const quickInputs = Array.from(form.querySelectorAll("[data-sanatorium-quick-target]"));
       quickInputs.forEach((quickInput) => {
         const target = getFirstNamedControl(form.elements[quickInput.dataset.sanatoriumQuickTarget]);
