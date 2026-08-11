@@ -2435,14 +2435,14 @@ function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressed
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
+  if (suppressedDoctors.has(roleCode)) {
+    return { value: "", title: "", state: "empty" };
+  }
   if (completedDoctors.has(roleCode)) {
     return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
   }
   if (existingDoctors.has(roleCode)) {
     return { value: "✓", title: "Карточка врача добавлена в текущем обращении", state: "existing" };
-  }
-  if (suppressedDoctors.has(roleCode)) {
-    return { value: "", title: "", state: "empty" };
   }
   if (requiredCount > 0) {
     const requiredTitle = requiredCount > 1
@@ -8653,6 +8653,7 @@ const CHAIRMAN_CERTIFICATE_PRINT_SERIES = new Map([
   ["gsu", "ГС"],
   ["072", "072у"],
   ["070", "070у"],
+  ["082", "082у"],
   ["095", "095у"],
   ["semt196", "СЭМТ-196"],
 ]);
@@ -8665,6 +8666,7 @@ const CHAIRMAN_CERTIFICATE_PRINT_GROUPS = new Map([
   ["gsu", { currentType: "gsu", items: [["gostaina", "ГТ"], ["gsu", "ГС"]] }],
   ["certificate072", { currentType: "072", items: [["072", "072 у СКК"], ["070", "070у"]] }],
   ["certificate070", { currentType: "070", items: [["072", "072 у СКК"], ["070", "070у"]] }],
+  ["certificate082", { currentType: "082", items: [["082", "Справка 082у"]] }],
   ["certificate095", { currentType: "095", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
   ["certificate086", { currentType: "086", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
   ["semt196", { currentType: "semt196", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
@@ -8679,7 +8681,7 @@ function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
 
-const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "095У", "СЭМТ-196"]);
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "095У", "СЭМТ-196"]);
 
 function canAutoCreateChairmanBlankSeries(series) {
   return CHAIRMAN_AUTO_CREATE_BLANK_SERIES.has(normalizeBlankSeries(series).toUpperCase());
@@ -12609,19 +12611,31 @@ function renderApp() {
 
   renderNav();
 
-  if (contentRoot) {
+  const focusedDoctorForm = contentRoot?.querySelector("[data-doctor-exam-form]");
+  const preserveFocusedDoctorForm = Boolean(
+    appState.doctorExamModal?.isOpen &&
+    focusedDoctorForm &&
+    document.activeElement &&
+    focusedDoctorForm.contains(document.activeElement),
+  );
+  let contentWasRendered = false;
+
+  if (contentRoot && !preserveFocusedDoctorForm) {
     contentRoot.innerHTML = repairDemoText(`
       ${renderContent()}
       ${window.renderDoctorExamModal ? window.renderDoctorExamModal() : ""}
       ${window.renderServiceCardModals ? window.renderServiceCardModals() : ""}
     `);
+    contentWasRendered = true;
   }
 
-  applyColumnResizeState();
-  bindMedicalRecordPanelResize();
-  bindContentEvents();
-  bindDashboardTableScrollSync();
-  window.requestAnimationFrame(updateDashboardStickyOffset);
+  if (contentWasRendered) {
+    applyColumnResizeState();
+    bindMedicalRecordPanelResize();
+    bindContentEvents();
+    bindDashboardTableScrollSync();
+    window.requestAnimationFrame(updateDashboardStickyOffset);
+  }
 
   if (appState.page === "dashboard" && !appState.restoreInputId) {
     window.setTimeout(focusClientSearch, 0);

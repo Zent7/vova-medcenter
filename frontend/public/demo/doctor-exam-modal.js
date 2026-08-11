@@ -853,6 +853,330 @@
     });
   }
 
+  function renderSanatoriumChairmanClassic(template, exam, client, chairmanInfo) {
+    const fields = exam.fields || {};
+    const chairmanType = chairmanInfo.type || "certificate072";
+    const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
+    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
+    const therapistExam = window.getDoctorExam?.(exam.clientId, exam.visitId, "therapist") || null;
+    const fieldValue = (key, fallback = "") => String(fields[key] ?? fallback ?? "");
+    const textInput = (name, value = "", options = {}) => `
+      <input
+        class="doctor-classic-input ${escapeHtml(options.className || "")}"
+        type="${escapeHtml(options.type || "text")}"
+        name="${escapeHtml(name)}"
+        value="${escapeHtml(value)}"
+        ${options.placeholder ? `placeholder="${escapeHtml(options.placeholder)}"` : ""}
+        ${options.readonly ? "readonly" : ""}
+        ${options.dateMask ? "data-date-mask" : ""}
+      />
+    `;
+    const textarea = (name, value = "", placeholder = "") => `
+      <textarea
+        class="doctor-classic-textarea sanatorium-card-textarea"
+        name="${escapeHtml(name)}"
+        ${placeholder ? `placeholder="${escapeHtml(placeholder)}"` : ""}
+      >${escapeHtml(value)}</textarea>
+    `;
+    const diagnosisRow = (label, diagnosisKey, mkbKey) => `
+      <div class="sanatorium-diagnosis-row">
+        <label>${escapeHtml(label)}</label>
+        ${textInput(diagnosisKey, fieldValue(diagnosisKey))}
+        <span>МКБ-10</span>
+        ${textInput(mkbKey, fieldValue(mkbKey), { className: "sanatorium-card-input--mkb" })}
+      </div>
+    `;
+    const quickInput = (targetName, value = "", options = {}) => `
+      <input
+        class="doctor-classic-input sanatorium-quick-input ${escapeHtml(options.className || "")}"
+        type="text"
+        value="${escapeHtml(value)}"
+        data-sanatorium-quick-target="${escapeHtml(targetName)}"
+        ${options.placeholder ? `placeholder="${escapeHtml(options.placeholder)}"` : ""}
+      />
+    `;
+    const quickDiagnosisRow = (label, diagnosisKey, mkbKey) => `
+      <label class="sanatorium-quick-diagnosis-row">
+        <span>${escapeHtml(label)}</span>
+        ${quickInput(diagnosisKey, fieldValue(diagnosisKey), { placeholder: "Диагноз" })}
+        ${quickInput(mkbKey, fieldValue(mkbKey), {
+          className: "sanatorium-card-input--mkb",
+          placeholder: "МКБ-10",
+        })}
+      </label>
+    `;
+    const accompaniment = fieldValue("accompaniment", "2");
+    const treatmentType = fieldValue("treatmentType", "1");
+    const chairmanTitle = chairmanInfo.label || template.name;
+    const formLabel = chairmanType === "certificate070" ? "070/у" : "072/у";
+    const rawClient = client?.rawApiClient || {};
+    const chairmanName = fieldValue("chairmanName", exam.doctorName || "");
+    const attendingDoctorName = fieldValue("attendingDoctorName", therapistExam?.doctorName || "");
+
+    return `
+      <div class="doctor-classic-backdrop" data-doctor-exam-modal>
+        <div class="chairman-window sanatorium-chairman-window">
+          <div class="doctor-classic-titlebar">
+            <div class="doctor-classic-title doctor-classic-title--stacked">
+              <span>${escapeHtml(chairmanTitle)}</span>
+              <small>Карточка председателя для форм 070/у и 072/у · текущая форма ${escapeHtml(formLabel)}</small>
+            </div>
+            <button type="button" class="doctor-classic-close" data-doctor-exam-close>×</button>
+          </div>
+
+          <form
+            class="chairman-form chairman-form--${escapeHtml(chairmanType)} sanatorium-chairman-form"
+            data-doctor-exam-form
+            data-exam-id="${escapeHtml(exam.id)}"
+            data-doctor-role-id="${escapeHtml(template.id)}"
+            data-chairman-form-type="${escapeHtml(chairmanType)}"
+          >
+            <div class="chairman-form-context">
+              <strong>${escapeHtml(chairmanTitle)}</strong>
+              <span>Поля собраны по рабочему эскизу председателя и сохраняются в осмотр для печати формы ${escapeHtml(formLabel)}.</span>
+            </div>
+
+            <details class="sanatorium-quick-entry" open>
+              <summary>
+                <span>Быстрый ввод</span>
+                <small>Поля, выделенные жёлтым на рабочем образце</small>
+              </summary>
+              <div class="sanatorium-quick-entry__body">
+                <label class="sanatorium-quick-subject">
+                  <span>Код субъекта РФ</span>
+                  ${quickInput("subjectCode", fieldValue("subjectCode"), { placeholder: "Например, 23" })}
+                </label>
+                <div class="sanatorium-quick-diagnoses">
+                  ${quickDiagnosisRow("Основное заболевание", "diagnosis", "mkb10")}
+                  ${quickDiagnosisRow("Сопутствующее заболевание", "comorbidDiagnosis", "comorbidMkb10")}
+                  ${quickDiagnosisRow("Осложнение основного заболевания", "complicationDiagnosis", "complicationMkb10")}
+                  ${quickDiagnosisRow("Причина инвалидности", "disabilityDiagnosis", "disabilityMkb10")}
+                  ${quickDiagnosisRow("Диагноз направления", "referralDiagnosis", "referralMkb10")}
+                </div>
+                <div class="sanatorium-quick-seasons">
+                  <span>Рекомендуемый сезон</span>
+                  <button type="button" data-sanatorium-quick-season="all">Круглогодично</button>
+                  <button type="button" data-sanatorium-quick-season="seasonWinter">Зима</button>
+                  <button type="button" data-sanatorium-quick-season="seasonSpring">Весна</button>
+                  <button type="button" data-sanatorium-quick-season="seasonSummer">Лето</button>
+                  <button type="button" data-sanatorium-quick-season="seasonAutumn">Осень</button>
+                </div>
+              </div>
+            </details>
+
+            <div class="sanatorium-patient-strip">
+              <label><span>Дата рождения</span>${textInput("birthDate", birthDate, { dateMask: true })}</label>
+              <label class="sanatorium-patient-strip__fio"><span>Ф.И.О.</span>${textInput("patientFullName", fullName, { readonly: true })}</label>
+              <div class="sanatorium-patient-strip__flags">
+                ${renderCheckboxField("hasGlasses", !!fields.hasGlasses, "очки")}
+                ${renderCheckboxField("hasHearingAid", !!fields.hasHearingAid, "слуховой аппарат")}
+              </div>
+            </div>
+
+            <label class="sanatorium-wide-field"><span>Медицинские требования</span>${textarea("medicalRequirements", fieldValue("medicalRequirements"))}</label>
+
+            <div class="sanatorium-chairman-grid">
+              <section class="sanatorium-card-page">
+                <h3>Пациент и право на социальную поддержку</h3>
+                <div class="sanatorium-field-grid sanatorium-field-grid--two">
+                  <label><span>Полис ОМС</span>${textInput("omsPolicy", fieldValue("omsPolicy", rawClient.oms_policy || ""))}</label>
+                  <label><span>СНИЛС</span>${textInput("snils", fieldValue("snils", rawClient.snils || client?.snils || ""))}</label>
+                </div>
+                <label class="sanatorium-wide-field sanatorium-wide-field--compact"><span>Наименование страховой медицинской организации</span>${textInput("insuranceOrganization", fieldValue("insuranceOrganization"))}</label>
+
+                <div class="sanatorium-subsection">
+                  <h4>Документ, подтверждающий право на набор социальных услуг</h4>
+                  <div class="sanatorium-field-grid sanatorium-field-grid--three">
+                    <label><span>Серия</span>${textInput("benefitDocumentSeries", fieldValue("benefitDocumentSeries"))}</label>
+                    <label><span>Номер</span>${textInput("benefitDocumentNumber", fieldValue("benefitDocumentNumber"))}</label>
+                    <label><span>Дата выдачи</span>${textInput("benefitDocumentIssueDate", fieldValue("benefitDocumentIssueDate"), { dateMask: true })}</label>
+                  </div>
+                </div>
+
+                <div class="sanatorium-subsection sanatorium-subsection--accent">
+                  <h4>Данные для санаторно-курортной карты 072/у</h4>
+                  <label class="sanatorium-wide-field sanatorium-wide-field--compact"><span>Наименование санаторно-курортной организации</span>${textInput("sanatoriumName", fieldValue("sanatoriumName"))}</label>
+                  <div class="sanatorium-field-grid sanatorium-field-grid--two">
+                    <label><span>ОГРН организации</span>${textInput("sanatoriumOgrn", fieldValue("sanatoriumOgrn"))}</label>
+                    <label><span>Номер путевки</span>${textInput("voucherNumber", fieldValue("voucherNumber"))}</label>
+                  </div>
+                  <div class="sanatorium-course-grid">
+                    <label><span>Период с</span>${textInput("treatmentStartDate", fieldValue("treatmentStartDate"), { dateMask: true })}</label>
+                    <label><span>по</span>${textInput("treatmentEndDate", fieldValue("treatmentEndDate"), { dateMask: true })}</label>
+                    <label><span>Курс, дней</span>${textInput("treatmentDurationDays", fieldValue("treatmentDurationDays"), { type: "number" })}</label>
+                  </div>
+                </div>
+
+                <div class="sanatorium-subsection">
+                  <h4>Диагнозы</h4>
+                  ${diagnosisRow("Основное заболевание", "diagnosis", "mkb10")}
+                  ${diagnosisRow("Сопутствующие заболевания", "comorbidDiagnosis", "comorbidMkb10")}
+                  ${diagnosisRow("Осложнение основного заболевания", "complicationDiagnosis", "complicationMkb10")}
+                  ${diagnosisRow("Заболевание — причина инвалидности", "disabilityDiagnosis", "disabilityMkb10")}
+                </div>
+
+                <label class="sanatorium-wide-field"><span>Жалобы</span>${textarea("complaints", fieldValue("complaints"))}</label>
+                <label class="sanatorium-wide-field"><span>Анамнез заболевания</span>${textarea("anamnesis", fieldValue("anamnesis"))}</label>
+                <label class="sanatorium-wide-field">
+                  <span>Данные клинических, лабораторных, рентгенологических и других исследований (с датами)</span>
+                  ${textarea("researchResults", fieldValue("researchResults"), "ОАК от …\nБ/Х: глюкоза …; холестерин …\nОАМ от …\nФЛГ от …\nЭКГ от …")}
+                </label>
+              </section>
+
+              <section class="sanatorium-card-page sanatorium-card-page--decision">
+                <h3>Направление и заключение 070/у</h3>
+                <div class="sanatorium-code-grid">
+                  <label><span>Код субъекта РФ</span>${textInput("subjectCode", fieldValue("subjectCode"))}</label>
+                  <label><span>Климат в месте проживания (код)</span>${textInput("climateCode", fieldValue("climateCode"))}</label>
+                  <label><span>Климатический фактор (код)</span>${textInput("climateFactorCode", fieldValue("climateFactorCode"))}</label>
+                  <label><span>Код меры социальной поддержки</span>${textInput("supportMeasureCode", fieldValue("supportMeasureCode"))}</label>
+                </div>
+
+                <fieldset class="sanatorium-radio-fieldset">
+                  <legend>Сопровождение</legend>
+                  <label><input type="radio" name="accompaniment" value="1" ${accompaniment === "1" ? "checked" : ""} /> Да — 1</label>
+                  <label><input type="radio" name="accompaniment" value="2" ${accompaniment !== "1" ? "checked" : ""} /> Нет — 2</label>
+                </fieldset>
+
+                <label class="sanatorium-wide-field"><span>Диагноз заболевания, для лечения которого пациент направляется в санаторно-курортную организацию</span>${textarea("referralDiagnosis", fieldValue("referralDiagnosis", fieldValue("diagnosis")))}</label>
+                <label class="sanatorium-wide-field sanatorium-wide-field--compact"><span>МКБ-10 диагноза направления</span>${textInput("referralMkb10", fieldValue("referralMkb10", fieldValue("mkb10")))}</label>
+                <label class="sanatorium-wide-field sanatorium-wide-field--compact"><span>Предпочтительное место лечения</span>${textInput("preferredTreatmentPlace", fieldValue("preferredTreatmentPlace", fieldValue("sanatoriumName")))}</label>
+
+                <fieldset class="sanatorium-season-fieldset">
+                  <legend>Рекомендуемые сезоны лечения</legend>
+                  ${renderCheckboxField("seasonWinter", !!fields.seasonWinter, "Зима")}
+                  ${renderCheckboxField("seasonSpring", !!fields.seasonSpring, "Весна")}
+                  ${renderCheckboxField("seasonSummer", !!fields.seasonSummer, "Лето")}
+                  ${renderCheckboxField("seasonAutumn", !!fields.seasonAutumn, "Осень")}
+                </fieldset>
+
+                <label class="sanatorium-wide-field sanatorium-wide-field--compact">
+                  <span>Условия лечения</span>
+                  <select class="doctor-classic-select" name="treatmentType">
+                    <option value="1" ${treatmentType !== "2" ? "selected" : ""}>1 — в условиях санаторно-курортной организации</option>
+                    <option value="2" ${treatmentType === "2" ? "selected" : ""}>2 — амбулаторно</option>
+                  </select>
+                </label>
+
+                <label class="sanatorium-wide-field"><span>Дополнительные сведения</span>${textarea("additionalInformation", fieldValue("additionalInformation"))}</label>
+
+                <div class="sanatorium-subsection sanatorium-signers">
+                  <h4>Подписи</h4>
+                  <label><span>Лечащий врач</span>${textInput("attendingDoctorName", attendingDoctorName)}</label>
+                  <label><span>Должность врача-специалиста</span>${textInput("attendingDoctorPosition", fieldValue("attendingDoctorPosition"))}</label>
+                  <label><span>Заведующий отделением / председатель врачебной комиссии</span>${textInput("chairmanName", chairmanName)}</label>
+                  ${renderCheckboxField("stampApplied", !!fields.stampApplied, "Печать поставлена")}
+                </div>
+
+                <label class="sanatorium-wide-field"><span>Примечание</span>${textarea("note", fieldValue("note"))}</label>
+              </section>
+            </div>
+
+            <div class="chairman-actions sanatorium-chairman-actions">
+              <button type="submit" class="chairman-action-btn">Сохранить</button>
+              <button type="button" class="chairman-action-btn" data-doctor-exam-close>Отмена</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCertificate082ChairmanClassic(template, exam, client, chairmanInfo) {
+    const fields = exam.fields || {};
+    const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
+    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
+    const healthOptions = [
+      "Здоров",
+      "Не здоров",
+      "Годен",
+      "Не годен",
+      "Практически здоров",
+      "I группа здоровья",
+      "II группа здоровья",
+      "III группа здоровья",
+      "IV группа здоровья",
+      "V группа здоровья",
+    ];
+    const currentHealthStatus = String(fields.healthStatus || fields.conclusion || "Здоров");
+    const selectOptions = healthOptions.includes(currentHealthStatus)
+      ? healthOptions
+      : [currentHealthStatus, ...healthOptions];
+    const resultRow = (label, name, value = "") => `
+      <label class="certificate082-result-row">
+        <span>${escapeHtml(label)}</span>
+        <textarea class="doctor-classic-textarea certificate082-result-input" name="${escapeHtml(name)}">${escapeHtml(value)}</textarea>
+      </label>
+    `;
+
+    return `
+      <div class="doctor-classic-backdrop" data-doctor-exam-modal>
+        <div class="chairman-window certificate082-chairman-window">
+          <div class="doctor-classic-titlebar">
+            <div class="doctor-classic-title doctor-classic-title--stacked">
+              <span>${escapeHtml(chairmanInfo.label || "Председатель: справка 082у")}</span>
+              <small>${escapeHtml(chairmanInfo.templateName || "Справка 082у")}</small>
+            </div>
+            <button type="button" class="doctor-classic-close" data-doctor-exam-close>×</button>
+          </div>
+
+          <form
+            class="chairman-form chairman-form--certificate082 certificate082-chairman-form"
+            data-doctor-exam-form
+            data-exam-id="${escapeHtml(exam.id)}"
+            data-doctor-role-id="${escapeHtml(template.id)}"
+            data-chairman-form-type="certificate082"
+          >
+            <div class="certificate082-patient-row">
+              <label>
+                <span>Дата рождения</span>
+                <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
+              </label>
+              <label class="certificate082-patient-row__fio">
+                <span>Ф.И.О.</span>
+                <input class="doctor-classic-input doctor-classic-input--fio" type="text" name="patientFullName" value="${escapeHtml(fullName)}" readonly />
+              </label>
+              <div class="certificate082-patient-flags">
+                ${renderCheckboxField("hasGlasses", !!fields.hasGlasses, "очки")}
+                ${renderCheckboxField("hasHearingAid", !!fields.hasHearingAid, "слуховой аппарат")}
+              </div>
+            </div>
+
+            <label class="certificate082-requirements">
+              <span>Мед. требования</span>
+              <div class="chairman-requirements-control">
+                <textarea class="doctor-classic-textarea certificate082-requirements__input" name="medicalRequirements" data-medical-requirements-input>${escapeHtml(fields.medicalRequirements ?? "")}</textarea>
+                <button type="button" class="chairman-requirements-picker-btn" data-medical-requirements-open title="Выбрать из сохранённых" aria-label="Выбрать из сохранённых">...</button>
+              </div>
+            </label>
+
+            <section class="certificate082-results" aria-label="Результаты обследований">
+              ${resultRow("ФЛГ", "fluorography", fields.fluorography ?? "")}
+              ${resultRow("ЭКГ", "ekgConclusion", fields.ekgConclusion || fields.ekg || "")}
+              ${resultRow("СПИД", "hivResult", fields.hivResult ?? "")}
+              ${resultRow("Гепатиты", "hepatitisResult", fields.hepatitisResult ?? "")}
+              ${resultRow("Страна", "country", fields.country ?? "")}
+            </section>
+
+            <label class="certificate082-health-status">
+              <span>По состоянию здоровья</span>
+              <select class="doctor-classic-select" name="healthStatus">
+                ${selectOptions.map((option) => `<option value="${escapeHtml(option)}" ${option === currentHealthStatus ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+              </select>
+            </label>
+
+            <input type="hidden" name="conclusion" value="${escapeHtml(currentHealthStatus)}" data-certificate082-conclusion />
+
+            <div class="chairman-actions certificate082-actions">
+              <button type="submit" class="chairman-action-btn">Сохранить</button>
+              <button type="button" class="chairman-action-btn" data-doctor-exam-close>Отмена</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
   function renderChairmanClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
@@ -863,6 +1187,12 @@
     };
     const chairmanInfo = window.getChairmanFormInfo?.(exam, client) || {};
     const chairmanType = chairmanInfo.type || "default";
+    if (["certificate070", "certificate072"].includes(chairmanType)) {
+      return renderSanatoriumChairmanClassic(template, exam, client, chairmanInfo);
+    }
+    if (chairmanType === "certificate082") {
+      return renderCertificate082ChairmanClassic(template, exam, client, chairmanInfo);
+    }
     const keepEkgFieldsManual = ["lmk", "prof"].includes(chairmanType);
     const ekgValue = emptyLegacyValue(fields.ekg, ['Медицинский центр ООО "ЦМО "ЮЛМЕД" ЭКГ от 07.04.2025']);
     const examDateValue = fields.examDate ?? "";
@@ -1703,7 +2033,73 @@
     const form = modal.querySelector("[data-doctor-exam-form]");
     if (!form) return;
 
+    if (["certificate070", "certificate072"].includes(form.dataset.chairmanFormType || "")) {
+      const quickInputs = Array.from(form.querySelectorAll("[data-sanatorium-quick-target]"));
+      quickInputs.forEach((quickInput) => {
+        const target = getFirstNamedControl(form.elements[quickInput.dataset.sanatoriumQuickTarget]);
+        if (!target) return;
+
+        const copyQuickValueToTarget = () => {
+          if (target.value === quickInput.value) return;
+          target.value = quickInput.value;
+          dispatchPresetFieldEvents(target);
+        };
+        const copyTargetValueToQuick = () => {
+          if (quickInput.value !== target.value) quickInput.value = target.value;
+        };
+        quickInput.addEventListener("input", copyQuickValueToTarget);
+        quickInput.addEventListener("change", copyQuickValueToTarget);
+        target.addEventListener("input", copyTargetValueToQuick);
+        target.addEventListener("change", copyTargetValueToQuick);
+      });
+
+      const updateQuickSeasonButtons = () => {
+        const seasonNames = ["seasonWinter", "seasonSpring", "seasonSummer", "seasonAutumn"];
+        const checkedNames = seasonNames.filter((name) => getFirstNamedControl(form.elements[name])?.checked);
+        form.querySelectorAll("[data-sanatorium-quick-season]").forEach((button) => {
+          const seasonName = button.dataset.sanatoriumQuickSeason;
+          button.classList.toggle(
+            "is-active",
+            seasonName === "all" ? checkedNames.length === seasonNames.length : checkedNames.includes(seasonName),
+          );
+        });
+      };
+      form.querySelectorAll("[data-sanatorium-quick-season]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const seasonName = button.dataset.sanatoriumQuickSeason;
+          const targets = seasonName === "all"
+            ? ["seasonWinter", "seasonSpring", "seasonSummer", "seasonAutumn"]
+            : [seasonName];
+          const shouldCheck = seasonName === "all"
+            ? !targets.every((name) => getFirstNamedControl(form.elements[name])?.checked)
+            : !getFirstNamedControl(form.elements[seasonName])?.checked;
+          targets.forEach((name) => {
+            const checkbox = getFirstNamedControl(form.elements[name]);
+            if (!checkbox || checkbox.checked === shouldCheck) return;
+            checkbox.checked = shouldCheck;
+            dispatchPresetFieldEvents(checkbox);
+          });
+          updateQuickSeasonButtons();
+        });
+      });
+      ["seasonWinter", "seasonSpring", "seasonSummer", "seasonAutumn"].forEach((name) => {
+        const checkbox = getFirstNamedControl(form.elements[name]);
+        checkbox?.addEventListener("change", updateQuickSeasonButtons);
+      });
+      updateQuickSeasonButtons();
+    }
+
     if (form.dataset.doctorRoleId === "chairman") {
+      if (form.dataset.chairmanFormType === "certificate082") {
+        const healthStatus = form.elements.healthStatus;
+        const conclusion = form.querySelector("[data-certificate082-conclusion]");
+        const syncHealthConclusion = () => {
+          if (conclusion && healthStatus) conclusion.value = healthStatus.value;
+        };
+        healthStatus?.addEventListener("change", syncHealthConclusion);
+        syncHealthConclusion();
+      }
+
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");
       if (medicalRequirementsInput) {
         let medicalRequirementsRememberTimer = null;
@@ -1897,7 +2293,8 @@
     const exam = window.getDoctorExam(clientId, visitId, doctorRoleId);
     if (!exam) return "";
 
-    const client = (window.data?.clients || []).find((item) => item.id === clientId) || null;
+    const clientPool = window.getClientPool?.() || window.data?.clients || [];
+    const client = clientPool.find((item) => String(item.id) === String(clientId)) || null;
 
     setTimeout(bindDoctorExamModal, 0);
 
