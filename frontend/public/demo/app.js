@@ -3271,10 +3271,23 @@ function parseRuDateToIso(value, fallback = "1900-01-01") {
   const match = text.match(/^(\d{2})\.(\d{2})\.(\d{4}|\d{2})(?:[\s,].*)?$/);
   if (match) {
     const year = match[3].length === 2 ? expandTwoDigitYear(match[3]) : match[3];
-    return `${year}-${match[2]}-${match[1]}`;
+    const isoDate = `${year}-${match[2]}-${match[1]}`;
+    return isValidIsoCalendarDate(isoDate) ? isoDate : fallback;
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return isValidIsoCalendarDate(text) ? text : fallback;
+  }
   return fallback;
+}
+
+function isValidIsoCalendarDate(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
 function expandTwoDigitYear(value) {
