@@ -46,11 +46,28 @@ def exam(role_id, doctor_name, *, is_completed=True, completed_at=None, conclusi
 
 
 class ProfExtractDoctorRowsTests(unittest.TestCase):
+    def _templates_dir(self) -> Path:
+        return Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
+
     def _prof_template_path(self) -> Path:
         return next(
             path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
+            for path in self._templates_dir().glob("*.xls")
             if path.name.startswith("Выписка")
+        )
+
+    def _ambulatory_template_path(self) -> Path:
+        return next(
+            path
+            for path in self._templates_dir().glob("*.xls")
+            if path.name.startswith("АМБ_")
+        )
+
+    def _vu_template_path(self) -> Path:
+        return next(
+            path
+            for path in self._templates_dir().glob("*.xls")
+            if path.name == "ВУ.xls" or path.name.startswith("ВСЕ")
         )
 
     def _client(self):
@@ -92,6 +109,32 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         )
 
         self.assertEqual(rows[0], (32, "Терапевт Казаков И.В.", date(2026, 6, 23), "годен"))
+
+    def test_current_exam_doctor_overrides_legacy_client_doctor(self):
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        client = self._client()
+        client.doctor_therapist = "Казаков И.В."
+
+        rows = _prof_extract_doctor_row_values(
+            {"therapist": exam("therapist", "Иванов И.И.")},
+            encounter,
+            client,
+        )
+
+        self.assertEqual(rows[0], (32, "Терапевт Иванов И.И.", date(2026, 6, 24), "годен"))
+
+    def test_generic_exam_role_uses_legacy_client_doctor_as_fallback(self):
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        client = self._client()
+        client.doctor_therapist = "Казаков И.В."
+
+        rows = _prof_extract_doctor_row_values(
+            {"therapist": exam("therapist", "Терапевт")},
+            encounter,
+            client,
+        )
+
+        self.assertEqual(rows[0], (32, "Терапевт Казаков И.В.", date(2026, 6, 24), "годен"))
 
     def test_uncompleted_or_missing_roles_are_skipped(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
@@ -155,7 +198,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(blocks[1][1]["date"], date(2026, 6, 24))
         self.assertEqual(blocks[2][1]["doctor"], "Шадрикова Ю.А.")
 
-    def test_client_doctor_names_override_generic_exam_doctor_names(self):
+    def test_current_exam_doctor_names_override_client_doctor_names(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         client = SimpleNamespace(
             doctor_therapist="Казаков И.В.",
@@ -185,12 +228,12 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             client,
         )
 
-        self.assertEqual(rows[0][1], "Психиатр-нарколог Аносов И.Е.")
+        self.assertEqual(rows[0][1], "Психиатр-нарколог Сибирцев В.А.")
         self.assertEqual(rows[1][1], "Невролог Сибирцев В.А.")
-        self.assertEqual(blocks[0][1]["doctor"], "Аносов И.Е.")
+        self.assertEqual(blocks[0][1]["doctor"], "Сибирцев В.А.")
         self.assertEqual(blocks[1][1]["doctor"], "Сибирцев В.А.")
 
-    def test_auto_marker_values_use_client_doctor_names_by_role(self):
+    def test_auto_marker_values_use_current_exam_doctor_names_by_role(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         client = SimpleNamespace(
             birth_date=date(1990, 1, 2),
@@ -213,11 +256,11 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         values = _xls_auto_marker_values(self._context(), client, encounter, exams_by_role)
         marker_values = {aliases[0]: value for aliases, value in values}
 
-        self.assertIn("Аносов И.Е.", marker_values["психиатр"])
-        self.assertIn("Аносов И.Е.", marker_values["психиатр нарколог"])
-        self.assertIn("Невролог Н.Н.", marker_values["невролог"])
-        self.assertNotIn("Сибирцев В.А.", marker_values["психиатр"])
-        self.assertNotIn("Сибирцев В.А.", marker_values["психиатр нарколог"])
+        self.assertIn("Сибирцев В.А.", marker_values["психиатр"])
+        self.assertIn("Сибирцев В.А.", marker_values["психиатр нарколог"])
+        self.assertIn("Сибирцев В.А.", marker_values["невролог"])
+        self.assertNotIn("Аносов И.Е.", marker_values["психиатр"])
+        self.assertNotIn("Аносов И.Е.", marker_values["психиатр нарколог"])
 
     def test_document_doctor_name_prefers_chairman(self):
         self.assertEqual(
@@ -472,15 +515,17 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
     def test_ambulatory_extract_print_variant_keeps_only_pz2_sheet(self):
         output_path = Path(tempfile.gettempdir()) / "prof_extract_print_variant_test.xls"
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        client = self._client()
+        client.doctor_therapist = "Казаков И.В."
         exams = [
-            exam("therapist", "Казаков И.В.", completed_at=datetime(2026, 6, 24, 9, 30)),
+            exam("therapist", "Иванов И.И.", completed_at=datetime(2026, 6, 24, 9, 30)),
         ]
 
         _generate_prof_amb_xls(
             self._prof_template_path(),
             output_path,
             self._context(),
-            self._client(),
+            client,
             encounter,
             exams,
             print_variant="ambulatory_extract",
@@ -492,15 +537,64 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(pz2_sheet.cell_value(PROF_EXTRACT_DOCTOR_ROWS[0][2], PROF_EXTRACT_SEQUENCE_COL), 1.0)
         self.assertEqual(
             pz2_sheet.cell_value(PROF_EXTRACT_DOCTOR_ROWS[0][2], PROF_EXTRACT_DOCTOR_COL),
-            "Терапевт Казаков И.В.",
+            "Терапевт Иванов И.И.",
         )
 
-    def test_certificate_print_variant_keeps_only_selected_sheet(self):
-        template_path = next(
-            path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.name.startswith("ВСЕ")
+    def test_ambulatory_extract_print_variant_fills_patient_fields(self):
+        output_path = Path(tempfile.gettempdir()) / "lmk_ambulatory_extract_fields_test.xls"
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        context = {
+            **self._context(),
+            "BlankNumber": "ЛМК 0000123",
+            "LastNameCalc": "Тестов",
+            "FirstNameCalc": "Тест",
+            "PatronymicCalc": "Тестович",
+            "Phone": "+7 999 123-45-67",
+        }
+
+        _generate_prof_amb_xls(
+            self._prof_template_path(),
+            output_path,
+            context,
+            self._client(),
+            encounter,
+            [exam("therapist", "Казаков И.В.")],
+            print_variant="ambulatory_extract",
         )
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["ПЗ2"])
+        sheet = book.sheet_by_index(0)
+        self.assertEqual(sheet.cell_value(10, 39), "ЛМК 0000123")
+        self.assertEqual(sheet.cell_value(20, 8), "Тестов")
+        self.assertEqual(sheet.cell_value(21, 4), "Тест")
+        self.assertEqual(sheet.cell_value(21, 23), "Тестович")
+        self.assertEqual(sheet.cell_value(31, 30), "+7 999 123-45-67")
+        self.assertEqual(sheet.cell_value(35, 11), "ООО Тест")
+
+    def test_prof_ambulatory_print_variant_keeps_and_fills_amb_sheet(self):
+        output_path = Path(tempfile.gettempdir()) / "lmk_ambulatory_card_fields_test.xls"
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+
+        _generate_prof_amb_xls(
+            self._ambulatory_template_path(),
+            output_path,
+            self._context(),
+            self._client(),
+            encounter,
+            [exam("therapist", "Казаков И.В.")],
+            print_variant="prof_ambulatory",
+        )
+
+        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+        self.assertEqual(book.sheet_names(), ["Амб"])
+        sheet = book.sheet_by_index(0)
+        self.assertEqual(sheet.cell_value(17, 43), "Тестов Тест Тестович")
+        self.assertEqual(sheet.cell_value(18, 35), "мужской")
+        self.assertEqual(sheet.cell_value(38, 44), "ООО Тест, Пекарь")
+
+    def test_certificate_print_variant_keeps_only_selected_sheet(self):
+        template_path = self._vu_template_path()
         output_path = Path(tempfile.gettempdir()) / "certificate_print_variant_test.xls"
         source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
         target_book = copy_xls_workbook(source_book)
@@ -512,11 +606,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(book.sheet_names(), ["Спорт"])
 
     def test_guard_print_variant_fills_and_keeps_only_chod_sheet(self):
-        template_path = next(
-            path
-            for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.name.startswith("ВСЕ")
-        )
+        template_path = self._vu_template_path()
         output_path = Path(tempfile.gettempdir()) / "chod_print_variant_test.xls"
         context = {
             **self._context(),

@@ -1925,6 +1925,10 @@ function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   return new Set(roleCodes);
 }
 
+function isDoctorRoleVisibleForClient(roleCode, client) {
+  return !(roleCode === "gynecologist" && getClientSexKey(client) === "male");
+}
+
 function getVisitClientForDoctorRules(visit, clientOverride = null) {
   const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
   if (getClientSexKey(client) || !visit?.clientSex) return client;
@@ -3404,12 +3408,6 @@ function getDoctorDisplayName(doctorRoleId, client = null) {
 
 function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") {
   const roleId = String(doctorRoleId || "").trim();
-  const clientDoctorName = getClientDoctorFullName(client, roleId);
-  if (clientDoctorName) return clientDoctorName;
-
-  const directoryName = getDoctorFullName(roleId);
-  if (directoryName) return directoryName;
-
   const normalizedFallback = String(fallbackName || "").trim();
   const template = getDoctorTemplate(roleId);
   const role = doctorRoles.find((item) => String(item.id) === roleId || item.code === roleId);
@@ -3421,6 +3419,12 @@ function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") 
   if (normalizedFallback && !genericNames.has(normalizedFallback.toLowerCase())) {
     return normalizedFallback;
   }
+
+  const directoryName = getDoctorFullName(roleId);
+  if (directoryName) return directoryName;
+
+  const clientDoctorName = getClientDoctorFullName(client, roleId);
+  if (clientDoctorName) return clientDoctorName;
 
   return getDoctorDisplayName(roleId, client);
 }
@@ -5362,7 +5366,10 @@ function buildExcelRows(clients) {
     const completedDoctors = getCompletedDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
     const existingDoctors = getExistingDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
     const suppressedDoctors = getSuppressedDoctorRoleIdsForDashboardVisit(currentVisit, status);
-    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors, existingDoctors);
+    const markDoctor = (roleCode) =>
+      isDoctorRoleVisibleForClient(roleCode, client)
+        ? buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors, existingDoctors)
+        : { value: "", title: "", state: "empty" };
 
     return {
       id: client.id,
@@ -8450,7 +8457,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   const findNewXls = (preferredKeys) =>
     findTemplateSafely(xlsTemplates, preferredKeys, [], []);
   const findChodXlsTemplate = () =>
-    findTemplateSafely(xlsTemplates, ["все нужные шаблоны"], ["чод"], []);
+    findTemplateSafely(xlsTemplates, ["ву"], ["чод"], []);
   const findStandaloneEkgTemplate = () => findDocxSafely(["экг_шаблон", "экг шаблон"], ["экг"], ["спорт"]);
   const getClientSexKey = () => {
     const sex = String(client?.sex || client?.rawApiClient?.sex || client?.gender || client?.rawApiClient?.gender || "").toLowerCase();
@@ -8711,6 +8718,8 @@ const XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE = new Map([
   ["guard", "guard"],
   ["chod", "chod"],
   ["ekg", "ekg"],
+  ["ambulatory_extract", "ambulatory_extract"],
+  ["prof_ambulatory", "prof_ambulatory"],
 ]);
 
 function getXlsPrintVariantForDocumentType(type) {
@@ -8894,8 +8903,9 @@ function shouldAutoGenerateXmlForCertificate(type) {
 async function printDocumentForVisit(type, client, visit, options = {}) {
   const normalizedType = String(type || "").toLowerCase();
   const printOptions = { ...options };
-  if (normalizedType === "ambulatory_extract" && !printOptions.printVariant) {
-    printOptions.printVariant = "ambulatory_extract";
+  const xlsPrintVariant = getXlsPrintVariantForDocumentType(normalizedType);
+  if (xlsPrintVariant && !printOptions.printVariant) {
+    printOptions.printVariant = xlsPrintVariant;
   }
   const documentItem = await createDocumentForVisit(type, client, visit, { ...printOptions, print: true });
   await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
