@@ -664,6 +664,10 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         unused_label_col = first_unused_block["title_cell"][1] - 9
         self.assertEqual(amb_sheet.cell_value(first_unused_block["date_cell"][0], unused_label_col), "")
         self.assertEqual(amb_sheet.cell_value(*first_unused_block["title_cell"]), "")
+        first_hidden_row = PROF_AMB_EXAM_BLOCKS[4]["date_cell"][0] - 1
+        self.assertTrue(amb_sheet.rowinfo_map[first_hidden_row].hidden)
+        self.assertTrue(amb_sheet.rowinfo_map[PROF_AMB_EXAM_BLOCKS[-1]["doctor_cell"][0]].hidden)
+        self.assertFalse(amb_sheet.rowinfo_map[first_unused_block["doctor_cell"][0]].hidden)
 
         pz2_sheet = book.sheet_by_name("ПЗ2")
         expected_doctors = [

@@ -1604,6 +1604,22 @@ def _clear_prof_amb_exam_block(target_sheet, source_sheet, block: dict[str, tupl
     _clear_xls_cells(target_sheet, source_sheet, sorted(coordinates))
 
 
+def _hide_prof_amb_unused_trailing_rows(target_sheet, used_block_count: int) -> None:
+    paired_blocks = PROF_AMB_EXAM_BLOCKS[2::2]
+    used_paired_block_count = max(0, used_block_count - 2)
+    visible_row_group_count = (used_paired_block_count + 1) // 2
+    if visible_row_group_count >= len(paired_blocks):
+        return
+
+    first_hidden_row = paired_blocks[visible_row_group_count]["date_cell"][0] - 1
+    last_hidden_row = PROF_AMB_EXAM_BLOCKS[-1]["doctor_cell"][0]
+    for row_index in range(first_hidden_row, last_hidden_row + 1):
+        if hasattr(target_sheet, "worksheet"):
+            target_sheet.worksheet.row_dimensions[row_index + 1].hidden = True
+        else:
+            target_sheet.row(row_index).hidden = 1
+
+
 def _write_xls_pairs(target_sheet, source_sheet, pairs: list[tuple[tuple[int, int], object]]) -> None:
     for (row_index, col_index), value in pairs:
         _write_xls_cell(target_sheet, source_sheet, row_index, col_index, value)
@@ -3274,6 +3290,7 @@ def _generate_prof_amb_xls(
         _clear_prof_amb_exam_block(target_sheet, source_sheet, block)
     for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, exam_block_values):
         _fill_exam_block(target_sheet, source_sheet, exam_data, source_book=source_book, **block)
+    _hide_prof_amb_unused_trailing_rows(target_sheet, len(exam_block_values))
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
@@ -3380,6 +3397,7 @@ def _generate_prof_amb_xlsx(
         _clear_prof_amb_exam_block(target_sheet, source_sheet, block)
     for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, exam_block_values):
         _fill_exam_block(target_sheet, source_sheet, exam_data, source_book=source_book, **block)
+    _hide_prof_amb_unused_trailing_rows(target_sheet, len(exam_block_values))
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
