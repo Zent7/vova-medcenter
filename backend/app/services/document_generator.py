@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy as copy_object
 from datetime import date, datetime
 from pathlib import Path
 import re
@@ -1604,7 +1605,7 @@ def _clear_prof_amb_exam_block(target_sheet, source_sheet, block: dict[str, tupl
     _clear_xls_cells(target_sheet, source_sheet, sorted(coordinates))
 
 
-def _hide_prof_amb_unused_trailing_rows(target_sheet, used_block_count: int) -> None:
+def _hide_prof_amb_unused_trailing_rows(target_sheet, source_sheet, source_book, used_block_count: int) -> None:
     paired_blocks = PROF_AMB_EXAM_BLOCKS[2::2]
     used_paired_block_count = max(0, used_block_count - 2)
     visible_row_group_count = (used_paired_block_count + 1) // 2
@@ -1615,8 +1616,27 @@ def _hide_prof_amb_unused_trailing_rows(target_sheet, used_block_count: int) -> 
     last_hidden_row = PROF_AMB_EXAM_BLOCKS[-1]["doctor_cell"][0]
     for row_index in range(first_hidden_row, last_hidden_row + 1):
         if hasattr(target_sheet, "worksheet"):
+            for col_index in range(source_sheet.ncols):
+                source_cell = source_sheet.worksheet.cell(row=row_index + 1, column=col_index + 1)
+                if not source_cell.border.left.style and not source_cell.border.right.style:
+                    continue
+                target_cell = target_sheet.worksheet.cell(row=row_index + 1, column=col_index + 1)
+                border = copy_object(target_cell.border)
+                border.left = copy_object(border.left)
+                border.left.style = None
+                border.right = copy_object(border.right)
+                border.right.style = None
+                target_cell.border = border
             target_sheet.worksheet.row_dimensions[row_index + 1].hidden = True
         else:
+            for col_index in range(source_sheet.ncols):
+                xf = source_book.xf_list[source_sheet.cell_xf_index(row_index, col_index)]
+                if not xf.border.left_line_style and not xf.border.right_line_style:
+                    continue
+                style = _xls_cell_style(source_book, source_sheet, row_index, col_index)
+                style.borders.left = xlwt.Borders.NO_LINE
+                style.borders.right = xlwt.Borders.NO_LINE
+                _write_xls_cell(target_sheet, source_sheet, row_index, col_index, "", style)
             target_sheet.row(row_index).hidden = 1
 
 
@@ -3290,7 +3310,7 @@ def _generate_prof_amb_xls(
         _clear_prof_amb_exam_block(target_sheet, source_sheet, block)
     for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, exam_block_values):
         _fill_exam_block(target_sheet, source_sheet, exam_data, source_book=source_book, **block)
-    _hide_prof_amb_unused_trailing_rows(target_sheet, len(exam_block_values))
+    _hide_prof_amb_unused_trailing_rows(target_sheet, source_sheet, source_book, len(exam_block_values))
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:
@@ -3397,7 +3417,7 @@ def _generate_prof_amb_xlsx(
         _clear_prof_amb_exam_block(target_sheet, source_sheet, block)
     for block, (_, exam_data) in zip(PROF_AMB_EXAM_BLOCKS, exam_block_values):
         _fill_exam_block(target_sheet, source_sheet, exam_data, source_book=source_book, **block)
-    _hide_prof_amb_unused_trailing_rows(target_sheet, len(exam_block_values))
+    _hide_prof_amb_unused_trailing_rows(target_sheet, source_sheet, source_book, len(exam_block_values))
 
     pz2_source, pz2_target, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if pz2_source and pz2_target:

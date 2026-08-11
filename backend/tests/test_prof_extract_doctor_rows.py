@@ -665,9 +665,23 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(amb_sheet.cell_value(first_unused_block["date_cell"][0], unused_label_col), "")
         self.assertEqual(amb_sheet.cell_value(*first_unused_block["title_cell"]), "")
         first_hidden_row = PROF_AMB_EXAM_BLOCKS[4]["date_cell"][0] - 1
+        last_hidden_row = PROF_AMB_EXAM_BLOCKS[-1]["doctor_cell"][0]
         self.assertTrue(amb_sheet.rowinfo_map[first_hidden_row].hidden)
-        self.assertTrue(amb_sheet.rowinfo_map[PROF_AMB_EXAM_BLOCKS[-1]["doctor_cell"][0]].hidden)
+        self.assertTrue(amb_sheet.rowinfo_map[last_hidden_row].hidden)
         self.assertFalse(amb_sheet.rowinfo_map[first_unused_block["doctor_cell"][0]].hidden)
+        template_book = xlrd.open_workbook(file_contents=self._prof_template_path().read_bytes(), formatting_info=True)
+        template_amb_sheet = template_book.sheet_by_index(1)
+        vertical_border_cells = []
+        for row_index in range(first_hidden_row, last_hidden_row + 1):
+            for col_index in range(template_amb_sheet.ncols):
+                template_xf = template_book.xf_list[template_amb_sheet.cell_xf_index(row_index, col_index)]
+                if template_xf.border.left_line_style or template_xf.border.right_line_style:
+                    vertical_border_cells.append((row_index, col_index))
+        self.assertTrue(vertical_border_cells)
+        for row_index, col_index in vertical_border_cells:
+            xf = book.xf_list[amb_sheet.cell_xf_index(row_index, col_index)]
+            self.assertEqual(xf.border.left_line_style, 0, (row_index, col_index))
+            self.assertEqual(xf.border.right_line_style, 0, (row_index, col_index))
 
         pz2_sheet = book.sheet_by_name("ПЗ2")
         expected_doctors = [
