@@ -3860,12 +3860,11 @@ function updateVisit(visitId, patch = {}) {
   return visit;
 }
 
-async function syncVisitToBackend(visit, client, options = {}) {
+async function syncVisitToBackend(visit, client) {
   if (!visit || !client) return null;
   if (visit.__backendSyncPromise) return visit.__backendSyncPromise;
   const clientId = client.backendId || client.id;
   if (!clientId) return null;
-  const { syncRequiredDoctorExams = true } = options;
 
   visit.__backendSyncPromise = (async () => {
     visit.__backendSyncing = true;
@@ -3917,9 +3916,7 @@ async function syncVisitToBackend(visit, client, options = {}) {
         visit.__backendServicesSaved = true;
       }
 
-      if (syncRequiredDoctorExams) {
-        await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
-      }
+      await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
       persistDemoState();
       return visit;
     } catch (error) {
@@ -4417,14 +4414,8 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
 
 async function prepareVisitDoctorExamsForDocuments(client, visit) {
   if (!client || !visit) return [];
-  await syncVisitToBackend(visit, client, { syncRequiredDoctorExams: false });
-  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
-  const exams = (Array.isArray(data.doctorExams) ? data.doctorExams : []).filter(
-    (exam) =>
-      String(exam.clientId) === String(client.id) &&
-      String(exam.visitId) === String(visit.id) &&
-      !suppressedRoles.has(String(exam.doctorRoleId || "").trim()),
-  );
+  await syncVisitToBackend(visit, client);
+  const exams = await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: false });
   const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
   if (chairmanExam && !chairmanExam.isCompleted && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
     const nextFields = applyDriverSelectionsToChairmanFields(chairmanExam.fields || {}, getDriverDetailFromVisit(visit), visit);

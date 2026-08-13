@@ -853,6 +853,48 @@
     });
   }
 
+  function buildSanatoriumResearchResults(fields = {}) {
+    const value = (key) => String(fields[key] ?? "").trim();
+    const joinValues = (items) => items
+      .filter(([, itemValue]) => String(itemValue || "").trim())
+      .map(([label, itemValue]) => `${label} ${String(itemValue).trim()}`)
+      .join("; ");
+    const studyLine = (title, dateValue, items) => {
+      const details = joinValues(items);
+      if (!dateValue && !details) return "";
+      return `${title}${dateValue ? ` от ${dateValue}` : ""}${details ? `: ${details}` : ""}`;
+    };
+    return [
+      studyLine("ОАК", value("researchOakDate"), [
+        ["гемоглобин", value("researchHemoglobin")],
+        ["эритроциты", value("researchErythrocytes")],
+        ["лейкоциты", value("researchLeukocytes")],
+        ["тромбоциты", value("researchPlatelets")],
+        ["СОЭ", value("researchEsr")],
+      ]),
+      studyLine("Б/Х", value("researchBiochemistryDate"), [
+        ["глюкоза", value("researchGlucose")],
+        ["холестерин", value("researchCholesterol")],
+      ]),
+      studyLine("ОАМ", value("researchOamDate"), [
+        ["удельный вес", value("researchUrineSpecificGravity")],
+        ["белок", value("researchUrineProtein")],
+        ["лейкоциты", value("researchUrineLeukocytes")],
+        ["эритроциты", value("researchUrineErythrocytes")],
+      ]),
+      studyLine("ФЛГ", value("researchFluorographyDate"), [
+        ["заключение", value("researchFluorographyResult")],
+      ]),
+      studyLine("ЭКГ", value("researchEkgDate"), [
+        ["ритм", value("researchEkgRhythm")],
+        ["ЧСС", value("researchEkgHeartRate")],
+        ["ЭОС", value("researchEkgAxis")],
+        ["заключение", value("researchEkgFeatures")],
+      ]),
+      value("researchNotes"),
+    ].filter(Boolean).join("\n");
+  }
+
   function renderSanatoriumChairmanClassic(template, exam, client, chairmanInfo) {
     const fields = exam.fields || {};
     const chairmanType = chairmanInfo.type || "certificate072";
@@ -893,6 +935,25 @@
     const rawClient = client?.rawApiClient || {};
     const chairmanName = fieldValue("chairmanName", exam.doctorName || "");
     const attendingDoctorName = fieldValue("attendingDoctorName", therapistExam?.doctorName || "");
+    const researchField = (name, label, options = {}) => `
+      <label class="sanatorium-research-field ${escapeHtml(options.className || "")}">
+        <span>${escapeHtml(label)}</span>
+        ${textInput(name, fieldValue(name, options.fallback || ""), {
+          className: options.inputClassName || "",
+          dateMask: Boolean(options.dateMask),
+          placeholder: options.placeholder || "",
+        })}
+      </label>
+    `;
+    const researchStudy = (title, dateName, fieldsMarkup) => `
+      <div class="sanatorium-research-study">
+        <div class="sanatorium-research-study__heading">
+          <strong>${escapeHtml(title)}</strong>
+          ${researchField(dateName, "Дата", { dateMask: true, placeholder: "дд.мм.гггг", className: "sanatorium-research-field--date" })}
+        </div>
+        <div class="sanatorium-research-study__fields">${fieldsMarkup}</div>
+      </div>
+    `;
 
     return `
       <div class="doctor-classic-backdrop" data-doctor-exam-modal>
@@ -970,10 +1031,41 @@
 
                 <label class="sanatorium-wide-field"><span>Жалобы</span>${textarea("complaints", fieldValue("complaints"))}</label>
                 <label class="sanatorium-wide-field"><span>Анамнез заболевания</span>${textarea("anamnesis", fieldValue("anamnesis"))}</label>
-                <label class="sanatorium-wide-field">
-                  <span>Данные клинических, лабораторных, рентгенологических и других исследований (с датами)</span>
-                  ${textarea("researchResults", fieldValue("researchResults"), "ОАК от …\nБ/Х: глюкоза …; холестерин …\nОАМ от …\nФЛГ от …\nЭКГ от …")}
-                </label>
+                <section class="sanatorium-research-panel">
+                  <h4>Данные клинических, лабораторных, рентгенологических и других исследований</h4>
+                  ${researchStudy("ОАК", "researchOakDate", [
+                    researchField("researchHemoglobin", "Гемоглобин"),
+                    researchField("researchErythrocytes", "Эритроциты"),
+                    researchField("researchLeukocytes", "Лейкоциты"),
+                    researchField("researchPlatelets", "Тромбоциты"),
+                    researchField("researchEsr", "СОЭ"),
+                  ].join(""))}
+                  ${researchStudy("Биохимический анализ крови", "researchBiochemistryDate", [
+                    researchField("researchGlucose", "Глюкоза"),
+                    researchField("researchCholesterol", "Холестерин"),
+                  ].join(""))}
+                  ${researchStudy("ОАМ", "researchOamDate", [
+                    researchField("researchUrineSpecificGravity", "Удельный вес"),
+                    researchField("researchUrineProtein", "Белок"),
+                    researchField("researchUrineLeukocytes", "Лейкоциты"),
+                    researchField("researchUrineErythrocytes", "Эритроциты"),
+                  ].join(""))}
+                  ${researchStudy(
+                    "ФЛГ",
+                    "researchFluorographyDate",
+                    researchField("researchFluorographyResult", "Заключение", { fallback: fieldValue("fluorography") }),
+                  )}
+                  ${researchStudy("ЭКГ", "researchEkgDate", [
+                    researchField("researchEkgRhythm", "Ритм"),
+                    researchField("researchEkgHeartRate", "ЧСС"),
+                    researchField("researchEkgAxis", "ЭОС"),
+                    researchField("researchEkgFeatures", "Заключение", { fallback: fieldValue("ekgConclusion") }),
+                  ].join(""))}
+                  <label class="sanatorium-wide-field sanatorium-wide-field--compact sanatorium-research-notes">
+                    <span>Дополнительные результаты</span>
+                    ${textarea("researchNotes", fieldValue("researchNotes", fieldValue("researchResults")), "Дополнительные исследования и результаты")}
+                  </label>
+                </section>
               </section>
 
               <section class="sanatorium-card-page sanatorium-card-page--decision">
@@ -1921,6 +2013,10 @@
       }
       result[input.name] = readInputValue(input);
     });
+
+    if (["certificate070", "certificate072"].includes(form.dataset.chairmanFormType || "")) {
+      result.researchResults = buildSanatoriumResearchResults(result);
+    }
 
     if (form.dataset.doctorRoleId === "chairman") {
       rememberMedicalRequirementValue(result.medicalRequirements);
