@@ -166,6 +166,7 @@ const data = {
   importSuccess: "",
   clientOverrides: {},
   doctorDirectory: {},
+  doctorDirectoryLoaded: false,
   servicesDirty: false,
   staffUsers: [],
   staffRoles: [],
@@ -182,6 +183,7 @@ let clientSearchTimer = null;
 let clientSearchRequestId = 0;
 let clientSearchAbortController = null;
 let clientRowClickTimer = null;
+const doctorDirectorySavePromises = new Map();
 const DASHBOARD_PAGE_SIZE = 50;
 const DASHBOARD_CLIENT_LOAD_LIMIT = 100;
 const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
@@ -2488,6 +2490,7 @@ function mapApiDoctorRole(role) {
     id: role.id,
     code: role.code,
     name: role.name,
+    fullName: role.full_name || "",
     sortOrder: role.sort_order || role.id,
     isActive: role.is_active !== false,
   };
@@ -2894,6 +2897,12 @@ async function loadServicesFromBackend() {
     ]);
     serviceGroups = Array.isArray(categories) ? categories.map(mapApiServiceCategory) : [];
     doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole).filter((role) => !isExcludedDoctorRole(role)) : [];
+    data.doctorDirectory = Object.fromEntries(
+      doctorRoles
+        .filter((role) => String(role.code || "").trim() && String(role.fullName || "").trim())
+        .map((role) => [role.code, String(role.fullName).trim()]),
+    );
+    data.doctorDirectoryLoaded = true;
     data.serverServices = Array.isArray(services) ? services.map(mapApiService).filter((service) => !isHiddenService(service)) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
@@ -3393,10 +3402,47 @@ function setDoctorFullName(doctorRoleId, value) {
   }
 }
 
-function getDoctorDisplayName(doctorRoleId, client = null) {
-  const clientDoctorName = getClientDoctorFullName(client, doctorRoleId);
-  if (clientDoctorName) return clientDoctorName;
+async function saveDoctorFullName(doctorRoleId, value) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!roleId) return null;
+  const previousValue = getDoctorFullName(roleId);
+  setDoctorFullName(roleId, value);
+  persistDemoState();
 
+  try {
+    const savedRole = await apiRequest(`/doctor-roles/${encodeURIComponent(roleId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ full_name: getDoctorFullName(roleId) || null }),
+    });
+    setDoctorFullName(roleId, savedRole.full_name || "");
+    const role = doctorRoles.find((item) => String(item.code) === roleId);
+    if (role) role.fullName = savedRole.full_name || "";
+    persistDemoState();
+    return savedRole;
+  } catch (error) {
+    setDoctorFullName(roleId, previousValue);
+    persistDemoState();
+    throw error;
+  }
+}
+
+function queueDoctorFullNameSave(doctorRoleId, value) {
+  const roleId = String(doctorRoleId || "").trim();
+  const savePromise = saveDoctorFullName(roleId, value);
+  doctorDirectorySavePromises.set(roleId, savePromise);
+  savePromise.finally(() => {
+    if (doctorDirectorySavePromises.get(roleId) === savePromise) {
+      doctorDirectorySavePromises.delete(roleId);
+    }
+  });
+  return savePromise;
+}
+
+async function waitForDoctorDirectorySaves() {
+  await Promise.all(Array.from(doctorDirectorySavePromises.values()));
+}
+
+function getDoctorDisplayName(doctorRoleId) {
   const fullName = getDoctorFullName(doctorRoleId);
   if (fullName) return fullName;
   const template = getDoctorTemplate(doctorRoleId);
@@ -3416,12 +3462,12 @@ function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") 
       .filter(Boolean)
       .map((value) => String(value).trim().toLowerCase()),
   );
+  const directoryName = getDoctorFullName(roleId);
+  if (directoryName) return directoryName;
+
   if (normalizedFallback && !genericNames.has(normalizedFallback.toLowerCase())) {
     return normalizedFallback;
   }
-
-  const directoryName = getDoctorFullName(roleId);
-  if (directoryName) return directoryName;
 
   const clientDoctorName = getClientDoctorFullName(client, roleId);
   if (clientDoctorName) return clientDoctorName;
@@ -4414,6 +4460,7 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
 
 async function prepareVisitDoctorExamsForDocuments(client, visit) {
   if (!client || !visit) return [];
+  await waitForDoctorDirectorySaves();
   await syncVisitToBackend(visit, client);
   const exams = await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: false });
   const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
@@ -4964,6 +5011,7 @@ async function syncDoctorExamToBackend(exam) {
   });
   exam.backendId = savedExam.id;
   exam.backendEncounterId = savedExam.encounter_id || visit?.backendId || null;
+  exam.doctorName = savedExam.doctor_name || getDoctorDisplayName(exam.doctorRoleId);
   exam.updatedAt = savedExam.completed_at || savedExam.updated_at || new Date().toISOString();
   exam.doctorName = getDoctorSignatureName(exam.doctorRoleId, client, savedExam.doctor_name);
   exam.fields = savedExam.fields_json || exam.fields || {};
@@ -6873,6 +6921,7 @@ function renderDoctorsPage() {
                     placeholder="Введите ФИО врача"
                     data-doctor-name-input="${escapeHtml(id)}"
                   />
+                  <small class="muted" data-doctor-name-status="${escapeHtml(id)}"></small>
                 </label>
                 <span>${template ? `Форма: ${escapeHtml(template.name)}` : "Форма пока не найдена"}</span>
                 ${
@@ -8812,6 +8861,7 @@ function hasGeneratedTemplateForVisit(visit, template) {
 
 async function createDocumentForVisit(type, client, visit, options = {}) {
   if (!client || !visit) return null;
+  await waitForDoctorDirectorySaves();
   if (!data.documentTemplatesLoaded) {
     await loadDocumentTemplatesFromBackend();
   }
@@ -12081,9 +12131,22 @@ function bindContentEvents() {
   });
 
   contentRoot.querySelectorAll("[data-doctor-name-input]").forEach((input) => {
-    input.addEventListener("input", (event) => {
-      setDoctorFullName(input.dataset.doctorNameInput, event.target.value);
-      persistDemoState();
+    input.addEventListener("change", async (event) => {
+      const roleId = input.dataset.doctorNameInput;
+      const status = contentRoot.querySelector(`[data-doctor-name-status="${CSS.escape(roleId)}"]`);
+      input.disabled = true;
+      if (status) status.textContent = "Сохраняем...";
+      try {
+        await queueDoctorFullNameSave(roleId, event.target.value);
+        if (status) status.textContent = "Сохранено на сервере";
+        showToast("ФИО врача сохранено и будет применено к новым документам");
+      } catch (error) {
+        event.target.value = getDoctorFullName(roleId);
+        if (status) status.textContent = "Не сохранено";
+        showToast(humanizeApiError(error, "Не удалось сохранить ФИО врача"));
+      } finally {
+        input.disabled = false;
+      }
     });
   });
 

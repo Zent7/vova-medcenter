@@ -38,7 +38,7 @@ from app.models.encounter import Encounter
 from app.models.encounter_service import EncounterService
 from app.models.generated_document import GeneratedDocument
 from app.models.medical_record import MedicalRecord, MedicalRecordEntry
-from app.models.service import Service
+from app.models.service import DoctorRole, Service
 from app.schemas.document_generation import DocumentGenerateResponse
 from app.services.audit import write_audit_log
 from app.services.blank_forms import (
@@ -4286,6 +4286,21 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         .scalars()
         .all()
     )
+    role_names = {
+        role.code: str(role.full_name or "").strip()
+        for role in db.execute(
+            select(DoctorRole).where(DoctorRole.full_name.is_not(None))
+        ).scalars()
+        if str(role.full_name or "").strip()
+    }
+    for exam in exams:
+        current_name = role_names.get(str(exam.doctor_role_id or "").strip())
+        if current_name:
+            # Generated files must always use the current server-side directory.
+            # The role update endpoint also refreshes stored exams; this assignment
+            # protects generation invoked while older data is still being migrated.
+            exam.doctor_name = current_name
+    chairman_name = role_names.get("chairman", "")
     diagnosis = ""
     mkb10 = ""
     medical_record = db.execute(
@@ -4303,6 +4318,8 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
             "DistinguishingMark": "",
         }
     )
+    if chairman_name:
+        context_overrides["MainDoctorCalc"] = chairman_name
     for exam in exams:
         fields = exam.fields_json or {}
         diagnosis = diagnosis or _first_field_value(
