@@ -9249,6 +9249,7 @@ const BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate";
 const BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE = "gims_medical_certificate";
 const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
 const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
+const BLANK_TYPE_LMK_MEDICAL_CERTIFICATE = "lmk_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071у"],
   ["070у", "070у"],
@@ -9378,6 +9379,7 @@ function getBlankTypeForCertificatePrintType(type) {
   if (normalizedType === "071") return BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE;
   if (normalizedType === "gims") return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE;
   if (normalizedType === "guard" || normalizedType === "chod") return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE;
+  if (normalizedType === "lmk") return BLANK_TYPE_LMK_MEDICAL_CERTIFICATE;
   return "";
 }
 
@@ -12375,7 +12377,10 @@ function bindContentEvents() {
             ? getNumberedCertificateLookupSeriesForType(certificateType)
             : normalizedSeries;
           const query = new URLSearchParams({
-            blank_type: "driver_medical_certificate",
+            blank_type: resolveDriverPrintBlankType({
+              selectedSeries: normalizedSeries,
+              selectedCertificateType: certificateType,
+            }),
             center_id: String(centerId),
             series: lookupSeries,
           });

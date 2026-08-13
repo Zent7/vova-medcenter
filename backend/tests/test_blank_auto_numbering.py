@@ -18,7 +18,7 @@ from app.models.blank_form import (  # noqa: E402
     BlankForm,
     BlankType,
 )
-from app.services.blank_forms import create_auto_number_form  # noqa: E402
+from app.services.blank_forms import create_auto_number_form, resolve_blank_type_for_series  # noqa: E402
 
 
 class BlankAutoNumberingTests(unittest.TestCase):
@@ -137,6 +137,16 @@ class BlankAutoNumberingTests(unittest.TestCase):
 
             self.assertEqual(center_one.number_value, 1)
             self.assertEqual(center_two.number_value, 1)
+
+    def test_legacy_driver_lookup_uses_specialized_lmk_type(self):
+        self.assertEqual(
+            resolve_blank_type_for_series(BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE, "ЛМК"),
+            BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+        )
+        self.assertEqual(
+            resolve_blank_type_for_series(BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE, "ЛМК-Н"),
+            BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+        )
 
 
 if __name__ == "__main__":

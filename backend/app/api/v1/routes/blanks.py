@@ -25,6 +25,7 @@ from app.services.blank_forms import (
     list_blank_types,
     list_forms,
     release_form,
+    resolve_blank_type_for_series,
     spoil_form,
     stats as compute_stats,
 )
@@ -140,6 +141,7 @@ def get_next_form(
     auto_create: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> BlankFormRead:
+    blank_type = resolve_blank_type_for_series(blank_type, series)
     if auto_create:
         try:
             form = create_auto_number_form(

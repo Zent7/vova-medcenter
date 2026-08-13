@@ -26,6 +26,7 @@ from app.models.blank_form import (
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_STATUS_SPOILED,
+    BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
     BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
     BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
     BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
@@ -67,6 +68,20 @@ class BlankRangeInvalidError(BlankServiceError):
 
 class BlankIssuanceContextError(BlankServiceError):
     """Недостаточно контекста для выдачи номерного бланка."""
+
+
+def resolve_blank_type_for_series(blank_type: str, series: str | None) -> str:
+    """Correct legacy generic requests for specialized LMK and GIMS series."""
+
+    if str(blank_type or "").strip() != BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE:
+        return blank_type
+
+    normalized_series = str(series or "").strip().casefold()
+    if normalized_series.startswith(("лмк", "lmk")):
+        return BLANK_TYPE_LMK_MEDICAL_CERTIFICATE
+    if normalized_series.startswith(("гимс", "gims")):
+        return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE
+    return blank_type
 
 
 @dataclass
