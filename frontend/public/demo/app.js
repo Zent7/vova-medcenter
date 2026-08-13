@@ -5011,7 +5011,6 @@ async function syncDoctorExamToBackend(exam) {
   });
   exam.backendId = savedExam.id;
   exam.backendEncounterId = savedExam.encounter_id || visit?.backendId || null;
-  exam.doctorName = savedExam.doctor_name || getDoctorDisplayName(exam.doctorRoleId);
   exam.updatedAt = savedExam.completed_at || savedExam.updated_at || new Date().toISOString();
   exam.doctorName = getDoctorSignatureName(exam.doctorRoleId, client, savedExam.doctor_name);
   exam.fields = savedExam.fields_json || exam.fields || {};
