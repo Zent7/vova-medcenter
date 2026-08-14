@@ -3456,6 +3456,7 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
         "gsu": ("ГС",),
         "gostaina": ("ГТ",),
         "gims": ("Суда",),
+        "lmk": (" ЛМК!",),
         "guard": ("ЧОД",),
         "chod": ("ЧОД",),
         "ekg": ("ЭЭГ",),
