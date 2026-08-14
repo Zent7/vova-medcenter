@@ -1,5 +1,25 @@
 # Production deployment checklist
 
+## Immutable application images
+
+Backend and frontend are built from repository Dockerfiles and published by
+`.github/workflows/publish-images.yml` to GHCR. Every image is tagged with the
+full Git commit SHA:
+
+```text
+ghcr.io/zent7/vova-medcenter-backend:<full-commit-sha>
+ghcr.io/zent7/vova-medcenter-frontend:<full-commit-sha>
+```
+
+Production compose files must pin both images to the same full SHA, use
+`pull_policy: always`, and must not contain `build`, `dockerfile_inline`, or a
+`FROM vova-medcenter-*` overlay. The backend health response and frontend
+`/build.json` expose the embedded `build_revision` for post-deploy checks.
+
+The GHCR packages must either be public or the deployment host must be logged
+in with a read-only `read:packages` token. Public packages are preferred for
+this public demo so Komodo can pull them without a host credential.
+
 This project is prepared for a standard VPS deployment:
 
 1. PostgreSQL database on the server.

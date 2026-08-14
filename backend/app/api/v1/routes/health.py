@@ -2,6 +2,7 @@ from sqlalchemy import text
 
 from fastapi import APIRouter
 
+from app.core.config import settings
 from app.db.session import engine
 
 router = APIRouter()
@@ -17,4 +18,5 @@ def healthcheck() -> dict[str, str | bool]:
         "database_ok": True,
         "database_dialect": engine.dialect.name,
         "database_url": engine.url.render_as_string(hide_password=True),
+        "build_revision": settings.build_revision,
     }

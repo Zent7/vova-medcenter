@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     allow_sqlite: bool = False
     frontend_origin: str = "http://localhost:5173"
     public_frontend_origin: str = "https://demo.med-center.online"
+    build_revision: str = "development"
     generated_documents_dir: str = "storage/generated"
     xml_exports_retention_days: int = 30
     xml_exports_timezone: str = "Europe/Moscow"
