@@ -8583,7 +8583,9 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (normalizedType === "sport") return findNewXls(["спорт"]);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
-  if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
+  if (normalizedType === "lmk_title") {
+    return findNewXls(["лмк"]) || findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], ["справка"]);
+  }
   if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
   if (normalizedType === "gims") {
     return (
