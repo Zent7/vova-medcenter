@@ -4456,6 +4456,16 @@ def _append_blank_entry_to_medical_record(
     )
 
 
+def _blank_reference_number(blank_form: BlankForm) -> str:
+    """Return the printable number body shown separately from the blank series."""
+
+    full_number = str(blank_form.full_number or "").strip()
+    series = str(blank_form.series or "").strip()
+    if series and full_number.startswith(series):
+        return full_number[len(series) :].strip()
+    return full_number
+
+
 def generate_document(
     db: Session,
     *,
@@ -4644,6 +4654,9 @@ def generate_document(
         )
         context.update(_chairman_certificate_date_context_overrides(template, document_exams))
         if blank_form is not None:
+            reference_number = _blank_reference_number(blank_form)
+            context["ReferenceNumber"] = reference_number
+            context["SeriesNumberCalc"] = reference_number
             context["BlankNumber"] = blank_form.full_number
             context["BlankSeries"] = blank_form.series or ""
             context["BlankFullNumber"] = blank_form.full_number
