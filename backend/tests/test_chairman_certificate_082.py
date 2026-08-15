@@ -80,6 +80,7 @@ class ChairmanCertificate082Tests(unittest.TestCase):
             "BirthDateCalc": "24.07.1986",
             "VisitDate": "11.08.2026",
             "Country": "Сербия",
+            "Doctor": "Петров П.П.",
         }
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_path = Path(temporary_directory) / TEMPLATE_PATH.name
@@ -90,7 +91,9 @@ class ChairmanCertificate082Tests(unittest.TestCase):
 
         self.assertIn("МЕДИЦИНСКАЯ СПРАВКА № 0000017", text)
         self.assertIn("Страна: Сербия", text)
+        self.assertEqual(text.count("Петров П.П."), 2)
         self.assertNotIn("Болгария", text)
+        self.assertNotIn("Сибирцев В.А.", text)
 
 
 if __name__ == "__main__":
