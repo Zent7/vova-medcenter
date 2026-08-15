@@ -412,6 +412,31 @@ def get_next_free_form(
     return db.execute(query).scalar_one_or_none()
 
 
+def get_form_by_printed_number(
+    db: Session,
+    *,
+    blank_type: str,
+    center_id: int | None,
+    series: str,
+    number_input: str | int,
+) -> BlankForm | None:
+    """Находит конкретный типографский бланк без выбора следующего номера."""
+
+    series_clean = (series or "").strip()
+    if not series_clean:
+        raise BlankRangeInvalidError("Укажите серию бланка")
+
+    number_value = parse_number_input(number_input)
+    query = select(BlankForm).where(
+        BlankForm.blank_type == blank_type,
+        BlankForm.series == series_clean,
+        BlankForm.number_value == number_value,
+    )
+    if center_id is not None:
+        query = query.where(BlankForm.center_id == center_id)
+    return db.execute(query.order_by(BlankForm.id.asc()).limit(1)).scalar_one_or_none()
+
+
 def create_auto_number_form(
     db: Session,
     *,

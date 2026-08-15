@@ -19,6 +19,7 @@ from app.services.blank_forms import (
     create_auto_number_form,
     create_batch,
     enrich_form_for_read,
+    get_form_by_printed_number,
     get_next_free_form,
     list_free_series,
     list_batches,
@@ -167,6 +168,32 @@ def get_next_form(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Свободные бланки по выбранной серии не найдены",
+        )
+    return BlankFormRead.model_validate(enrich_form_for_read(db, form))
+
+
+@router.get("/forms/exact", response_model=BlankFormRead)
+def get_exact_form(
+    blank_type: str = Query(...),
+    center_id: int | None = Query(default=None),
+    series: str = Query(...),
+    number: str = Query(...),
+    db: Session = Depends(get_db),
+) -> BlankFormRead:
+    try:
+        form = get_form_by_printed_number(
+            db,
+            blank_type=blank_type,
+            center_id=center_id,
+            series=series,
+            number_input=number,
+        )
+    except BlankRangeInvalidError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if form is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Бланк с указанными серией и номером не найден",
         )
     return BlankFormRead.model_validate(enrich_form_for_read(db, form))
 
