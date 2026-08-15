@@ -314,6 +314,19 @@ def _replace_chairman_082_static_country(
     return xml_text.replace(">Болгария<", f">{country}<")
 
 
+def _replace_chairman_082_static_doctor(
+    template_path: Path,
+    xml_text: str,
+    context: dict[str, str],
+) -> str:
+    if template_path.name.casefold() not in CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES:
+        return xml_text
+    doctor_name = escape_xml_text(str(context.get("Doctor", "") or "").strip())
+    if not doctor_name:
+        return xml_text
+    return re.sub(r"Сибирцев\s+В\.А\.?", doctor_name, xml_text)
+
+
 def _append_bookmark_value(tree: ET.ElementTree, context: dict[str, str]) -> ET.ElementTree:
     root = tree.getroot()
     for bookmark in root.findall(".//w:bookmarkStart", NS):
@@ -558,6 +571,7 @@ def _generate_docx(
                     namespace_declarations = _document_namespace_declarations(xml_text)
                     xml_text = _replace_text_tokens(xml_text, context)
                     xml_text = _replace_chairman_082_static_country(template_path, xml_text, context)
+                    xml_text = _replace_chairman_082_static_doctor(template_path, xml_text, context)
                     xml_text = _replace_prof_29n_static_doctor_names(xml_text, context)
                     if cleanup_xml:
                         xml_text = _cleanup_contract_xml(xml_text)
