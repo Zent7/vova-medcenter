@@ -24,7 +24,7 @@ from app.models.blank_form import (  # noqa: E402
     BlankType,
 )
 from app.models.document_template import DocumentTemplate  # noqa: E402
-from app.services.blank_forms import list_blank_types  # noqa: E402
+from app.services.blank_forms import get_form_by_printed_number, list_blank_types  # noqa: E402
 from app.services.template_catalog import sync_document_template_catalog  # noqa: E402
 
 
@@ -147,6 +147,55 @@ class BlankTypeTests(unittest.TestCase):
             self.assertTrue(lmk_templates)
             self.assertTrue(all(item.blank_type == BLANK_TYPE_LMK_MEDICAL_CERTIFICATE for item in lmk_templates))
             self.assertTrue(all(item.requires_numbered_blank for item in lmk_templates))
+
+    def test_gims_printed_number_lookup_does_not_pick_the_next_form(self):
+        with self.Session() as db:
+            batch = BlankBatch(
+                center_id=1,
+                blank_type=BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                series="45",
+                number_from=353,
+                number_to=354,
+                number_width=7,
+                quantity=2,
+            )
+            db.add(batch)
+            db.flush()
+            db.add_all(
+                [
+                    BlankForm(
+                        batch_id=batch.id,
+                        center_id=1,
+                        blank_type=BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                        series="45",
+                        number_value=353,
+                        full_number="450000353",
+                        status=BLANK_STATUS_FREE,
+                    ),
+                    BlankForm(
+                        batch_id=batch.id,
+                        center_id=1,
+                        blank_type=BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                        series="45",
+                        number_value=354,
+                        full_number="450000354",
+                        status=BLANK_STATUS_FREE,
+                    ),
+                ]
+            )
+            db.flush()
+
+            selected = get_form_by_printed_number(
+                db,
+                blank_type=BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                center_id=1,
+                series="45",
+                number_input="0000354",
+            )
+
+            self.assertIsNotNone(selected)
+            self.assertEqual(selected.number_value, 354)
+            self.assertEqual(selected.full_number, "450000354")
 
 
 if __name__ == "__main__":
