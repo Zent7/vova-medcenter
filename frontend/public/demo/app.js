@@ -8688,7 +8688,7 @@ function getChairmanPrintActionForVisit(visit) {
 
 const CHAIRMAN_PRINT_BLANK_SERIES = new Map([
   ["lmk_title", "ЛМК"],
-  ["lmk_certificate", "ЛМК"],
+  ["lmk_certificate", "29Н"],
   ["prof_conclusion", "29Н"],
   ["prof_ambulatory_extract", "29Н"],
   ["prof_ambulatory", "29Н"],
@@ -8731,7 +8731,18 @@ function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
 
-const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "095У", "СЭМТ-196"]);
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "095У", "СЭМТ-196"]);
+
+const CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS = new Set([
+  "lmk_certificate",
+  "prof_conclusion",
+  "prof_ambulatory_extract",
+  "prof_ambulatory",
+]);
+
+function isChairmanAutoNumberedPrintKind(printKind) {
+  return CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS.has(String(printKind || "").toLowerCase());
+}
 
 function canAutoCreateChairmanBlankSeries(series) {
   return CHAIRMAN_AUTO_CREATE_BLANK_SERIES.has(normalizeBlankSeries(series).toUpperCase());
@@ -12287,7 +12298,6 @@ function bindContentEvents() {
           ? getCurrentVisitForClient(client.id)
           : formVisit;
       const existingBlankNumber =
-        (visit ? getDocumentsForVisit(visit.id).find((item) => String(item.blankNumber || "").trim())?.blankNumber : "") ||
         client?.referenceNumber ||
         client?.rawApiClient?.reference_number ||
         "";
@@ -12297,7 +12307,7 @@ function bindContentEvents() {
       const certificateTemplateMenu = Boolean(certificatePrintGroup);
       let selectedCertificateType = certificatePrintGroup?.currentType || "";
       let selectedCertificateSeries = getChairmanCertificatePrintSeries(selectedCertificateType, client);
-      let selectedBlankSeries = getChairmanFormConfigForVisit(visit).type === "prof" ? "29Н" : "ЛМК";
+      let selectedBlankSeries = "ЛМК";
       const getSelectedCertificateSeries = () => selectedCertificateSeries;
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
@@ -12341,6 +12351,17 @@ function bindContentEvents() {
             });
           }
         });
+      } else {
+        const previousBookDocument = findLatestCertificateDocument("lmk_title");
+        if (previousBookDocument?.blankFormId) {
+          selectedPrintBlanks.set(selectedBlankSeries, {
+            id: previousBookDocument.blankFormId,
+            series: selectedBlankSeries,
+            full_number: previousBookDocument.blankNumber || "",
+            status: "issued",
+            generated_document_id: previousBookDocument.backendId || previousBookDocument.id || null,
+          });
+        }
       }
       openActionModal(
         "Печать результатов:",
@@ -12365,24 +12386,30 @@ function bindContentEvents() {
           </div>
         `
           : `
-          <div class="driver-print-classic chairman-print-results">
+          <div class="driver-print-classic chairman-print-results chairman-print-results--lmk">
             ${renderPrintCenterContext(centerName)}
             <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
 
-            <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
-            <div class="driver-print-classic__lookup">
-              <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка" role="button" readonly />
-              <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
-              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
+            <div class="chairman-print-results__section">
+              <div class="driver-print-classic__caption">Типографский бланк ЛМК:</div>
+              <div class="driver-print-classic__lookup">
+                <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка ЛМК" role="button" readonly />
+                <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
+                <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
+              </div>
+              <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__book" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
             </div>
 
+            <div class="chairman-print-results__section chairman-print-results__section--automatic">
+              <div class="driver-print-classic__caption">Документы профосмотра — номер присваивается автоматически:</div>
+              <div class="driver-print-classic__lookup chairman-print-results__auto-lookup">
+                <input class="driver-print-classic__input driver-print-classic__input--series" value="29Н" aria-label="Серия документов профосмотра" readonly />
+                <input class="driver-print-classic__input chairman-print-results__auto-number" value="При печати" aria-label="Автоматический номер документа" readonly />
+              </div>
+            </div>
             <div class="chairman-print-results__row chairman-print-results__row--top">
               <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_certificate">Печать справки</button>
               <button type="button" class="driver-print-classic__button" disabled>Печать дубликата</button>
-            </div>
-            <div class="chairman-print-results__row">
-              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Присвоить ЛМК</button>
-              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
             </div>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_conclusion">Проф. осмотр</button>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory_extract">Выписка из амбулаторной карты</button>
@@ -12438,11 +12465,13 @@ function bindContentEvents() {
         if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
       };
 
-      const findChairmanBlank = async (series, button = null) => {
+      const findChairmanBlank = async (series, button = null, options = {}) => {
         const normalizedSeries = normalizeBlankSeries(series);
-        const input = certificateTemplateMenu
-          ? document.getElementById("chairmanCertificateBlankNumber")
-          : document.getElementById("chairmanPrintBlankNumber");
+        const input = options.updateInput === false
+          ? null
+          : certificateTemplateMenu
+            ? document.getElementById("chairmanCertificateBlankNumber")
+            : document.getElementById("chairmanPrintBlankNumber");
         if (!client || !visit) {
           showToast("Сначала выбери клиента и обращение");
           return null;
@@ -12482,12 +12511,16 @@ function bindContentEvents() {
           const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
           const resolvedBlankNumber = blankParts.number || blankParts.fullNumber || "";
           if (input) input.value = resolvedBlankNumber;
-          showToast(resolvedBlankNumber ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
+          if (!options.silent) {
+            showToast(resolvedBlankNumber ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
+          }
           return blank;
         } catch (error) {
           selectedPrintBlanks.delete(normalizedSeries);
           if (input && !input.value) input.value = splitExistingBlankNumber(normalizedSeries);
-          showToast(humanizeApiError(error, `Свободный номер ${normalizedSeries} не найден`));
+          if (!options.silent) {
+            showToast(humanizeApiError(error, `Свободный номер ${normalizedSeries} не найден`));
+          }
           return null;
         } finally {
           if (button) button.disabled = false;
@@ -12645,23 +12678,50 @@ function bindContentEvents() {
           const directPrintType = printType === "driver" ? "medical" : printType;
           const printOptions = { targetWindow };
           const certificateType = isExplicitCertificateTemplate ? printType : "";
-          const requiredBlankSeries = certificateType
-            ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
-            : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
+          const autoNumberedDocument = isChairmanAutoNumberedPrintKind(printKind);
+          const requiredBlankSeries = autoNumberedDocument
+            ? getChairmanBlankSeriesForPrintKind(printKind)
+            : certificateType
+              ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
+              : selectedBlankSeries || getChairmanBlankSeriesForPrintKind(printKind);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
+            if (autoNumberedDocument) {
+              const previousDocument = findLatestCertificateDocument(directPrintType);
+              if (previousDocument?.blankFormId) {
+                selectedBlank = {
+                  id: previousDocument.blankFormId,
+                  series: requiredBlankSeries,
+                  full_number: previousDocument.blankNumber || "",
+                  status: "issued",
+                  generated_document_id: previousDocument.backendId || previousDocument.id || null,
+                };
+              } else if (!selectedBlank?.id) {
+                selectedBlank = await findChairmanBlank(requiredBlankSeries, null, {
+                  updateInput: false,
+                  silent: true,
+                });
+              }
+            }
             if (!selectedBlank?.id) {
-              showDocumentTargetError(targetWindow, `Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}.`);
-              showToast(`Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}`);
+              const message = autoNumberedDocument
+                ? `Не удалось присвоить автоматический номер серии ${requiredBlankSeries}.`
+                : `Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}.`;
+              showDocumentTargetError(targetWindow, message);
+              showToast(message);
               if (currentButton) currentButton.disabled = false;
               return;
             }
             printOptions.blankFormId = Number(selectedBlank.id);
           }
           const documentItem = await printDocumentForVisit(directPrintType, client, visit, printOptions);
+          if (autoNumberedDocument) {
+            chairmanPrintBlankState.blanks.delete(requiredBlankSeries);
+          }
           actionModal?.classList.add("hidden");
           window.closeDoctorExamCard?.();
-          showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
+          const assignedNumber = String(documentItem?.blankNumber || "").trim();
+          showToast(`Документ открыт: ${documentItem?.title || actionLabel}${assignedNumber ? `. Номер: ${assignedNumber}` : ""}`);
         } catch (error) {
           showDocumentTargetError(targetWindow, humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));
           console.error(error);

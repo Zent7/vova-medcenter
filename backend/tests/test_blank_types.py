@@ -133,9 +133,12 @@ class BlankTypeTests(unittest.TestCase):
             gims_template = db.query(DocumentTemplate).filter(
                 DocumentTemplate.file_name == "ГИМС_шаблон_для_загрузки_из_файла.xml"
             ).one()
-            lmk_templates = db.query(DocumentTemplate).filter(
-                DocumentTemplate.file_name.ilike("%ЛМК%")
-            ).all()
+            lmk_book_template = db.query(DocumentTemplate).filter(
+                DocumentTemplate.file_name == "ЛМК_шаблон_2.docx"
+            ).one()
+            lmk_certificate_template = db.query(DocumentTemplate).filter(
+                DocumentTemplate.file_name == "ЛМК_справка_шаблон.docx"
+            ).one()
             driver_template = db.query(DocumentTemplate).filter(
                 DocumentTemplate.file_name == "ВУ.xls"
             ).one()
@@ -144,9 +147,10 @@ class BlankTypeTests(unittest.TestCase):
             self.assertTrue(gims_template.requires_numbered_blank)
             self.assertEqual(driver_template.blank_type, BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE)
             self.assertTrue(driver_template.requires_numbered_blank)
-            self.assertTrue(lmk_templates)
-            self.assertTrue(all(item.blank_type == BLANK_TYPE_LMK_MEDICAL_CERTIFICATE for item in lmk_templates))
-            self.assertTrue(all(item.requires_numbered_blank for item in lmk_templates))
+            self.assertEqual(lmk_book_template.blank_type, BLANK_TYPE_LMK_MEDICAL_CERTIFICATE)
+            self.assertTrue(lmk_book_template.requires_numbered_blank)
+            self.assertIsNone(lmk_certificate_template.blank_type)
+            self.assertFalse(lmk_certificate_template.requires_numbered_blank)
 
     def test_gims_printed_number_lookup_does_not_pick_the_next_form(self):
         with self.Session() as db:

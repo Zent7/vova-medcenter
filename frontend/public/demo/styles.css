@@ -4619,6 +4619,31 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   margin-bottom: 12px;
 }
 
+.chairman-print-results__section {
+  margin-bottom: 12px;
+  padding-bottom: 2px;
+}
+
+.chairman-print-results__section--automatic {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid #aeb8c1;
+}
+
+.chairman-print-results__auto-lookup {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.chairman-print-results__auto-number {
+  color: #53606b;
+  font-size: 14px;
+  text-align: center;
+}
+
+.chairman-print-results__book {
+  margin-bottom: 0;
+}
+
 .chairman-print-results__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.28fr);

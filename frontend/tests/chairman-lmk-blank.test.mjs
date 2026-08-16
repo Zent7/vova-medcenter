@@ -38,3 +38,29 @@ test("chairman blank lookup uses the selected certificate blank type", () => {
   assert.match(lookupSource, /blank_type: resolveDriverPrintBlankType\(/);
   assert.doesNotMatch(lookupSource, /blank_type: "driver_medical_certificate"/);
 });
+
+test("LMK print menu separates the typographic book blank from automatic documents", () => {
+  const menuSource = sourceBetween(
+    "const openChairmanPrintMenu = () =>",
+    "const runChairmanPrint = async",
+  );
+  assert.match(menuSource, /Типографский бланк ЛМК/);
+  assert.match(menuSource, /Документы профосмотра — номер присваивается автоматически/);
+  assert.match(menuSource, /value="29Н"/);
+  assert.match(menuSource, /value="При печати"/);
+  assert.doesNotMatch(menuSource, /Присвоить ЛМК/);
+  assert.equal((menuSource.match(/data-chairman-print-menu-kind="lmk_title"/g) || []).length, 1);
+});
+
+test("only the LMK book requires a pre-entered LMK blank", () => {
+  assert.match(appSource, /\["lmk_title", "ЛМК"\]/);
+  assert.match(appSource, /\["lmk_certificate", "29Н"\]/);
+  assert.doesNotMatch(appSource, /CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set\(\["ЛМК"/);
+  assert.match(appSource, /isChairmanAutoNumberedPrintKind\(printKind\)/);
+  assert.match(appSource, /findChairmanBlank\(requiredBlankSeries, null, \{/);
+  assert.match(
+    appSource,
+    /const requiredBlankSeries = autoNumberedDocument\s+\? getChairmanBlankSeriesForPrintKind\(printKind\)/,
+  );
+  assert.match(appSource, /findLatestCertificateDocument\("lmk_title"\)/);
+});

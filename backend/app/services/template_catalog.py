@@ -3,6 +3,7 @@ import re
 
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
+NUMBERED_LMK_TEMPLATE_FILE_NAMES = {"ЛМК_шаблон_2.docx"}
 ACTIVE_XML_TEMPLATE_NAMES = {
     "Водительская(новая).xml",
     "Чод_новый.xml",
@@ -240,7 +241,7 @@ def sync_document_template_catalog(db) -> int:
         if "гимс" in haystack or "gims" in haystack:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE
-        elif "лмк" in haystack or "lmk" in haystack:
+        elif item["file_name"] in NUMBERED_LMK_TEMPLATE_FILE_NAMES:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_LMK_MEDICAL_CERTIFICATE
         elif "охран" in haystack or "guard" in haystack or "чод" in haystack or "002" in haystack:
