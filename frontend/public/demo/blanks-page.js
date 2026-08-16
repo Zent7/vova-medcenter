@@ -52,6 +52,49 @@
     return String(value ?? "").trim().toLowerCase();
   }
 
+  function getBatchRangeLabel(item) {
+    const series = String(item?.series || "");
+    const width = Number(item?.number_width) || 6;
+    const numberFrom = String(item?.number_from ?? "").padStart(width, "0");
+    const numberTo = String(item?.number_to ?? "").padStart(width, "0");
+    return `${series}${numberFrom}–${series}${numberTo}`;
+  }
+
+  function renderBatchFilterOptions(batches, selectedBatchId) {
+    const typeOrder = (window.data?.blanksTypes || []).map((item) => item.code);
+    const groupedBatches = new Map();
+
+    batches.forEach((item) => {
+      const type = item.blank_type || "other";
+      if (!groupedBatches.has(type)) groupedBatches.set(type, []);
+      groupedBatches.get(type).push(item);
+    });
+
+    const orderedTypes = [
+      ...typeOrder.filter((type) => groupedBatches.has(type)),
+      ...Array.from(groupedBatches.keys()).filter((type) => !typeOrder.includes(type)),
+    ];
+
+    return orderedTypes
+      .map(
+        (type) => `
+          <optgroup label="${esc(type === "other" ? "Другие" : getTypeName(type))}">
+            ${groupedBatches
+              .get(type)
+              .map(
+                (item) => `
+                  <option value="${esc(item.id)}" ${String(selectedBatchId) === String(item.id) ? "selected" : ""}>
+                    ${esc(getBatchRangeLabel(item))}
+                  </option>
+                `,
+              )
+              .join("")}
+          </optgroup>
+        `,
+      )
+      .join("");
+  }
+
   async function loadBlanksData(options = {}) {
     const force = options.force === true;
     const data = window.data;
@@ -409,16 +452,8 @@
           <label class="field">
             <span>Партия</span>
             <select data-blanks-filter-batch>
-              <option value="all">Все партии</option>
-              ${batches
-                .map(
-                  (item) => `
-                    <option value="${item.id}" ${String(appState.blanksFilterBatchId) === String(item.id) ? "selected" : ""}>
-                      ${esc(item.series || "")}${String(item.number_from).padStart(item.number_width || 6, "0")}–${esc(item.series || "")}${String(item.number_to).padStart(item.number_width || 6, "0")}
-                    </option>
-                  `,
-                )
-                .join("")}
+              <option value="all" ${appState.blanksFilterBatchId === "all" ? "selected" : ""}>Все партии</option>
+              ${renderBatchFilterOptions(batches, appState.blanksFilterBatchId)}
             </select>
           </label>
           <label class="field blanks-filters__search">
