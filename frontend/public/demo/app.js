@@ -9264,21 +9264,6 @@ const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
 const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const BLANK_TYPE_LMK_MEDICAL_CERTIFICATE = "lmk_medical_certificate";
 
-function isManualGimsBlankSelection(blankType, certificateType = "") {
-  return (
-    String(blankType || "").toLowerCase() === BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE ||
-    String(certificateType || "").toLowerCase() === "gims"
-  );
-}
-
-function getUnavailablePrintedBlankMessage(blank) {
-  const status = String(blank?.status || "").toLowerCase();
-  if (status === "issued") return "Этот типографский бланк уже выдан другому пациенту.";
-  if (status === "spoiled") return "Этот типографский бланк уже отмечен как бракованный.";
-  if (status === "cancelled") return "Этот типографский бланк аннулирован.";
-  return status && status !== "free" ? "Этот типографский бланк нельзя использовать." : "";
-}
-
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071у"],
   ["070у", "070у"],
@@ -9880,7 +9865,6 @@ async function openDriverPrintFlow(options = {}) {
     compactCertificateFlow,
     legacyCertificateFlow,
     currentBlank: normalizeDriverPrintBlank(fallbackBlank),
-    manualBlankNumber: getDriverPrintBlankParts(fallbackBlank, preselectedSeries).number,
     loading: false,
     error: "",
   };
@@ -9897,11 +9881,7 @@ async function openDriverPrintFlow(options = {}) {
     flowState.selectedSeries = flowState.selectedSeries || normalizeBlankSeries(seriesOptions[0]?.series);
   }
 
-  if (
-    !flowState.currentBlank &&
-    isPreenteredBlankSeries(flowState.selectedSeries) &&
-    !isManualGimsBlankSelection(flowState.blankType, flowState.selectedCertificateType)
-  ) {
+  if (!flowState.currentBlank && isPreenteredBlankSeries(flowState.selectedSeries)) {
     try {
       const query = new URLSearchParams({
         blank_type: flowState.blankType,
@@ -10141,7 +10121,6 @@ async function openDriverPrintFlow(options = {}) {
       ? getNumberedCertificateDisplaySeries(blankParts.series || flowState.selectedSeries, flowState.selectedCertificateType, client)
       : blankParts.series;
     const visibleCertificateType = flowState.selectedCertificateType || getDriverPrintCertificateType(flowState.selectedSeries);
-    const manualGimsBlank = isManualGimsBlankSelection(flowState.blankType, visibleCertificateType);
     const certificatePrintDisabled = flowState.loading || !flowState.currentBlank?.id || !visibleCertificateType;
     const canReplaceBlank =
       isOrdinaryDriverFlow ||
@@ -10157,9 +10136,9 @@ async function openDriverPrintFlow(options = {}) {
 
           <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
           <div class="driver-print-classic__lookup">
-            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" ${manualGimsBlank ? "" : "readonly"} />
-            <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(manualGimsBlank ? flowState.manualBlankNumber || blankParts.number : blankParts.number)}" ${manualGimsBlank ? 'inputmode="numeric" autocomplete="off"' : "readonly"} />
-            <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>${manualGimsBlank ? "Проверить номер" : "Найти номер"}</button>
+            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" readonly />
+            <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(blankParts.number)}" readonly />
+            <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
           </div>
 
           ${
@@ -10211,7 +10190,6 @@ async function openDriverPrintFlow(options = {}) {
     );
 
     const seriesInput = document.getElementById("driverBlankSeries");
-    const numberInput = document.getElementById("driverBlankNumber");
     const selectSeries = (value) => {
       const normalizedSeries = normalizeBlankSeries(value);
       const nextCertificateType = getDriverPrintCertificateType(normalizedSeries);
@@ -10239,37 +10217,12 @@ async function openDriverPrintFlow(options = {}) {
         onSelect: selectSeries,
       });
     };
-    if (manualGimsBlank) {
-      seriesInput?.addEventListener("input", () => {
-        flowState.selectedSeries = normalizeBlankSeries(seriesInput.value);
-        flowState.currentBlank = null;
-        flowState.error = "";
-      });
-      numberInput?.addEventListener("input", () => {
-        flowState.manualBlankNumber = String(numberInput.value || "").trim();
-        flowState.currentBlank = null;
-        flowState.error = "";
-      });
-    } else {
-      seriesInput?.addEventListener("pointerdown", openSeriesPicker);
-      seriesInput?.addEventListener("mousedown", openSeriesPicker);
-      seriesInput?.addEventListener("click", openSeriesPicker);
-      seriesInput?.addEventListener("focus", openSeriesPicker);
-    }
+    seriesInput?.addEventListener("pointerdown", openSeriesPicker);
+    seriesInput?.addEventListener("mousedown", openSeriesPicker);
+    seriesInput?.addEventListener("click", openSeriesPicker);
+    seriesInput?.addEventListener("focus", openSeriesPicker);
 
     document.getElementById("driverFindBlank")?.addEventListener("click", async () => {
-      const manualSeries = manualGimsBlank ? normalizeBlankSeries(seriesInput?.value) : "";
-      const manualNumber = manualGimsBlank ? String(numberInput?.value || "").trim() : "";
-      if (manualGimsBlank) {
-        flowState.selectedSeries = manualSeries;
-        flowState.manualBlankNumber = manualNumber;
-        flowState.currentBlank = null;
-        if (!manualSeries || !/^\d+$/.test(manualNumber)) {
-          flowState.error = "Введите серию и напечатанный на бланке номер (только цифры).";
-          renderFlow();
-          return;
-        }
-      }
       flowState.loading = true;
       flowState.error = "";
       const lookupSeries = resolveNumberedCertificateLookupSeries(
@@ -10280,24 +10233,6 @@ async function openDriverPrintFlow(options = {}) {
       setStoredDriverPrintSeries(lookupSeries || flowState.selectedSeries);
       renderFlow();
       try {
-        if (manualGimsBlank) {
-          const query = new URLSearchParams({
-            blank_type: flowState.blankType,
-            center_id: String(flowState.centerId),
-            series: manualSeries,
-            number: manualNumber,
-          });
-          const selectedBlank = normalizeDriverPrintBlank(
-            await apiRequest(`/blanks/forms/exact?${query.toString()}`),
-          );
-          const unavailableMessage = getUnavailablePrintedBlankMessage(selectedBlank);
-          if (unavailableMessage) throw new Error(unavailableMessage);
-          flowState.currentBlank = selectedBlank;
-          flowState.manualBlankNumber = getDriverPrintBlankParts(selectedBlank, manualSeries).number;
-          setStoredDriverPrintSeries(manualSeries);
-          showToast(`Типографский бланк ${selectedBlank.full_number || manualNumber} выбран`);
-          return;
-        }
         const requestedSeries = lookupSeries || flowState.selectedSeries;
         const fetchNextBlank = async (autoCreate = false) => {
           const query = new URLSearchParams({
@@ -10338,15 +10273,11 @@ async function openDriverPrintFlow(options = {}) {
         }
       } catch (error) {
         flowState.currentBlank = null;
-        if (manualGimsBlank) flowState.manualBlankNumber = manualNumber;
         const requestedSeriesLabel = normalizeBlankSeries(lookupSeries || flowState.selectedSeries) || "выбранной серии";
         const message = humanizeApiError(error, "Не удалось подобрать свободный бланк");
-        flowState.error =
-          manualGimsBlank && message.includes("Бланк с указанными серией и номером не найден")
-            ? `Бланк ${manualSeries} ${manualNumber} не найден в «${flowState.centerName}». Проверьте номер или добавьте его диапазон в разделе «Бланки».`
-            : message.includes("Свободные бланки по выбранной серии не найдены")
-              ? `В «${flowState.centerName}» нет свободных бланков серии ${requestedSeriesLabel}. Добавьте диапазон в разделе «Бланки» этого медцентра.`
-              : message;
+        flowState.error = message.includes("Свободные бланки по выбранной серии не найдены")
+          ? `В «${flowState.centerName}» нет свободных бланков серии ${requestedSeriesLabel}. Добавьте диапазон в разделе «Бланки» этого медцентра.`
+          : message;
       } finally {
         flowState.loading = false;
         renderFlow();
@@ -10368,7 +10299,6 @@ async function openDriverPrintFlow(options = {}) {
           await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
         }
         flowState.currentBlank = null;
-        if (manualGimsBlank) flowState.manualBlankNumber = "";
         showToast(`Номер ${currentBlank.full_number || ""} освобождён`);
       } catch (error) {
         flowState.error = humanizeApiError(error, "Не удалось освободить номер бланка");
@@ -10412,12 +10342,6 @@ async function openDriverPrintFlow(options = {}) {
         }
 
         flowState.currentBlank = null;
-        if (manualGimsBlank) {
-          flowState.manualBlankNumber = "";
-          await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-          showToast(`Бланк ${currentBlank.full_number || ""} списан. Введите номер следующего бумажного бланка.`);
-          return;
-        }
         const query = new URLSearchParams({
           blank_type: flowState.blankType,
           center_id: String(flowState.centerId),
