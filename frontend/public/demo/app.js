@@ -12319,8 +12319,12 @@ function bindContentEvents() {
           const lookupSeries = isNumberedCertificatePrintType(certificateType)
             ? getNumberedCertificateLookupSeriesForType(certificateType)
             : normalizedSeries;
+          const blankType = resolveDriverPrintBlankType({
+            selectedCertificateType: certificateType,
+            selectedSeries: normalizedSeries,
+          });
           const query = new URLSearchParams({
-            blank_type: "driver_medical_certificate",
+            blank_type: blankType,
             center_id: String(centerId),
             series: lookupSeries,
           });
