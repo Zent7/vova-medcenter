@@ -7185,7 +7185,7 @@ function renderTemplatesPage() {
                       ${
                         canManageTemplates
                           ? `<div class="document-template-card__actions">
-                              <button class="ghost-button" type="button" data-open-document-template="${escapeHtml(template.id)}">Посмотреть</button>
+                              <button class="ghost-button" type="button" data-download-document-template="${escapeHtml(template.id)}">Скачать</button>
                               <button class="ghost-button" type="button" data-replace-document-template="${escapeHtml(template.id)}">Обновить шаблон</button>
                             </div>`
                           : ""
@@ -12104,16 +12104,17 @@ function bindContentEvents() {
     }
   });
 
-  contentRoot.querySelectorAll("[data-open-document-template]").forEach((button) => {
+  contentRoot.querySelectorAll("[data-download-document-template]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const templateId = button.dataset.openDocumentTemplate;
+      const templateId = button.dataset.downloadDocumentTemplate;
       if (!templateId) return;
       try {
-        if (!(await openAuthorizedFileUrl(buildTemplateFileUrl(templateId)))) {
-          showToast("Браузер заблокировал окно шаблона. Разрешите всплывающие окна для демо.");
-        }
+        const template = (data.documentTemplates || []).find((item) => String(item.id) === String(templateId));
+        const fileName = template?.file_name || template?.name || `template-${templateId}`;
+        await downloadAuthorizedFileUrl(buildTemplateFileUrl(templateId), fileName);
+        showToast(`Шаблон скачивается: ${fileName}`);
       } catch (error) {
-        showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
+        showToast(humanizeApiError(error, "Не удалось скачать шаблон"));
       }
     });
   });

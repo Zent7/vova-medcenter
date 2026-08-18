@@ -29,7 +29,7 @@ function createTemplatePicker(templates) {
   return context.pickTemplate;
 }
 
-test("LMK book print selects the XLS book instead of the DOCX certificate", () => {
+test("LMK print buttons select their separate live DOCX templates", () => {
   const pickTemplate = createTemplatePicker([
     {
       id: 59,
@@ -39,14 +39,24 @@ test("LMK book print selects the XLS book instead of the DOCX certificate", () =
       template_type: "docx",
     },
     {
-      id: 69,
+      id: 42,
       name: "ЛМК",
-      code: "лмк-20",
-      file_name: "ЛМК.xls",
-      template_type: "xls",
+      code: "лмк_шаблон_2-20",
+      file_name: "ЛМК_шаблон_2.docx",
+      template_type: "docx",
     },
   ]);
 
-  assert.equal(pickTemplate("lmk_title")?.file_name, "ЛМК.xls");
+  assert.equal(pickTemplate("lmk_title")?.file_name, "ЛМК_шаблон_2.docx");
   assert.equal(pickTemplate("lmk")?.file_name, "ЛМК_справка_шаблон.docx");
+});
+
+test("chairman LMK actions route to the matching template types", () => {
+  const routingSource = sourceBetween(
+    "function getChairmanTemplatePrintType",
+    "function shouldOpenChairmanResultsPrintMenu",
+  );
+
+  assert.match(routingSource, /lmk_title: "lmk_title"/);
+  assert.match(routingSource, /lmk_certificate: "lmk"/);
 });
