@@ -9139,28 +9139,6 @@ function findDocumentTemplateByExactFileName(fileName) {
 const PREENTERED_BLANK_SERIES = ["40", "4026", "ЛМК", "ГИМС"];
 const PREENTERED_BLANK_SERIES_SET = new Set(PREENTERED_BLANK_SERIES.map((item) => item.toLowerCase()));
 const CERTIFICATE_PRINT_SERIES_OPTIONS = [
-  "ЛМК",
-  "ПРОФ",
-  "4027",
-  "БС",
-  "ГТ",
-  "086",
-  "095",
-  "ГС",
-  "ЧОД",
-  "40655",
-  "4016",
-  "ПЗ",
-  "ПИМС",
-  "40290",
-  "ПУН",
-  "ЭЭГ",
-  "4023",
-  "ОСК",
-  "ФПО",
-  "4024",
-  "4025",
-  "41",
   "070У",
   "071У",
   "072У",
@@ -9185,6 +9163,7 @@ const CERTIFICATE_PRINT_SERIES_OPTIONS = [
   "13082",
   "13098",
 ];
+const CERTIFICATE_PRINT_SERIES_OPTION_SET = new Set(CERTIFICATE_PRINT_SERIES_OPTIONS.map((item) => item.toLowerCase()));
 const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["070", "070"],
   ["070у", "070"],
@@ -9508,17 +9487,12 @@ function getAutoServiceSeriesOptions() {
 }
 
 function getDriverPrintSeriesPickerOptions(seriesOptions = [], { includeSuggestedSeries = true } = {}) {
-  const ordered = includeSuggestedSeries
-    ? [
-        "40",
-        ...CERTIFICATE_PRINT_SERIES_OPTIONS,
-        ...PREENTERED_BLANK_SERIES.filter((series) => series !== "40"),
-        ...getAutoServiceSeriesOptions(),
-      ]
-    : [];
+  const ordered = includeSuggestedSeries ? [...CERTIFICATE_PRINT_SERIES_OPTIONS] : [];
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
-    if (series) ordered.push(series);
+    if (!series) return;
+    if (includeSuggestedSeries && !CERTIFICATE_PRINT_SERIES_OPTION_SET.has(series.toLowerCase())) return;
+    ordered.push(series);
   });
 
   return ordered.filter((series, index, list) => list.findIndex((item) => item.toLowerCase() === series.toLowerCase()) === index);
