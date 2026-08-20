@@ -57,6 +57,7 @@ from app.services.document_context import (
 from app.services.new_xls_templates import (
     NEW_XLS_TEMPLATE_BY_FILE,
     NEW_XLS_TEMPLATE_BY_SHEET,
+    PLACEHOLDER_FILL,
     PLACEHOLDER_LENGTH,
     NewXlsTemplateSpec,
     new_xls_placeholder,
@@ -1951,6 +1952,41 @@ def _fill_chod_xls_sheet(
     )
 
 
+def _fill_prof2_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+) -> None:
+    issue_date = encounter.encounter_date if encounter else date.today()
+    birth_date = _xls_excel_date(client.birth_date)
+    birth_and_sex = " ".join(
+        part
+        for part in [
+            f"{birth_date} года рождения," if birth_date else "",
+            f"{context.get('SexCalc', '')} пола," if context.get("SexCalc") else "",
+            "зарегистрированному по адресу:",
+        ]
+        if part
+    )
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            ((4, 29), _xls_excel_date(issue_date)),
+            ((8, 6), context.get("ClientCalc", "")),
+            ((10, 1), birth_and_sex),
+            ((11, 1), context.get("AddressCalc", "")),
+            ((14, 10), context.get("CompanyName", "")),
+            ((21, 17), _xls_excel_date(issue_date)),
+            ((28, 1), _first_non_empty(context.get("Post"), context.get("PositionApplied"))),
+            ((30, 1), _first_non_empty(context.get("Harmfulness"), context.get("Services"))),
+            ((39, 2), _xls_excel_date(issue_date)),
+        ],
+    )
+
+
 def _restriction_text(value: object) -> str:
     text = str(value or "").strip().lower()
     if not text or text in {"0", "нет", "false", "no", "не установлено"}:
@@ -3231,7 +3267,19 @@ def _generate_prof_amb_xls(
     source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
     amb_index = _find_prof_amb_sheet_index(source_book)
     if amb_index is None:
-        raise ValueError("В шаблоне не найден лист амбулаторной карты")
+        pz2_index = next((index for index, name in enumerate(source_book.sheet_names()) if name == "ПЗ2"), None)
+        if pz2_index is None:
+            raise ValueError("В шаблоне не найден лист амбулаторной карты")
+        target_book = copy_xls_workbook(source_book)
+        source_sheet = source_book.sheet_by_index(pz2_index)
+        target_sheet = target_book.get_sheet(pz2_index)
+        exams_by_role = _exam_map(exams)
+        _fill_prof_extract_fields(source_sheet, target_sheet, context, encounter, client, exams_by_role)
+        _fill_prof_extract_doctor_rows(source_book, source_sheet, target_sheet, exams_by_role, encounter, client)
+        _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
+        _apply_print_variant_to_xls_workbook(target_book, print_variant)
+        target_book.save(str(output_path))
+        return
     source_sheet = source_book.sheet_by_index(amb_index)
     target_book = copy_xls_workbook(source_book)
     target_sheet = target_book.get_sheet(amb_index)
@@ -3588,6 +3636,19 @@ def _new_xls_utf16_value(value: object) -> bytes:
     return text.encode("utf-16le")
 
 
+def _new_xls_fixed_utf16_value(value: object) -> bytes:
+    """Encode a generated value without changing the BIFF shared-string size.
+
+    Editable XLS templates keep a fixed-width invisible placeholder in every
+    dynamic cell. Replacing the character bytes in place preserves drawings,
+    print settings, merged ranges, and every record offset in the workbook.
+    """
+
+    encoded = _new_xls_utf16_value(value)
+    padding_characters = (PLACEHOLDER_LENGTH * 2 - len(encoded)) // 2
+    return encoded + PLACEHOLDER_FILL.encode("utf-16le") * padding_characters
+
+
 def _write_new_xls_stream_bytes(
     file_bytes: bytearray,
     sectors: list[tuple[int, int, int]],
@@ -3701,7 +3762,7 @@ def _patch_new_xls_placeholders(
     file_bytes = bytearray(original_bytes)
     workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
     spans = _new_xls_sst_payload_spans(workbook_stream)
-    string_starts: list[int] = []
+    replacements: list[tuple[int, bytes]] = []
     for coordinate in spec.dynamic_cells:
         placeholder = new_xls_placeholder(spec, coordinate)
         marker = placeholder[:6].encode("utf-16le")
@@ -3727,61 +3788,49 @@ def _patch_new_xls_placeholders(
         )
         if span_index is None:
             raise ValueError("Скрытый маркер XLS находится вне SST payload")
-        string_starts.append(marker_offset - 3)
+        replacements.append(
+            (marker_offset, _new_xls_fixed_utf16_value(values.get(coordinate, "")))
+        )
 
-    if string_starts != sorted(string_starts):
-        raise ValueError("Скрытые поля XLS расположены не в порядке карты ячеек")
-    first_string_start = string_starts[0]
-    first_span_index = next(
-        index
-        for index, (span_start, span_end) in enumerate(spans)
-        if span_start <= first_string_start < span_end
-    )
-    first_payload_start = (
-        spans[first_span_index][0] - 8
-        if first_span_index == 0
-        else spans[first_span_index][0]
-    )
-    first_record_header = first_payload_start - 4
-    first_payload_prefix_length = first_string_start - first_payload_start
-    compacted_tail, first_tail_payload_length = _new_xls_compact_sst_tail(
-        [
-            _new_xls_utf16_value(values.get(coordinate, ""))
-            for coordinate in spec.dynamic_cells
-        ],
-        first_capacity=8224 - first_payload_prefix_length,
-    )
-    old_tail_end = spans[-1][1]
-    original_tail_length = old_tail_end - first_string_start
-    removed_length = original_tail_length - len(compacted_tail)
-    if removed_length < 0:
-        raise ValueError("Данные не помещаются в область скрытых полей XLS")
-
-    effective_length = len(workbook_stream) - removed_length
-    compacted_stream = bytearray(
-        workbook_stream[:first_string_start]
-        + compacted_tail
-        + workbook_stream[old_tail_end:]
-        + b"\x00" * removed_length
-    )
-    struct.pack_into(
-        "<H",
-        compacted_stream,
-        first_record_header + 2,
-        first_payload_prefix_length + first_tail_payload_length,
-    )
-    _new_xls_patch_shifted_stream_offsets(
-        compacted_stream,
-        effective_length=effective_length,
-        removed_start=old_tail_end,
-        removed_length=removed_length,
-    )
-    _write_new_xls_stream_bytes(
-        file_bytes,
-        sectors,
-        0,
-        bytes(compacted_stream),
-    )
+    # Markers may be moved to any row/column and Excel may reorder the SST on
+    # save. Patch every fixed-width string independently instead of compacting
+    # an assumed ordered tail of the shared-string table.
+    for marker_offset, replacement in replacements:
+        span_index = next(
+            index
+            for index, (span_start, span_end) in enumerate(spans)
+            if span_start <= marker_offset < span_end
+        )
+        logical_offset = marker_offset
+        replacement_offset = 0
+        while replacement_offset < len(replacement):
+            span_start, span_end = spans[span_index]
+            if logical_offset < span_start or logical_offset >= span_end:
+                raise ValueError("Скрытый маркер XLS поврежден")
+            writable = min(len(replacement) - replacement_offset, span_end - logical_offset)
+            writable -= writable % 2
+            if writable:
+                _write_new_xls_stream_bytes(
+                    file_bytes,
+                    sectors,
+                    logical_offset,
+                    replacement[replacement_offset : replacement_offset + writable],
+                )
+                logical_offset += writable
+                replacement_offset += writable
+            if replacement_offset >= len(replacement):
+                break
+            span_index += 1
+            if span_index >= len(spans):
+                raise ValueError("Скрытый маркер XLS обрывается в таблице строк")
+            logical_offset = spans[span_index][0]
+            # A CONTINUE record that splits a Unicode character array starts
+            # with the compression flag. Marker strings always remain Unicode.
+            if workbook_stream[logical_offset] not in (0x00, 0x01):
+                raise ValueError("Скрытый маркер XLS имеет неверное продолжение")
+            if workbook_stream[logical_offset] != 0x01:
+                raise ValueError("Скрытый маркер XLS неожиданно сжат")
+            logical_offset += 1
 
     output_path.write_bytes(file_bytes)
 
@@ -3898,6 +3947,15 @@ def _generate_runtime_xls(
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "Журн344")
     if source_sheet and target_sheet:
         _fill_journal_344_sheet(source_sheet, target_sheet, context, client, encounter)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "Проф2")
+    if source_sheet and target_sheet:
+        _fill_prof2_xls_sheet(source_sheet, target_sheet, context, client, encounter)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "ПЗ2")
+    if source_sheet and target_sheet:
+        _fill_prof_extract_fields(source_sheet, target_sheet, context, encounter, client, exams_by_role)
+        _fill_prof_extract_doctor_rows(source_book, source_sheet, target_sheet, exams_by_role, encounter, client)
 
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
