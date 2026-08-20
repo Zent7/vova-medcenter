@@ -134,7 +134,7 @@ class BlankTypeTests(unittest.TestCase):
                 DocumentTemplate.file_name == "ГИМС_шаблон_для_загрузки_из_файла.xml"
             ).one()
             lmk_book_template = db.query(DocumentTemplate).filter(
-                DocumentTemplate.file_name == "ЛМК_шаблон_2.docx"
+                DocumentTemplate.file_name == "ЛМК.xls"
             ).one()
             lmk_certificate_template = db.query(DocumentTemplate).filter(
                 DocumentTemplate.file_name == "ЛМК_справка_шаблон.docx"

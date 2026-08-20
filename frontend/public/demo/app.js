@@ -8778,6 +8778,7 @@ const XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE = new Map([
   ["gsu", "gsu"],
   ["gostaina", "gostaina"],
   ["gims", "gims"],
+  ["lmk_title", "lmk"],
   ["guard", "guard"],
   ["chod", "chod"],
   ["ekg", "ekg"],

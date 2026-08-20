@@ -29,7 +29,7 @@ function createTemplatePicker(templates) {
   return context.pickTemplate;
 }
 
-test("LMK print buttons select their separate live DOCX templates", () => {
+test("LMK print buttons select the workbook and certificate templates", () => {
   const pickTemplate = createTemplatePicker([
     {
       id: 59,
@@ -39,15 +39,15 @@ test("LMK print buttons select their separate live DOCX templates", () => {
       template_type: "docx",
     },
     {
-      id: 42,
+      id: 60,
       name: "ЛМК",
-      code: "лмк_шаблон_2-20",
-      file_name: "ЛМК_шаблон_2.docx",
-      template_type: "docx",
+      code: "лмк-20",
+      file_name: "ЛМК.xls",
+      template_type: "xls",
     },
   ]);
 
-  assert.equal(pickTemplate("lmk_title")?.file_name, "ЛМК_шаблон_2.docx");
+  assert.equal(pickTemplate("lmk_title")?.file_name, "ЛМК.xls");
   assert.equal(pickTemplate("lmk")?.file_name, "ЛМК_справка_шаблон.docx");
 });
 
@@ -59,4 +59,5 @@ test("chairman LMK actions route to the matching template types", () => {
 
   assert.match(routingSource, /lmk_title: "lmk_title"/);
   assert.match(routingSource, /lmk_certificate: "lmk"/);
+  assert.match(appSource, /\["lmk_title", "lmk"\]/);
 });
