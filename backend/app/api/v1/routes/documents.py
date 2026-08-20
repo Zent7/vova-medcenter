@@ -3,6 +3,7 @@ from pathlib import Path
 import secrets
 import shutil
 from threading import Lock
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
@@ -26,7 +27,20 @@ from app.schemas.document_generation import (
 from app.schemas.document_template import DocumentTemplateRead
 from app.services.blank_forms import BlankServiceError, NoFreeBlankError, spoil_for_generated_document
 from app.services.document_generator import generate_document
-from app.services.template_catalog import SUPPORTED_TEMPLATE_EXTENSIONS, get_templates_root, sync_document_template_catalog
+from app.services.new_xls_templates import (
+    LEGACY_XLS_TEMPLATE_BY_FILE,
+    NEW_XLS_TEMPLATE_BY_FILE,
+    validate_editable_xls_template,
+    validate_legacy_editable_xls_template,
+)
+from app.services.template_catalog import (
+    SUPPORTED_TEMPLATE_EXTENSIONS,
+    get_template_override_path,
+    get_templates_root,
+    sync_document_template_catalog,
+    template_has_override,
+    template_supports_layout_editing,
+)
 
 router = APIRouter()
 
@@ -35,6 +49,7 @@ _TEMPLATE_FILE_ACCESS_ROLES = {"admin", "chairman"}
 _DOCUMENT_MEDIA_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xml": "application/xml",
 }
 _PRINT_TICKET_TTL_SECONDS = 120
@@ -55,6 +70,30 @@ def _document_media_type(file_path: Path) -> str:
 
 def _document_disposition_type(file_path: Path, *, inline_requested: bool) -> str:
     return "inline" if inline_requested else "attachment"
+
+
+def _public_url_for(request: Request, route_name: str, **path_params: object) -> str:
+    route_url = str(request.url_for(route_name, **path_params))
+    public_origin = (settings.public_frontend_origin or "").rstrip("/")
+    if not public_origin:
+        return route_url
+
+    public_parts = urlsplit(public_origin)
+    route_parts = urlsplit(route_url)
+    encoded_path = quote(route_parts.path, safe="/%")
+    request_host = request.headers.get("host", "").split(",", 1)[0].strip()
+    if not public_parts.scheme or not public_parts.netloc or request_host != public_parts.netloc:
+        return urlunsplit((route_parts.scheme, route_parts.netloc, encoded_path, route_parts.query, route_parts.fragment))
+
+    return urlunsplit(
+        (
+            public_parts.scheme,
+            public_parts.netloc,
+            encoded_path,
+            route_parts.query,
+            route_parts.fragment,
+        )
+    )
 
 
 def _resolve_generated_file(file_name: str) -> Path | None:
@@ -86,6 +125,10 @@ def require_template_file_access(current_user: User = Depends(get_current_user))
 
 def _resolve_template_file(template: DocumentTemplate) -> Path | None:
     candidates: list[Path] = []
+    try:
+        candidates.append(get_template_override_path(template.file_name))
+    except ValueError:
+        pass
     if template.file_path:
         candidates.append(Path(template.file_path))
 
@@ -106,10 +149,19 @@ def _resolve_template_file(template: DocumentTemplate) -> Path | None:
     return None
 
 
+def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
+    return DocumentTemplateRead.model_validate(template).model_copy(
+        update={
+            "supports_layout_editing": template_supports_layout_editing(template.file_name),
+            "has_override": template_has_override(template.file_name),
+        }
+    )
+
+
 @router.get("/templates", response_model=list[DocumentTemplateRead])
 def list_document_templates(db: Session = Depends(get_db)) -> list[DocumentTemplateRead]:
     templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
-    return [DocumentTemplateRead.model_validate(item) for item in templates]
+    return [_template_response(item) for item in templates]
 
 
 @router.post("/templates/refresh", response_model=list[DocumentTemplateRead])
@@ -120,7 +172,7 @@ def refresh_document_templates(
     sync_document_template_catalog(db)
     db.commit()
     templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
-    return [DocumentTemplateRead.model_validate(item) for item in templates]
+    return [_template_response(item) for item in templates]
 
 
 @router.get("/templates/{template_id}/file")
@@ -157,22 +209,40 @@ def replace_document_template(
     if template is None or not template.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    target_path = _resolve_template_file(template) or Path(template.file_path).resolve()
+    current_path = _resolve_template_file(template) or Path(template.file_path).resolve()
     source_suffix = Path(file.filename or "").suffix.lower()
-    target_suffix = target_path.suffix.lower()
+    target_suffix = current_path.suffix.lower()
+    editable_spec = NEW_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
+    legacy_editable_spec = LEGACY_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
     if source_suffix not in SUPPORTED_TEMPLATE_EXTENSIONS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только .docx, .xml и .xls")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только .docx, .xml, .xls и .xlsx")
+    if (editable_spec is not None or legacy_editable_spec is not None) and source_suffix != ".xls":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Свободно редактируемый шаблон должен оставаться в бинарном формате .xls",
+        )
     if source_suffix != target_suffix:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Тип файла должен остаться {target_suffix}. Создайте новый шаблон отдельным файлом, если нужен другой тип.",
         )
 
+    target_path = get_template_override_path(template.file_name)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target_path.with_name(f"{target_path.name}.uploading")
     try:
         with temp_path.open("wb") as target_file:
             shutil.copyfileobj(file.file, target_file)
+        if editable_spec is not None:
+            try:
+                validate_editable_xls_template(temp_path, editable_spec)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if legacy_editable_spec is not None:
+            try:
+                validate_legacy_editable_xls_template(temp_path, legacy_editable_spec)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         temp_path.replace(target_path)
     except OSError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Не удалось заменить шаблон: {exc}") from exc
@@ -182,12 +252,43 @@ def replace_document_template(
             temp_path.unlink(missing_ok=True)
 
     template.file_path = str(target_path)
+    template.file_name = target_path.name
     template.template_type = target_suffix.lstrip(".")
     template.output_format = target_suffix.lstrip(".")
     template.is_active = True
     db.commit()
     db.refresh(template)
-    return DocumentTemplateRead.model_validate(template)
+    return _template_response(template)
+
+
+@router.post("/templates/{template_id}/reset", response_model=DocumentTemplateRead)
+def reset_document_template(
+    template_id: int,
+    _: User = Depends(require_template_file_access),
+    db: Session = Depends(get_db),
+) -> DocumentTemplateRead:
+    template = db.get(DocumentTemplate, template_id)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
+
+    override_path = get_template_override_path(template.file_name)
+    bundled_path = (get_templates_root() / template.file_name).resolve()
+    if not bundled_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Встроенный шаблон не найден")
+    try:
+        override_path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не удалось удалить клиентскую версию: {exc}",
+        ) from exc
+
+    template.file_path = str(bundled_path)
+    template.template_type = bundled_path.suffix.lower().lstrip(".")
+    template.output_format = template.template_type
+    db.commit()
+    db.refresh(template)
+    return _template_response(template)
 
 
 @router.post("/generate", response_model=DocumentGenerateResponse)
@@ -299,17 +400,16 @@ def create_generated_file_print_ticket(
 
     return DocumentPrintTicketResponse(
         file_name=file_path.name,
-        file_url=str(request.url_for("download_print_ticket_file", token=token)),
+        file_url=_public_url_for(request, "download_print_ticket_file_named", token=token, file_name=file_path.name),
         expires_in_seconds=_PRINT_TICKET_TTL_SECONDS,
     )
 
 
-@router.get("/print-ticket/{token}", name="download_print_ticket_file")
-def download_print_ticket_file(token: str) -> FileResponse:
+def _download_print_ticket(token: str) -> FileResponse:
     now = datetime.now(timezone.utc)
     with _print_ticket_lock:
         _cleanup_expired_print_tickets(now)
-        ticket = _print_tickets.pop(token, None)
+        ticket = _print_tickets.get(token)
 
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РЎСЃС‹Р»РєР° РґР»СЏ РїРµС‡Р°С‚Рё РЅРµ РЅР°Р№РґРµРЅР° РёР»Рё СѓСЃС‚Р°СЂРµР»Р°")
@@ -325,6 +425,16 @@ def download_print_ticket_file(token: str) -> FileResponse:
         content_disposition_type=_document_disposition_type(file_path, inline_requested=True),
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"},
     )
+
+
+@router.get("/print-ticket/{token}/{file_name}", name="download_print_ticket_file_named")
+def download_print_ticket_file_named(token: str, file_name: str) -> FileResponse:
+    return _download_print_ticket(token)
+
+
+@router.get("/print-ticket/{token}", name="download_print_ticket_file")
+def download_print_ticket_file(token: str) -> FileResponse:
+    return _download_print_ticket(token)
 
 
 @router.get("/generated/{file_name}")

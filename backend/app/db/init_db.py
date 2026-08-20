@@ -1,6 +1,13 @@
 from app.db.base import Base
 from app.db.session import engine, SessionLocal
-from app.models.blank_form import BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
+from app.models.blank_form import (
+    BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
+    NUMBERED_BLANK_TYPES,
+)
 from app.models import *  # noqa: F401,F403
 from app.services.seed import seed_reference_data
 from sqlalchemy import inspect, select, text
@@ -48,6 +55,10 @@ CLIENT_PROFILE_COLUMNS = {
     "mkb10": "VARCHAR(80)",
     "real_date_text": "VARCHAR(120)",
     "legacy_payload_json": "JSON",
+}
+
+ENCOUNTER_PROFILE_COLUMNS = {
+    "suppressed_doctor_role_ids": "JSON",
 }
 
 SPORT_CONCLUSION_PHRASES = [
@@ -182,6 +193,19 @@ def ensure_client_profile_columns() -> None:
         )
 
 
+def ensure_encounter_profile_columns() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("encounters"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("encounters")}
+    dialect = engine.dialect.name
+    with engine.begin() as connection:
+        for column_name, column_type in ENCOUNTER_PROFILE_COLUMNS.items():
+            if column_name not in columns:
+                add_column_if_missing(connection, dialect, "encounters", column_name, column_type)
+
+
 def ensure_blank_form_tables() -> None:
     inspector = inspect(engine)
     blank_table_names = {"blank_types", "blank_batches", "blank_forms"}
@@ -204,6 +228,10 @@ def ensure_blank_form_tables() -> None:
                 add_integer_column_if_missing(connection, dialect, "generated_documents", "cancelled_by_user_id")
             if "cancelled_reason" not in generated_columns:
                 add_column_if_missing(connection, dialect, "generated_documents", "cancelled_reason", "VARCHAR(500)")
+            if "file_deleted_at" not in generated_columns:
+                add_column_if_missing(connection, dialect, "generated_documents", "file_deleted_at", "TIMESTAMP WITH TIME ZONE")
+            if "file_delete_reason" not in generated_columns:
+                add_column_if_missing(connection, dialect, "generated_documents", "file_delete_reason", "VARCHAR(500)")
             create_index_if_possible(connection, dialect, "ix_generated_documents_blank_form_id", "generated_documents", "blank_form_id")
             create_index_if_possible(connection, dialect, "ix_generated_documents_blank_number_snapshot", "generated_documents", "blank_number_snapshot")
 
@@ -249,24 +277,81 @@ def ensure_document_template_blank_columns() -> None:
             "blank_type",
         )
 
-        connection.execute(
-            text(
+        blank_type_updates = [
+            (
+                BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
                 """
-                UPDATE document_templates
-                SET requires_numbered_blank = TRUE,
-                    blank_type = :blank_type
-                WHERE (
-                    lower(coalesce(name, '')) LIKE '%вод%'
-                    OR lower(coalesce(file_name, '')) LIKE '%вод%'
-                    OR lower(coalesce(code, '')) LIKE '%driver%'
-                    OR lower(coalesce(name, '')) LIKE '%driver%'
-                    OR lower(coalesce(file_name, '')) LIKE '%driver%'
-                )
-                AND coalesce(requires_numbered_blank, FALSE) = FALSE
-                """
+                lower(coalesce(name, '')) LIKE '%гимс%'
+                OR lower(coalesce(file_name, '')) LIKE '%гимс%'
+                OR lower(coalesce(code, '')) LIKE '%gims%'
+                OR lower(coalesce(name, '')) LIKE '%gims%'
+                OR lower(coalesce(file_name, '')) LIKE '%gims%'
+                """,
             ),
-            {"blank_type": BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE},
-        )
+            (
+                BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%лмк%'
+                OR lower(coalesce(file_name, '')) LIKE '%лмк%'
+                OR lower(coalesce(code, '')) LIKE '%lmk%'
+                OR lower(coalesce(name, '')) LIKE '%lmk%'
+                OR lower(coalesce(file_name, '')) LIKE '%lmk%'
+                """,
+            ),
+            (
+                BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%вод%'
+                OR lower(coalesce(file_name, '')) LIKE '%вод%'
+                OR lower(coalesce(code, '')) LIKE '%driver%'
+                OR lower(coalesce(name, '')) LIKE '%driver%'
+                OR lower(coalesce(file_name, '')) LIKE '%driver%'
+                """,
+            ),
+            (
+                BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%трактор%'
+                OR lower(coalesce(file_name, '')) LIKE '%трактор%'
+                OR lower(coalesce(code, '')) LIKE '%tractor%'
+                OR lower(coalesce(name, '')) LIKE '%tractor%'
+                OR lower(coalesce(file_name, '')) LIKE '%tractor%'
+                OR lower(coalesce(name, '')) LIKE '%071%'
+                OR lower(coalesce(file_name, '')) LIKE '%071%'
+                """,
+            ),
+            (
+                BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+                """
+                lower(coalesce(name, '')) LIKE '%охран%'
+                OR lower(coalesce(file_name, '')) LIKE '%охран%'
+                OR lower(coalesce(code, '')) LIKE '%guard%'
+                OR lower(coalesce(name, '')) LIKE '%guard%'
+                OR lower(coalesce(file_name, '')) LIKE '%guard%'
+                OR lower(coalesce(name, '')) LIKE '%чод%'
+                OR lower(coalesce(file_name, '')) LIKE '%чод%'
+                OR lower(coalesce(name, '')) LIKE '%002%'
+                OR lower(coalesce(file_name, '')) LIKE '%002%'
+                """,
+            ),
+        ]
+        for blank_type, predicate in blank_type_updates:
+            connection.execute(
+                text(
+                    f"""
+                    UPDATE document_templates
+                    SET requires_numbered_blank = TRUE,
+                        blank_type = :blank_type
+                    WHERE ({predicate})
+                    AND (
+                        coalesce(requires_numbered_blank, FALSE) = FALSE
+                        OR blank_type IS NULL
+                        OR blank_type = ''
+                    )
+                    """
+                ),
+                {"blank_type": blank_type},
+            )
 
 
 def seed_blank_types() -> None:
@@ -274,16 +359,79 @@ def seed_blank_types() -> None:
         return
 
     with SessionLocal() as db:
-        existing = db.execute(select(BlankType).where(BlankType.code == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE)).scalar_one_or_none()
-        if existing is None:
-            db.add(
-                BlankType(
-                    code=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
-                    name="Медицинское заключение для водительского удостоверения",
-                    is_active=True,
-                )
-            )
-            db.commit()
+        for code, name in NUMBERED_BLANK_TYPES:
+            existing = db.execute(select(BlankType).where(BlankType.code == code)).scalar_one_or_none()
+            if existing is None:
+                db.add(BlankType(code=code, name=name, is_active=True))
+            else:
+                existing.name = name
+                existing.is_active = True
+        db.flush()
+        db.execute(
+            text(
+                """
+                UPDATE blank_batches
+                SET blank_type = CASE
+                    WHEN coalesce(series, '') LIKE 'ЛМК%'
+                        OR lower(coalesce(series, '')) LIKE 'лмк%'
+                        OR lower(coalesce(series, '')) LIKE 'lmk%'
+                        THEN :lmk_type
+                    WHEN coalesce(series, '') LIKE 'ГИМС%'
+                        OR lower(coalesce(series, '')) LIKE 'гимс%'
+                        OR lower(coalesce(series, '')) LIKE 'gims%'
+                        THEN :gims_type
+                    ELSE blank_type
+                END
+                WHERE blank_type = :driver_type
+                  AND (
+                    coalesce(series, '') LIKE 'ЛМК%'
+                    OR lower(coalesce(series, '')) LIKE 'лмк%'
+                    OR lower(coalesce(series, '')) LIKE 'lmk%'
+                    OR coalesce(series, '') LIKE 'ГИМС%'
+                    OR lower(coalesce(series, '')) LIKE 'гимс%'
+                    OR lower(coalesce(series, '')) LIKE 'gims%'
+                  )
+                """
+            ),
+            {
+                "driver_type": BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                "gims_type": BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                "lmk_type": BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+            },
+        )
+        db.execute(
+            text(
+                """
+                UPDATE blank_forms
+                SET blank_type = CASE
+                    WHEN coalesce(series, '') LIKE 'ЛМК%'
+                        OR lower(coalesce(series, '')) LIKE 'лмк%'
+                        OR lower(coalesce(series, '')) LIKE 'lmk%'
+                        THEN :lmk_type
+                    WHEN coalesce(series, '') LIKE 'ГИМС%'
+                        OR lower(coalesce(series, '')) LIKE 'гимс%'
+                        OR lower(coalesce(series, '')) LIKE 'gims%'
+                        THEN :gims_type
+                    ELSE blank_type
+                END
+                WHERE blank_type = :driver_type
+                  AND (
+                    coalesce(series, '') LIKE 'ЛМК%'
+                    OR lower(coalesce(series, '')) LIKE 'лмк%'
+                    OR lower(coalesce(series, '')) LIKE 'lmk%'
+                    OR coalesce(series, '') LIKE 'ГИМС%'
+                    OR lower(coalesce(series, '')) LIKE 'гимс%'
+                    OR lower(coalesce(series, '')) LIKE 'gims%'
+                  )
+                """
+            ),
+            {
+                "driver_type": BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+                "gims_type": BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+                "lmk_type": BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+            },
+        )
+        db.commit()
 
 
 def seed_sport_conclusion_phrases() -> None:
@@ -317,6 +465,7 @@ def init_db() -> None:
     ensure_client_patient_numbers()
     ensure_legacy_import_columns()
     ensure_client_profile_columns()
+    ensure_encounter_profile_columns()
     ensure_blank_form_tables()
     ensure_document_template_blank_columns()
     seed_blank_types()

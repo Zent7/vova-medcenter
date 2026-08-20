@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from decimal import Decimal
+import re
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -50,16 +51,16 @@ SERVICE_CATALOG = [
     (34, 5, "Приём врача НЕВРОЛОГА", "2200.00"),
     (28, 5, "Приём врача ТЕРАПЕВТА", "2200.00"),
     (16, 6, "Первичный профосмотр 29Н", "3500.00"),
-    (24, 7, "Санаторно-курортная карта 072У", "2500.00"),
-    (2, 7, "Справка формы 001 ГСУ", "1800.00"),
+    (24, 7, "072 у СКК", "2500.00"),
+    (2, 7, "ГС", "1800.00"),
     (9, 7, "Справка 002 ЧОД (для охраны)", "3500.00"),
     (3, 7, "Справка в бассейн", "1000.00"),
     (10, 7, "Справка выезжающих за границу 082у", "2000.00"),
-    (11, 7, "Справка для работы с гостайной формы 989Н", "1800.00"),
+    (11, 7, "ГТ", "1800.00"),
     (4, 7, "Справка ГТО 1144", "1500.00"),
     (12, 7, "Справка формы 086у", "2200.00"),
-    (30, 7, "Справка 095/у о временной нетрудоспособности", "1800.00"),
-    (5, 7, "Справка спорт + ЭКГ", "1200.00"),
+    (30, 7, "095", "1800.00"),
+    (5, 7, "спорт", "1200.00"),
     (13, 8, "УЗИ брюшной полости", "2000.00"),
     (14, 8, "УЗИ молочных желез", "1500.00"),
     (15, 8, "УЗИ предстательной железы", "1500.00"),
@@ -71,7 +72,7 @@ SERVICE_CATALOG = [
 DOCTOR_ROLES = [
     (1, "therapist", "Терапевт", 10),
     (2, "psychiatrist", "Психиатр", 20),
-    (3, "psychiatrist-narcologist", "Психиатр-Нарколог", 30),
+    (3, "psychiatrist-narcologist", "Психиатр-нарколог", 30),
     (4, "neurologist", "Невролог", 40),
     (5, "otolaryngologist", "Отоларинголог", 50),
     (6, "gynecologist", "Гинеколог", 60),
@@ -134,9 +135,10 @@ SERVICE_CATALOG = [
     (8, 2, "Медицинская комиссия", "4000.00"),
     (29, 2, "Медицинская комиссия", "3500.00"),
     (18, 4, "ЛМК", "4000.00"),
+    (42, 4, "ЛМК справка", "0.00"),
     (19, 4, "Продление ЛМК", "3500.00"),
     (7, 2, "071У", "4000.00"),
-    (37, 3, "Медкомиссия для управления маломерными судами", "3500.00"),
+    (37, 3, "ГИМС", "3500.00"),
     (33, 4, "Направление на флюорографию", "1000.00"),
     (23, 4, "Фото для ЛМК", "200.00"),
     (28, 5, "Приём врача терапевта", "2200.00"),
@@ -145,19 +147,22 @@ SERVICE_CATALOG = [
     (36, 5, "Повторный приём врача невролога дубль", "1800.00"),
     (16, 6, "Профосмотр", "3500.00"),
     (12, 7, "Справка формы 086у", "2200.00"),
-    (2, 7, "Справка формы 001 ГСУ", "1800.00"),
-    (11, 7, "Справка для работы с гостайной формы 989Н", "1800.00"),
+    (2, 7, "ГС", "1800.00"),
+    (11, 7, "ГТ", "1800.00"),
     (4, 7, "Справка ГТО 1144", "1500.00"),
     (3, 7, "Справка для посещения бассейна", "1000.00"),
-    (5, 7, "Справка спорт + ЭКГ", "1200.00"),
-    (27, 9, "Электрокардиография (ЭКГ)", "1200.00"),
-    (30, 7, "Справка 095/у о временной нетрудоспособности", "1800.00"),
-    (24, 7, "Санаторно-курортная карта 072У", "2500.00"),
-    (31, 7, "Справка для получения путевки 070У", "2000.00"),
+    (5, 7, "спорт", "1200.00"),
+    (27, 9, "ЭКГ", "1200.00"),
+    (9, 7, "Справка 002 ЧОД (для охраны)", "3500.00"),
+    (30, 7, "095", "1800.00"),
+    (24, 7, "072 у СКК", "2500.00"),
+    (31, 7, "070у", "2000.00"),
     (10, 7, "Справка для выезжающих за границу 082у", "2000.00"),
-    (32, 7, "Капельное введение лекарственных средств", "1500.00"),
+    (32, 7, "капельница", "1500.00"),
     (38, 7, "Морская медицинская комиссия", "6000.00"),
-    (39, 7, "DRUG/ALCOHOL TEST \u2116 96", "2500.00"),
+    (40, 7, "Справка 342н (псих. освид.)", "1800.00"),
+    (43, 7, "СЭМТ-196 без ФЛГ", "2500.00"),
+    (44, 7, "СЭМТ-196 с ФЛГ", "3500.00"),
     (13, 8, "УЗИ брюшной полости", "2000.00"),
     (14, 8, "УЗИ молочных желез", "1500.00"),
     (15, 8, "УЗИ предстательной железы", "1500.00"),
@@ -183,28 +188,35 @@ DOCTOR_ROLES = [
 ]
 
 SERVICE_DOCTOR_ROLE_IDS = {
-    8: [1, 4, 5, 7, 13],
-    29: [1, 7, 13],
-    7: [1, 4, 5, 7, 13],
-    37: [1, 5, 7, 13],
+    8: [1, 4, 5, 7],
+    29: [1, 7],
+    7: [1, 4, 5, 7],
+    37: [1, 13],
     18: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13],
+    42: [1, 13],
     19: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13],
-    38: [1, 4, 5, 7, 13],
+    38: [1, 4, 5, 7],
     16: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13],
     28: [1],
     34: [4],
     35: [4],
     36: [4],
-    2: [1, 2, 3],
-    3: [1],
+    2: [4, 2, 1, 13],
+    3: [1, 6, 8],
     4: [1],
-    5: [1],
+    5: [1, 10],
+    9: [1, 7],
     10: [1],
-    11: [1, 2, 3, 4],
-    12: [1, 13],
-    24: [1],
+    11: [4, 2, 1, 13],
+    12: [6, 1, 10, 4, 7, 5, 13],
+    24: [1, 13],
     27: [1],
     30: [1],
+    31: [13],
+    39: [1, 13],
+    40: [2, 4, 1, 13],
+    43: [1, 13],
+    44: [1, 13],
 }
 
 SERVICE_RECALL_AFTER_DAYS = {
@@ -213,11 +225,13 @@ SERVICE_RECALL_AFTER_DAYS = {
     7: 365,
     37: 365,
     18: 365,
+    42: 365,
     19: 365,
     3: 180,
     4: 365,
     5: 365,
     6: 365,
+    9: 365,
     10: 365,
     11: 365,
     12: 365,
@@ -227,15 +241,24 @@ SERVICE_RECALL_AFTER_DAYS = {
     24: 365,
     27: 365,
     30: 365,
+    40: 365,
+    43: 365,
+    44: 365,
 }
 
-SERVICE_CATALOG = [item for item in SERVICE_CATALOG if item[0] != 36]
-SERVICE_DOCTOR_ROLE_IDS = {service_id: role_ids for service_id, role_ids in SERVICE_DOCTOR_ROLE_IDS.items() if service_id != 36}
+DEPRECATED_SERVICE_LEGACY_IDS = {36, 39, 41}
+SERVICE_CATALOG = [item for item in SERVICE_CATALOG if item[0] not in DEPRECATED_SERVICE_LEGACY_IDS]
+SERVICE_DOCTOR_ROLE_IDS = {
+    service_id: role_ids
+    for service_id, role_ids in SERVICE_DOCTOR_ROLE_IDS.items()
+    if service_id not in DEPRECATED_SERVICE_LEGACY_IDS
+}
+SERVICE_RECALL_AFTER_DAYS = {
+    service_id: days
+    for service_id, days in SERVICE_RECALL_AFTER_DAYS.items()
+    if service_id not in DEPRECATED_SERVICE_LEGACY_IDS
+}
 CERTIFICATE_SERVICE_LEGACY_IDS = {legacy_id for legacy_id, group_id, _, _ in SERVICE_CATALOG if group_id == 7}
-for service_id in CERTIFICATE_SERVICE_LEGACY_IDS:
-    role_ids = SERVICE_DOCTOR_ROLE_IDS.setdefault(service_id, [])
-    if 13 not in role_ids:
-        role_ids.append(13)
 
 SERVICE_GROUP_SORT_OVERRIDES = {
     "legacy-group-2": 10,  # ВУ
@@ -264,7 +287,7 @@ VISIT_TYPES = [
 
 VISIT_TYPE_SERVICE_LEGACY_IDS = {
     "driver": [8, 29],
-    "lmk_new": [18, 33, 23],
+    "lmk_new": [18, 42, 33, 23],
     "lmk_extend": [19, 33],
     "tractor": [7],
     "gims": [37],
@@ -272,7 +295,7 @@ VISIT_TYPE_SERVICE_LEGACY_IDS = {
     "prof": [16],
     "sport": [4, 5],
     "guard": [9, 11],
-    "other": [2, 3, 10, 24, 27, 30, 31, 32, 38, 39],
+    "other": [2, 3, 10, 24, 27, 30, 31, 32, 38, 40, 43],
 }
 
 TEMPLATE_PHRASES = [
@@ -280,7 +303,6 @@ TEMPLATE_PHRASES = [
     ("ophthalmologist", "normal", "Норма", "Патологии органа зрения не выявлено."),
     ("neurologist", "normal", "Норма", "Очаговой неврологической симптоматики не выявлено."),
     ("psychiatrist", "normal", "Норма", "Психиатрических противопоказаний не выявлено."),
-    ("psychiatrist-narcologist", "normal", "Норма", "Признаков наркологического заболевания не выявлено."),
     ("otolaryngologist", "normal", "Норма", "Патологии ЛОР-органов не выявлено."),
     ("chairman", "allowed", "Допущен", "По результатам медицинского осмотра противопоказаний не выявлено."),
 ]
@@ -372,6 +394,7 @@ def seed_reference_data(db: Session) -> None:
         _ensure_user_roles_and_staff(db)
         _ensure_center_details(db)
         _ensure_service_catalog(db)
+        _backfill_guard_certificate_service_records(db)
         _ensure_foundation_catalog(db)
         has_large_import = db.execute(select(Client.id).offset(2000).limit(1)).scalar_one_or_none() is not None
         if not has_large_import:
@@ -585,7 +608,7 @@ def _ensure_foundation_catalog(db: Session) -> None:
         template.output_format = template.output_format or template.template_type
         if template.visit_type_id is None:
             template_name = f"{template.name} {template.file_name}".lower()
-            if "вод" in template_name or "driver" in template_name:
+            if "вод" in template_name or "driver" in template_name or re.search(r"(?:^|\W)ву(?:$|\W)", template_name):
                 template.visit_type_id = visit_type_by_code.get("driver").id if visit_type_by_code.get("driver") else None
             elif "лмк" in template_name:
                 template.visit_type_id = visit_type_by_code.get("lmk_new").id if visit_type_by_code.get("lmk_new") else None
@@ -652,6 +675,51 @@ def _ensure_service_catalog(db: Session) -> None:
         old_service = db.execute(select(Service).where(Service.code == old_code)).scalar_one_or_none()
         if old_service is not None:
             old_service.is_active = False
+
+    for old_legacy_id in DEPRECATED_SERVICE_LEGACY_IDS:
+        old_service = db.execute(select(Service).where(Service.legacy_source_id == old_legacy_id)).scalar_one_or_none()
+        if old_service is not None:
+            old_service.is_active = False
+            old_service.recall_after_days = None
+            db.execute(
+                ServiceDoctorRole.__table__.delete().where(ServiceDoctorRole.service_id == old_service.id)
+            )
+
+    db.commit()
+
+
+def _backfill_guard_certificate_service_records(db: Session) -> None:
+    """Move guard certificate encounters that were saved with the 071U service id."""
+    guard_service = db.execute(select(Service).where(Service.legacy_source_id == 9)).scalar_one_or_none()
+    tractor_service = db.execute(select(Service).where(Service.legacy_source_id == 7)).scalar_one_or_none()
+    if guard_service is None or tractor_service is None:
+        return
+
+    rows = db.execute(
+        select(EncounterService, Client.legacy_payload_json)
+        .join(Encounter, EncounterService.encounter_id == Encounter.id)
+        .join(Client, Encounter.client_id == Client.id)
+        .where(
+            EncounterService.service_id == tractor_service.id,
+            Client.legacy_payload_json.is_not(None),
+        )
+    ).all()
+    for encounter_service, legacy_payload in rows:
+        payload_text = str(legacy_payload or "").lower()
+        has_guard_marker = (
+            "\u043e\u0445\u0440\u0430\u043d" in payload_text
+            or "\u0447\u043e\u0434" in payload_text
+            or "guard" in payload_text
+            or "chod" in payload_text
+        )
+        if "002" not in payload_text or not has_guard_marker:
+            continue
+
+        encounter_service.service_id = guard_service.id
+        if not encounter_service.unit_price:
+            encounter_service.unit_price = guard_service.price
+        if not encounter_service.line_total:
+            encounter_service.line_total = guard_service.price
 
     db.commit()
 

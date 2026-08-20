@@ -81,6 +81,47 @@
     return match ? match[1] : null;
   }
 
+  function isPresetTextField(element) {
+    if (!element || element.type === "radio" || element.type === "checkbox") return false;
+    if (element.tagName === "TEXTAREA") return true;
+    if (element.tagName !== "INPUT") return false;
+    return ["", "text", "search", "tel", "url", "email", "number"].includes(element.type || "");
+  }
+
+  function getFirstNamedControl(elements) {
+    if (!elements) return null;
+    if (elements.length && elements.tagName === undefined) return elements[0] || null;
+    return elements;
+  }
+
+  function getNamedControls(elements) {
+    if (!elements) return [];
+    if (elements.length && elements.tagName === undefined) return Array.from(elements);
+    return [elements];
+  }
+
+  function dispatchPresetFieldEvents(element) {
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function escapeCssAttributeValue(value) {
+    if (window.CSS?.escape) return window.CSS.escape(String(value));
+    return String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  function applyPresetFieldValue(form, fieldKey, value) {
+    const element = getFirstNamedControl(form.elements[fieldKey]);
+    if (!isPresetTextField(element)) return false;
+
+    const nextValue = value == null ? "" : repairPresetText(value);
+    if (element.value === nextValue) return false;
+
+    element.value = nextValue;
+    dispatchPresetFieldEvents(element);
+    return true;
+  }
+
   function notifyMissingDoctorPreset(doctorRoleId, presetName, presets) {
     const availablePresets = presets && typeof presets === "object" ? Object.keys(presets) : [];
     console.warn("Doctor preset was not found", {
@@ -93,26 +134,34 @@
 
   const AUTO_EKG_CONCLUSION_PREFIX =
     "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей";
+  const GUARD_AUTO_EKG_CONCLUSION_PREFIX =
+    "Ритм синусовый, ЧСС, ЭОС нормальное положение, ЭКГ без особенностей";
 
   function extractRuDate(value) {
     return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{2}|\d{4})\b/)?.[0] || "";
   }
 
-  function todayRuDate() {
+  function todayRuDate(useFullYear = false) {
     return new Date().toLocaleDateString("ru-RU", {
       day: "2-digit",
       month: "2-digit",
-      year: "2-digit",
+      year: useFullYear ? "numeric" : "2-digit",
     });
   }
 
-  function buildAutoEkgConclusion(date) {
-    const finalDate = extractRuDate(date) || todayRuDate();
-    return `${AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
+  function getAutoEkgConclusionPrefix(chairmanType = "") {
+    return chairmanType === "guard" ? GUARD_AUTO_EKG_CONCLUSION_PREFIX : AUTO_EKG_CONCLUSION_PREFIX;
   }
 
-  function isAutoEkgConclusion(value) {
-    return String(value ?? "").trim().startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `);
+  function buildAutoEkgConclusion(date, chairmanType = "") {
+    const finalDate = extractRuDate(date) || todayRuDate(chairmanType === "guard");
+    return `${getAutoEkgConclusionPrefix(chairmanType)} от ${finalDate}`;
+  }
+
+  function isAutoEkgConclusion(value, chairmanType = "") {
+    const normalized = String(value ?? "").trim();
+    if (normalized.startsWith(`${getAutoEkgConclusionPrefix(chairmanType)} от `)) return true;
+    return chairmanType === "guard" && normalized.startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `);
   }
 
   function closeMedicalRequirementsPicker() {
@@ -123,8 +172,11 @@
     if (!textarea) return;
     closeMedicalRequirementsPicker();
 
-    let history = saveMedicalRequirementsHistory(loadMedicalRequirementsHistory());
-    let selectedValue = normalizeMedicalRequirementValue(textarea.value) || history[0] || "";
+    const currentTextareaValue = normalizeMedicalRequirementValue(textarea.value);
+    let history = currentTextareaValue
+      ? rememberMedicalRequirementValue(currentTextareaValue)
+      : saveMedicalRequirementsHistory(loadMedicalRequirementsHistory());
+    let selectedValue = currentTextareaValue || history[0] || "";
     const overlay = document.createElement("div");
     overlay.className = "medical-requirements-picker";
     overlay.dataset.medicalRequirementsPicker = "true";
@@ -401,7 +453,7 @@
               <div class="doctor-classic-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">ОК</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
               </div>
             </div>
           </form>
@@ -605,7 +657,7 @@
               <div class="doctor-classic-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">ОК</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
               </div>
             </div>
           </form>
@@ -741,7 +793,7 @@
               <div class="doctor-classic-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">ОК</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
               </div>
             </div>
           </form>
@@ -804,22 +856,44 @@
   function renderChairmanClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = fields.birthDate || client?.birthDate || "";
+    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
     const emptyLegacyValue = (value, legacyValues = []) => {
       const normalized = String(value ?? "");
       return legacyValues.includes(normalized) ? "" : normalized;
     };
+    const chairmanInfo = window.getChairmanFormInfo?.(exam, client) || {};
+    const chairmanType = chairmanInfo.type || "default";
+    const keepEkgFieldsManual = ["lmk", "prof"].includes(chairmanType);
     const ekgValue = emptyLegacyValue(fields.ekg, ['Медицинский центр ООО "ЦМО "ЮЛМЕД" ЭКГ от 07.04.2025']);
     const examDateValue = fields.examDate ?? "";
-    const ekgDate = extractRuDate(ekgValue) || extractRuDate(examDateValue) || todayRuDate();
-    const storedEkgConclusionValue = emptyLegacyValue(fields.ekgConclusion, [
+    const ekgDate = extractRuDate(ekgValue) || extractRuDate(examDateValue);
+    const rawStoredEkgConclusionValue = emptyLegacyValue(fields.ekgConclusion, [
       "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей от 07.04.2025",
     ]);
-    const ekgConclusionValue = String(storedEkgConclusionValue).trim()
-      ? storedEkgConclusionValue
-      : buildAutoEkgConclusion(ekgDate);
+    const storedEkgConclusionValue =
+      chairmanType === "guard" &&
+      String(rawStoredEkgConclusionValue).trim().startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `)
+        ? ""
+        : rawStoredEkgConclusionValue;
+    const ekgConclusionValue =
+      keepEkgFieldsManual || String(storedEkgConclusionValue).trim()
+        ? storedEkgConclusionValue
+        : buildAutoEkgConclusion(ekgDate, chairmanType);
     const noteValue = emptyLegacyValue(fields.note, ["прио/"]);
     const fieldOptions = (key) => template.fields.find((field) => field.key === key)?.options || [];
+    const isDriverChairmanFlow = chairmanInfo.printMode === "driver-flow";
+    const hideDriverDetails = [
+      "sport",
+      "pool",
+      "gto",
+      "certificate072",
+      "certificate086",
+      "certificate095",
+      "semt196",
+      "gsu",
+      "gostaina",
+      "guard",
+    ].includes(chairmanType);
     const renderChairmanSelect = (name, value, options) => {
       const currentValue = String(value ?? "");
       const selectOptions = currentValue && !options.includes(currentValue) ? [...options, currentValue] : options;
@@ -839,8 +913,6 @@
       `;
     };
 
-    const chairmanInfo = window.getChairmanFormInfo?.(exam, client) || {};
-    const chairmanType = chairmanInfo.type || "default";
     const chairmanTitle = chairmanInfo.label || template.name;
     const templateLabel = chairmanInfo.templateName || "шаблон будет выбран по услуге";
 
@@ -871,7 +943,7 @@
               <div class="chairman-top-left">
                 <div class="chairman-mini-row">
                   <label class="chairman-mini-label">дата рождения</label>
-                  <input class="doctor-classic-input" type="text" name="birthDate" value="${escapeHtml(birthDate)}" />
+                  <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
                 </div>
               </div>
 
@@ -1006,6 +1078,7 @@
                 </div>
               </div>
 
+              ${hideDriverDetails ? "" : `
               <div class="chairman-conclusion-right">
                 <div class="chairman-columns">
                   <div class="chairman-column">
@@ -1028,7 +1101,7 @@
                     ${renderCheckboxField("categoryD1E", !!fields.categoryD1E, "D1E")}
                     ${renderCheckboxField("categoryTractor", !!fields.categoryTractor, "тракторы (п.8.)")}
                     ${renderCheckboxField("categoryBoat", !!fields.categoryBoat, "лайнеры и катера (п.9)")}
-                    ${renderCheckboxField("categorySailing", !!fields.categorySailing, "парусный спорт")}
+                    ${isDriverChairmanFlow ? "" : renderCheckboxField("categorySailing", !!fields.categorySailing, "парусный спорт")}
                   </div>
 
                   <div class="chairman-column">
@@ -1052,6 +1125,7 @@
                   </div>
                 </div>
               </div>
+              `}
 
               <div class="chairman-actions">
                 <button type="submit" class="chairman-action-btn">Сохранить</button>
@@ -1059,10 +1133,12 @@
               </div>
             </div>
 
-            <div class="chairman-footer">
-              ${renderCheckboxField("periodicProf", !!fields.periodicProf, "Периодический проф")}
-              ${renderCheckboxField("stampApplied", !!fields.stampApplied, "Печать поставлена")}
-            </div>
+            ${isDriverChairmanFlow || hideDriverDetails ? "" : `
+              <div class="chairman-footer">
+                ${renderCheckboxField("periodicProf", !!fields.periodicProf, "Периодический проф")}
+                ${renderCheckboxField("stampApplied", !!fields.stampApplied, "Печать поставлена")}
+              </div>
+            `}
 
             <div class="chairman-note">
               <label>Примечание:</label>
@@ -1389,7 +1465,7 @@
               <div class="psy-sidebar">
                 <button type="submit" class="doctor-classic-sidebtn">Сохранить</button>
                 <button type="button" class="doctor-classic-sidebtn" data-doctor-exam-close>Отмена</button>
-                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>Удаление</button>
+                <button type="button" class="doctor-classic-sidebtn doctor-classic-sidebtn--danger" data-doctor-exam-delete>удалить врача</button>
 
                 <div class="psy-sidebar-meta">
                   <div class="psy-sidebar-meta__row">
@@ -1525,6 +1601,7 @@
 
   function collectFormData(form, template) {
     const result = {};
+    const missingControl = Symbol("missingControl");
     const readInputValue = (input) => {
       if (!input) return "";
       if (input.type === "radio") {
@@ -1536,18 +1613,23 @@
       }
       return input.value ?? "";
     };
+    const readNamedValue = (name, fieldType = "") => {
+      const controls = getNamedControls(form.elements[name]).filter(Boolean);
+      if (!controls.length) return missingControl;
+      if (fieldType === "radio") {
+        return form.querySelector(`input[name="${escapeCssAttributeValue(name)}"]:checked`)?.value || "";
+      }
+      if (fieldType === "checkbox") {
+        return controls.length > 1
+          ? controls.filter((input) => input.checked).map((input) => input.value)
+          : Boolean(controls[0].checked);
+      }
+      return readInputValue(controls[0]);
+    };
 
     (template.fields || []).forEach((field) => {
-      if (field.type === "radio") {
-        const checked = form.querySelector(`input[name="${field.key}"]:checked`);
-        result[field.key] = checked ? checked.value : "";
-      } else if (field.type === "checkbox") {
-        const input = form.elements[field.key];
-        result[field.key] = !!input?.checked;
-      } else {
-        const input = form.elements[field.key];
-        result[field.key] = input ? input.value : "";
-      }
+      const value = readNamedValue(field.key, field.type);
+      if (value !== missingControl) result[field.key] = value;
     });
 
     form.querySelectorAll("input[name], textarea[name], select[name]").forEach((input) => {
@@ -1604,25 +1686,12 @@
     });
 
     modal.querySelectorAll("[data-doctor-exam-delete]").forEach((button) => {
-      const currentForm = modal.querySelector("[data-doctor-exam-form]");
-      const currentExam = window.getDoctorExamById?.(currentForm?.dataset.examId);
-      if (currentExam?.isCompleted) {
-        button.textContent = "Снять отметку";
-      }
+      button.textContent = "удалить врача";
 
       button.addEventListener("click", async () => {
         const form = modal.querySelector("[data-doctor-exam-form]");
         const examId = form?.dataset.examId;
         if (!examId) return;
-        const exam = window.getDoctorExamById?.(examId);
-        if (exam?.isCompleted) {
-          if (!window.confirm("Снять отметку врача? Карточка осмотра останется черновиком.")) return;
-          const removed = await window.uncompleteDoctorExam?.(examId);
-          if (removed) {
-            window.closeDoctorExamCard();
-          }
-          return;
-        }
         if (!window.confirm("Удалить карточку врача?")) return;
         const deleted = await window.deleteDoctorExam?.(examId);
         if (deleted) {
@@ -1637,13 +1706,23 @@
     if (form.dataset.doctorRoleId === "chairman") {
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");
       if (medicalRequirementsInput) {
+        let medicalRequirementsRememberTimer = null;
         const rememberCurrentRequirements = () => rememberMedicalRequirementValue(medicalRequirementsInput.value);
-        const medicalRequirementsOpenButton = form.querySelector("[data-medical-requirements-open]");
-        medicalRequirementsOpenButton?.addEventListener("click", (event) => {
+        const rememberCurrentRequirementsSoon = () => {
+          window.clearTimeout(medicalRequirementsRememberTimer);
+          medicalRequirementsRememberTimer = window.setTimeout(rememberCurrentRequirements, 250);
+        };
+        const openRequirementsPicker = (event) => {
           event.preventDefault();
           event.stopPropagation();
+          rememberCurrentRequirements();
           openMedicalRequirementsPicker(medicalRequirementsInput);
-        });
+        };
+        const medicalRequirementsOpenButton = form.querySelector("[data-medical-requirements-open]");
+        medicalRequirementsOpenButton?.addEventListener("click", openRequirementsPicker);
+        medicalRequirementsInput.addEventListener("click", openRequirementsPicker);
+        medicalRequirementsInput.addEventListener("focus", openRequirementsPicker);
+        medicalRequirementsInput.addEventListener("input", rememberCurrentRequirementsSoon);
         medicalRequirementsInput.addEventListener("change", rememberCurrentRequirements);
         medicalRequirementsInput.addEventListener("blur", rememberCurrentRequirements);
       }
@@ -1656,35 +1735,44 @@
         });
       });
 
-      const syncAutoEkgConclusion = () => {
-        const conclusionInput = form.elements.ekgConclusion;
-        if (!conclusionInput) return;
-        const currentValue = String(conclusionInput.value || "").trim();
-        if (currentValue && !isAutoEkgConclusion(currentValue)) return;
-        const ekgDate =
-          extractRuDate(form.elements.ekg?.value) ||
-          extractRuDate(form.elements.examDate?.value) ||
-          todayRuDate();
-        conclusionInput.value = buildAutoEkgConclusion(ekgDate);
-      };
-      form.elements.examDate?.addEventListener("input", syncAutoEkgConclusion);
-      form.elements.examDate?.addEventListener("change", syncAutoEkgConclusion);
-      form.elements.ekg?.addEventListener("input", syncAutoEkgConclusion);
-      form.elements.ekg?.addEventListener("change", syncAutoEkgConclusion);
-
-      form.querySelectorAll("input, textarea, select").forEach((field) => {
-        const saveChairmanDraft = (event) => {
-          event.stopPropagation();
-          const examId = form.dataset.examId;
-          const template = window.getDoctorTemplate(form.dataset.doctorRoleId);
-          if (!examId || !template) return;
-          const values = collectFormData(form, template);
-          window.saveDoctorExamDraft?.(examId, values);
+      if (!["lmk", "prof"].includes(form.dataset.chairmanFormType || "")) {
+        const syncAutoEkgConclusion = () => {
+          const chairmanType = form.dataset.chairmanFormType || "";
+          const conclusionInput = getFirstNamedControl(form.elements.ekgConclusion);
+          if (!conclusionInput) return;
+          const currentValue = String(conclusionInput.value || "").trim();
+          if (currentValue && !isAutoEkgConclusion(currentValue, chairmanType)) return;
+          const ekgInput = getFirstNamedControl(form.elements.ekg);
+          const examDateInput = getFirstNamedControl(form.elements.examDate);
+          const ekgDate =
+            extractRuDate(ekgInput?.value) ||
+            extractRuDate(examDateInput?.value);
+          conclusionInput.value = buildAutoEkgConclusion(ekgDate, chairmanType);
         };
-        field.addEventListener("input", saveChairmanDraft);
-        field.addEventListener("change", saveChairmanDraft);
-      });
+        const examDateInput = getFirstNamedControl(form.elements.examDate);
+        const ekgInput = getFirstNamedControl(form.elements.ekg);
+        examDateInput?.addEventListener("input", syncAutoEkgConclusion);
+        examDateInput?.addEventListener("change", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("input", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("change", syncAutoEkgConclusion);
+      }
+
     }
+
+    window.attachDateMask?.(form);
+
+    const saveDraftFromCurrentForm = () => {
+      const examId = form.dataset.examId;
+      const template = window.getDoctorTemplate(form.dataset.doctorRoleId);
+      if (!examId || !template) return;
+      const values = collectFormData(form, template);
+      window.saveDoctorExamDraft?.(examId, values);
+    };
+
+    form.querySelectorAll("input, textarea, select").forEach((field) => {
+      field.addEventListener("input", saveDraftFromCurrentForm);
+      field.addEventListener("change", saveDraftFromCurrentForm);
+    });
 
     form.querySelectorAll('button[type="submit"]').forEach((button) => {
       button.addEventListener("click", (event) => {
@@ -1728,8 +1816,6 @@
     // соответствующие значения полей из window.doctorPresets.
     const presetSelect = form.querySelector('select[name="complaintsPreset"]');
     if (presetSelect) {
-      const initialPresets = (window.doctorPresets || {})[form.dataset.doctorRoleId];
-      let lastAppliedPresetValues = findDoctorPreset(initialPresets, presetSelect.value);
       presetSelect.addEventListener("change", () => {
         const doctorRoleId = form.dataset.doctorRoleId;
         const presetName = presetSelect.value;
@@ -1741,25 +1827,8 @@
         }
 
         Object.entries(preset).forEach(([fieldKey, value]) => {
-          const elements = form.elements[fieldKey];
-          if (!elements) return;
-          const el = elements.length && elements.tagName === undefined ? elements[0] : elements;
-          if (!el || el.type === "radio" || el.type === "checkbox") return;
-          const nextValue = value == null ? "" : repairPresetText(value);
-          const currentValue = String(el.value ?? "");
-          const previousPresetValue = lastAppliedPresetValues && fieldKey in lastAppliedPresetValues
-            ? String(lastAppliedPresetValues[fieldKey] ?? "")
-            : null;
-          const canAutofill =
-            !currentValue.trim() ||
-            (previousPresetValue !== null && currentValue === previousPresetValue);
-
-          if (canAutofill) {
-            el.value = nextValue;
-          }
+          applyPresetFieldValue(form, fieldKey, value);
         });
-
-        lastAppliedPresetValues = { ...preset };
       });
     }
 

@@ -14,7 +14,7 @@ window.servicesData = {
   doctorRoles: [
     { id: 1, name: "Терапевт", sortOrder: 10, isActive: true },
     { id: 2, name: "Психиатр", sortOrder: 20, isActive: true },
-    { id: 3, name: "Психиатр-Нарколог", sortOrder: 30, isActive: true },
+    { id: 3, name: "Психиатр-нарколог", sortOrder: 30, isActive: true },
     { id: 4, name: "Невролог", sortOrder: 40, isActive: true },
     { id: 5, name: "Отоларинголог", sortOrder: 50, isActive: true },
     { id: 6, name: "Гинеколог", sortOrder: 60, isActive: true },
@@ -78,7 +78,7 @@ window.servicesData = {
       notes: "ГИМС",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: []
+      doctorRoleIds: [1, 13]
     },
 
     {
@@ -89,7 +89,17 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: []
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13]
+    },
+    {
+      id: 42,
+      name: "ЛМК справка",
+      groupId: 4,
+      price: 0,
+      notes: "",
+      isActive: true,
+      sortOrder: 15,
+      doctorRoleIds: [1, 13]
     },
     {
       id: 33,
@@ -109,7 +119,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 30,
-      doctorRoleIds: []
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 13]
     },
     {
       id: 23,
@@ -161,12 +171,12 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 10,
-      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      doctorRoleIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13]
     },
 
     {
       id: 24,
-      name: "Санаторно-курортная карта 072У",
+      name: "072 у СКК",
       groupId: 7,
       price: 2500,
       notes: "",
@@ -175,14 +185,24 @@ window.servicesData = {
       doctorRoleIds: [1, 13]
     },
     {
+      id: 31,
+      name: "070у",
+      groupId: 7,
+      price: 2000,
+      notes: "",
+      isActive: true,
+      sortOrder: 20,
+      doctorRoleIds: [13]
+    },
+    {
       id: 2,
-      name: "Справка формы 001 ГСУ",
+      name: "ГС",
       groupId: 7,
       price: 1800,
       notes: "",
       isActive: true,
-      sortOrder: 20,
-      doctorRoleIds: [1, 2, 3, 13]
+      sortOrder: 30,
+      doctorRoleIds: [4, 2, 1, 13]
     },
     {
       id: 9,
@@ -191,8 +211,8 @@ window.servicesData = {
       price: 3500,
       notes: "",
       isActive: true,
-      sortOrder: 30,
-      doctorRoleIds: [13]
+      sortOrder: 40,
+      doctorRoleIds: [1, 7]
     },
     {
       id: 3,
@@ -201,8 +221,8 @@ window.servicesData = {
       price: 1000,
       notes: "",
       isActive: true,
-      sortOrder: 40,
-      doctorRoleIds: [1, 13]
+      sortOrder: 50,
+      doctorRoleIds: [1, 6, 8]
     },
     {
       id: 10,
@@ -211,18 +231,18 @@ window.servicesData = {
       price: 2000,
       notes: "",
       isActive: true,
-      sortOrder: 50,
-      doctorRoleIds: [13]
+      sortOrder: 60,
+      doctorRoleIds: [1]
     },
     {
       id: 11,
-      name: "Справка для работы с гостайной формы 989Н",
+      name: "ГТ",
       groupId: 7,
       price: 1800,
       notes: "",
       isActive: true,
-      sortOrder: 60,
-      doctorRoleIds: [1, 2, 3, 4, 13]
+      sortOrder: 70,
+      doctorRoleIds: [4, 2, 1, 13]
     },
     {
       id: 4,
@@ -231,8 +251,8 @@ window.servicesData = {
       price: 1500,
       notes: "",
       isActive: true,
-      sortOrder: 70,
-      doctorRoleIds: [1, 13]
+      sortOrder: 80,
+      doctorRoleIds: [1]
     },
     {
       id: 12,
@@ -241,30 +261,79 @@ window.servicesData = {
       price: 2200,
       notes: "",
       isActive: true,
-      sortOrder: 80,
-      doctorRoleIds: [1, 13]
+      sortOrder: 90,
+      doctorRoleIds: [6, 1, 10, 4, 7, 5, 13]
     },
     {
       id: 30,
-      name: "Справка 095/у о временной нетрудоспособности",
+      name: "095",
       groupId: 7,
       price: 1800,
       notes: "",
       isActive: true,
-      sortOrder: 90,
-      doctorRoleIds: [1, 13]
+      sortOrder: 100,
+      doctorRoleIds: [1]
     },
     {
       id: 5,
-      name: "Справка спорт + ЭКГ",
+      name: "спорт",
       groupId: 7,
       price: 1200,
       notes: "",
       isActive: true,
-      sortOrder: 100,
+      sortOrder: 110,
+      doctorRoleIds: [1, 10]
+    },
+    {
+      id: 32,
+      name: "капельница",
+      groupId: 7,
+      price: 1500,
+      notes: "",
+      isActive: true,
+      sortOrder: 120,
+      doctorRoleIds: []
+    },
+    {
+      id: 38,
+      name: "Морская медицинская комиссия",
+      groupId: 7,
+      price: 6000,
+      notes: "",
+      isActive: true,
+      sortOrder: 130,
+      doctorRoleIds: [1, 4, 5, 7]
+    },
+    {
+      id: 40,
+      name: "Справка 342н (псих. освид.)",
+      groupId: 7,
+      price: 1800,
+      notes: "",
+      isActive: true,
+      sortOrder: 150,
+      doctorRoleIds: [2, 4, 1, 13]
+    },
+    {
+      id: 43,
+      name: "СЭМТ-196 без ФЛГ",
+      groupId: 7,
+      price: 2500,
+      notes: "",
+      isActive: true,
+      sortOrder: 160,
       doctorRoleIds: [1, 13]
     },
-
+    {
+      id: 44,
+      name: "СЭМТ-196 с ФЛГ",
+      groupId: 7,
+      price: 3500,
+      notes: "ФЛГ — флюорография",
+      isActive: true,
+      sortOrder: 170,
+      doctorRoleIds: [1, 13]
+    },
     {
       id: 13,
       name: "УЗИ брюшной полости",
@@ -296,6 +365,16 @@ window.servicesData = {
       doctorRoleIds: []
     },
 
+    {
+      id: 27,
+      name: "ЭКГ",
+      groupId: 9,
+      price: 1200,
+      notes: "",
+      isActive: true,
+      sortOrder: 5,
+      doctorRoleIds: [1]
+    },
     {
       id: 20,
       name: "ЭКГ без расшифровки",

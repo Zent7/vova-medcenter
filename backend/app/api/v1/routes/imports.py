@@ -6,7 +6,8 @@ import json
 import re
 import zipfile
 from collections import OrderedDict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -20,7 +21,12 @@ from app.db.session import get_db
 from app.models.center import Center
 from app.models.client import Client
 from app.models.encounter import Encounter
+from app.models.encounter_service import EncounterService
+from app.models.service import Service
+from app.models.user import User
+from app.api.v1.routes.encounters import sync_primary_payment
 from app.services.audit import write_audit_log
+from app.services.medical_autofill import autofill_completed_doctors_for_service
 from app.services.system_user import get_system_user_id
 from app.schemas.imports import (
     ClientImportExcelRequest,
@@ -57,6 +63,8 @@ CLIENT_IMPORT_HEADERS = OrderedDict(
         ("registration_text", "Регистрация"),
         ("address_text", "Адрес проживания"),
         ("organization", "Организация"),
+        ("service", "Услуга"),
+        ("encounter_date", "Дата обращения"),
         ("admission_category", "Категория допуска"),
         ("reference_number", "№ справки"),
         ("notes", "Примечание"),
@@ -105,11 +113,22 @@ def parse_optional_date(value: str | None) -> date | None:
     text = str(value or "").strip()
     if not text:
         return None
-    for date_format in ("%d.%m.%Y %H:%M", "%d.%m.%Y", "%Y-%m-%d"):
+    for date_format in ("%d.%m.%Y %H:%M", "%d.%m.%Y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(text, date_format).date()
         except ValueError:
             continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    if re.fullmatch(r"\d+(?:[.,]\d+)?", text):
+        try:
+            serial = float(text.replace(",", "."))
+        except ValueError:
+            serial = 0
+        if 1 <= serial <= 100000:
+            return (datetime(1899, 12, 30) + timedelta(days=serial)).date()
     parsed_short_date = parse_short_ru_date(text)
     if parsed_short_date is not None:
         return parsed_short_date
@@ -267,8 +286,10 @@ def rows_to_client_records(rows: list[dict[int, str | None]]) -> list[dict[str, 
             continue
 
         payload["patient_number"] = parse_int(payload.get("patient_number"))
-        payload["birth_date"] = parse_optional_date(payload.get("birth_date"))
-        payload["document_issued_date"] = parse_optional_date(payload.get("document_issued_date"))
+        for field_name in ("birth_date", "document_issued_date", "encounter_date"):
+            raw_value = payload.get(field_name)
+            payload[f"_{field_name}_invalid"] = bool(raw_value and parse_optional_date(raw_value) is None)
+            payload[field_name] = parse_optional_date(raw_value)
         records.append(payload)
 
     return records
@@ -292,6 +313,109 @@ def read_client_excel_rows(payload: ClientImportExcelRequest) -> list[dict[str, 
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Поддерживаются только файлы .xlsx и .xls",
     )
+
+
+def validate_client_import_rows(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        raise ValueError(
+            "В Excel-файле не найдено ни одной заполненной строки. "
+            "Заполняйте первый лист, начиная со строки 2."
+        )
+
+    errors: list[str] = []
+    for row in rows:
+        row_number = row.get("row_number", "?")
+        if not normalize_text(row.get("last_name")):
+            errors.append(f"строка {row_number}: не заполнена фамилия")
+        if not normalize_text(row.get("first_name")):
+            errors.append(f"строка {row_number}: не заполнено имя")
+        if row.get("_birth_date_invalid"):
+            errors.append(f"строка {row_number}: неверная дата рождения")
+        elif row.get("birth_date") is None:
+            errors.append(f"строка {row_number}: не заполнена дата рождения")
+        if row.get("_document_issued_date_invalid"):
+            errors.append(f"строка {row_number}: неверная дата выдачи документа")
+        if row.get("_encounter_date_invalid"):
+            errors.append(f"строка {row_number}: неверная дата обращения")
+
+    if errors:
+        shown_errors = errors[:10]
+        suffix = f" Ещё ошибок: {len(errors) - len(shown_errors)}." if len(errors) > len(shown_errors) else ""
+        raise ValueError("Не удалось проверить Excel: " + "; ".join(shown_errors) + "." + suffix)
+
+
+def json_safe_import_row(row: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in row.items():
+        if key.startswith("_"):
+            continue
+        if isinstance(value, (date, datetime)):
+            result[key] = value.isoformat()
+        else:
+            result[key] = value
+    return result
+
+
+def normalize_service_lookup(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def service_import_label(service: Service) -> str:
+    price = Decimal(service.price or 0)
+    price_text = f"{price:,.2f}".replace(",", "\u00a0").rstrip("0").rstrip(".")
+    return f"{service.name} — {price_text} ₽"
+
+
+def build_service_lookup(services: list[Service]) -> dict[str, list[Service]]:
+    lookup: dict[str, list[Service]] = {}
+    for service in services:
+        for value in (service.code, service.name, service_import_label(service)):
+            key = normalize_service_lookup(value)
+            if key:
+                lookup.setdefault(key, []).append(service)
+    return lookup
+
+
+def resolve_import_service(
+    row: dict[str, Any],
+    service_lookup: dict[str, list[Service]],
+) -> Service | None:
+    value = normalize_text(row.get("service"))
+    if not value:
+        return None
+    matches = service_lookup.get(normalize_service_lookup(value), [])
+    if len(matches) == 1:
+        return matches[0]
+    row_number = row.get("row_number", "?")
+    if len(matches) > 1:
+        raise ValueError(
+            f'Строка {row_number}: услуга "{value}" неоднозначна. '
+            "Выберите вариант из выпадающего списка с ценой."
+        )
+    raise ValueError(
+        f'Строка {row_number}: услуга "{value}" не найдена или неактивна. '
+        "Выберите значение из выпадающего списка."
+    )
+
+
+def get_import_services(db: Session) -> list[Service]:
+    return db.execute(
+        select(Service)
+        .where(Service.is_active.is_(True))
+        .order_by(Service.name.asc(), Service.price.asc(), Service.id.asc())
+    ).scalars().all()
+
+
+def get_import_center(db: Session, actor_user_id: int | None) -> Center | None:
+    if actor_user_id is not None:
+        actor = db.get(User, actor_user_id)
+        if actor is not None and actor.center_id is not None:
+            center = db.get(Center, actor.center_id)
+            if center is not None and center.is_active:
+                return center
+    return db.execute(
+        select(Center).where(Center.is_active.is_(True)).order_by(Center.id.asc())
+    ).scalars().first()
 
 
 def dedupe_legacy_clients(clients: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -371,7 +495,7 @@ def build_client_payload(row: dict[str, Any], patient_number: int) -> dict[str, 
         "last_name": normalize_text(row.get("last_name")) or "Без фамилии",
         "first_name": normalize_text(row.get("first_name")) or "Без имени",
         "middle_name": normalize_text(row.get("middle_name")),
-        "birth_date": row.get("birth_date") or date(1900, 1, 1),
+        "birth_date": row["birth_date"],
         "sex": normalize_text(row.get("sex")),
         "phone": normalize_text(row.get("phone")),
         "email": normalize_text(row.get("email")),
@@ -387,7 +511,7 @@ def build_client_payload(row: dict[str, Any], patient_number: int) -> dict[str, 
         "admission_category": normalize_text(row.get("admission_category")),
         "reference_number": normalize_text(row.get("reference_number")),
         "notes": normalize_text(row.get("notes")),
-        "legacy_payload_json": row,
+        "legacy_payload_json": json_safe_import_row(row),
     }
 
 
@@ -522,14 +646,31 @@ def import_demo_legacy(db: Session = Depends(get_db)) -> dict[str, int | str]:
 def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session = Depends(get_db)) -> ClientImportPreviewResponse:
     try:
         rows = read_client_excel_rows(payload)
+        validate_client_import_rows(rows)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    services = get_import_services(db)
+    service_lookup = build_service_lookup(services)
+    resolved_services: dict[int, Service | None] = {}
+    try:
+        for row in rows:
+            resolved_services[int(row["row_number"])] = resolve_import_service(row, service_lookup)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    service_rows = sum(1 for service in resolved_services.values() if service is not None)
+    if service_rows and get_import_center(db, get_system_user_id(db)) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Для импорта услуг не найден активный медцентр",
+        )
     preview_rows: list[ClientImportPreviewRow] = []
     created_candidates = 0
     update_candidates = 0
 
     for row in rows[:20]:
         existing_client, match_reason = find_existing_client_for_import(db, row)
+        service = resolved_services[int(row["row_number"])]
         status_label = "update" if existing_client is not None else "create"
         if existing_client is not None:
             update_candidates += 1
@@ -544,6 +685,10 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
                 ),
                 birth_date=row.get("birth_date").strftime("%d.%m.%y") if row.get("birth_date") else None,
                 organization=row.get("organization"),
+                service_name=service.name if service is not None else None,
+                encounter_date=(row.get("encounter_date") or date.today()).strftime("%d.%m.%Y")
+                if service is not None
+                else None,
                 status=status_label,
                 match_reason=match_reason,
             )
@@ -562,6 +707,7 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
         parsed_rows=len(rows),
         created_candidates=created_candidates,
         update_candidates=update_candidates,
+        service_rows=service_rows,
         preview_rows=preview_rows,
     )
 
@@ -570,35 +716,90 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
 def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = Depends(get_db)) -> ClientImportResultResponse:
     try:
         rows = read_client_excel_rows(payload)
+        validate_client_import_rows(rows)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     actor_user_id = get_system_user_id(db)
+    services = get_import_services(db)
+    service_lookup = build_service_lookup(services)
+    try:
+        resolved_services = {
+            int(row["row_number"]): resolve_import_service(row, service_lookup)
+            for row in rows
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    import_center = get_import_center(db, actor_user_id)
+    if any(service is not None for service in resolved_services.values()) and import_center is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Для импорта услуг не найден активный медцентр",
+        )
     used_numbers: set[int] = set()
     created = 0
     updated = 0
+    encounters_created = 0
 
-    for row in rows:
-        existing_client, _ = find_existing_client_for_import(db, row)
-        patient_number = row.get("patient_number")
-        if existing_client is not None:
-            patient_number = existing_client.patient_number
-        elif patient_number is None:
-            patient_number = get_next_patient_number(db, used_numbers)
-        else:
-            used_numbers.add(patient_number)
+    try:
+        for row in rows:
+            existing_client, _ = find_existing_client_for_import(db, row)
+            patient_number = row.get("patient_number")
+            if existing_client is not None:
+                patient_number = existing_client.patient_number
+            elif patient_number is None:
+                patient_number = get_next_patient_number(db, used_numbers)
+            else:
+                used_numbers.add(patient_number)
 
-        client_payload = build_client_payload(row, patient_number)
+            client_payload = build_client_payload(row, patient_number)
 
-        if existing_client is None:
-            client = Client(created_by_user_id=actor_user_id, **client_payload)
-            db.add(client)
-            created += 1
-        else:
-            for key, value in client_payload.items():
-                setattr(existing_client, key, value)
-            updated += 1
+            if existing_client is None:
+                client = Client(created_by_user_id=actor_user_id, **client_payload)
+                db.add(client)
+                created += 1
+            else:
+                client = existing_client
+                for key, value in client_payload.items():
+                    setattr(client, key, value)
+                updated += 1
+            db.flush()
 
-    db.commit()
+            service = resolved_services[int(row["row_number"])]
+            if service is None:
+                continue
+
+            encounter_date = row.get("encounter_date") or date.today()
+            encounter = Encounter(
+                center_id=import_center.id,
+                client_id=client.id,
+                created_by_user_id=actor_user_id,
+                encounter_date=encounter_date,
+                payment_type="cash",
+                total_amount=service.price,
+                comment="Импортировано из Excel",
+                status="draft",
+            )
+            db.add(encounter)
+            db.flush()
+            db.add(
+                EncounterService(
+                    encounter_id=encounter.id,
+                    service_id=service.id,
+                    quantity=1,
+                    unit_price=service.price,
+                    line_total=service.price,
+                    notes="Импортировано из Excel",
+                )
+            )
+            sync_primary_payment(db, encounter, default_comment="Импортировано из Excel")
+            autofill_completed_doctors_for_service(db, encounter, service.id)
+            client.encounter_date_text = encounter_date.isoformat()
+            encounters_created += 1
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     write_audit_log(
         db,
         entity_type="import",
@@ -610,6 +811,7 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
             "parsed_rows": len(rows),
             "created": created,
             "updated": updated,
+            "encounters_created": encounters_created,
         },
     )
     db.commit()
@@ -618,4 +820,5 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
         parsed_rows=len(rows),
         created=created,
         updated=updated,
+        encounters_created=encounters_created,
     )

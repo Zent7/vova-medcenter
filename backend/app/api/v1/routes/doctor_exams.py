@@ -10,6 +10,7 @@ from app.models.doctor_exam import DoctorExam
 from app.models.encounter import Encounter
 from app.schemas.doctor_exam import DoctorExamCreate, DoctorExamRead, DoctorExamUpdate
 from app.services.audit import write_audit_log
+from app.services.doctor_rules import should_include_doctor_role_for_client_sex
 
 router = APIRouter()
 
@@ -30,11 +31,60 @@ def validate_links(db: Session, client_id: int, encounter_id: int | None) -> Non
             )
 
 
+def validate_doctor_role_for_client(db: Session, client_id: int, doctor_role_id: str) -> None:
+    client = db.get(Client, client_id)
+    if client is None or client.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Клиент не найден")
+    if not should_include_doctor_role_for_client_sex(doctor_role_id, client.sex):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Гинеколог не требуется для клиента мужского пола",
+        )
+
+
 def apply_completion_state(exam: DoctorExam) -> None:
     if exam.is_completed and exam.completed_at is None:
         exam.completed_at = datetime.utcnow()
     if not exam.is_completed:
         exam.completed_at = None
+
+
+def restore_doctor_role_on_encounter(db: Session, encounter_id: int | None, doctor_role_id: str) -> None:
+    if encounter_id is None:
+        return
+
+    encounter = db.get(Encounter, encounter_id)
+    if encounter is None:
+        return
+
+    role_id = str(doctor_role_id or "").strip()
+    suppressed = [
+        str(value).strip()
+        for value in (encounter.suppressed_doctor_role_ids or [])
+        if str(value).strip() and str(value).strip() != role_id
+    ]
+    encounter.suppressed_doctor_role_ids = suppressed
+
+
+def suppress_doctor_role_on_encounter(db: Session, encounter_id: int | None, doctor_role_id: str) -> None:
+    if encounter_id is None:
+        return
+
+    encounter = db.get(Encounter, encounter_id)
+    if encounter is None:
+        return
+
+    role_id = str(doctor_role_id or "").strip()
+    if not role_id:
+        return
+
+    suppressed = {
+        str(value).strip()
+        for value in (encounter.suppressed_doctor_role_ids or [])
+        if str(value).strip()
+    }
+    suppressed.add(role_id)
+    encounter.suppressed_doctor_role_ids = sorted(suppressed)
 
 
 @router.get("", response_model=list[DoctorExamRead])
@@ -52,12 +102,23 @@ def list_doctor_exams(
     if encounter_id is not None:
         query = query.where(DoctorExam.encounter_id == encounter_id)
     exams = db.execute(query).scalars().all()
-    return [DoctorExamRead.model_validate(item) for item in exams]
+    client_ids_to_check = list({item.client_id for item in exams})
+    sex_by_client_id = (
+        dict(db.execute(select(Client.id, Client.sex).where(Client.id.in_(client_ids_to_check))).all())
+        if client_ids_to_check
+        else {}
+    )
+    return [
+        DoctorExamRead.model_validate(item)
+        for item in exams
+        if should_include_doctor_role_for_client_sex(item.doctor_role_id, sex_by_client_id.get(item.client_id))
+    ]
 
 
 @router.post("", response_model=DoctorExamRead)
 def create_or_update_doctor_exam(payload: DoctorExamCreate, db: Session = Depends(get_db)) -> DoctorExamRead:
     validate_links(db, payload.client_id, payload.encounter_id)
+    validate_doctor_role_for_client(db, payload.client_id, payload.doctor_role_id)
 
     query = select(DoctorExam).where(
         DoctorExam.deleted_at.is_(None),
@@ -79,6 +140,7 @@ def create_or_update_doctor_exam(payload: DoctorExamCreate, db: Session = Depend
         for key, value in payload.model_dump().items():
             setattr(exam, key, value)
 
+    restore_doctor_role_on_encounter(db, exam.encounter_id, exam.doctor_role_id)
     apply_completion_state(exam)
     db.commit()
     db.refresh(exam)
@@ -102,6 +164,7 @@ def update_doctor_exam(exam_id: int, payload: DoctorExamUpdate, db: Session = De
 
     next_encounter_id = payload.encounter_id if "encounter_id" in payload.model_fields_set else exam.encounter_id
     validate_links(db, exam.client_id, next_encounter_id)
+    validate_doctor_role_for_client(db, exam.client_id, exam.doctor_role_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(exam, key, value)
 
@@ -127,6 +190,7 @@ def delete_doctor_exam(exam_id: int, db: Session = Depends(get_db)) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Осмотр не найден")
 
     exam.deleted_at = datetime.utcnow()
+    suppress_doctor_role_on_encounter(db, exam.encounter_id, exam.doctor_role_id)
     db.commit()
     write_audit_log(
         db,

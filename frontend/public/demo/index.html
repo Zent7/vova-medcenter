@@ -1,20 +1,16 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MedCenters Demo</title>
-    <link rel="stylesheet" href="./styles.css?v=20260605-compact-sidebar-nav" />
+    <link rel="stylesheet" href="./styles.css?v=20260729-chairman-blank-replacement-v2" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
           <div class="brand__badge">M</div>
-          <div>
-            <div class="brand__title">MedCenters</div>
-            <div class="brand__subtitle">Демо новой системы</div>
-          </div>
         </div>
 
         <nav class="nav" id="nav"></nav>
@@ -23,10 +19,17 @@
       <main class="main">
         <header class="topbar">
           <div>
-            <div class="eyebrow">Единая система для двух медцентров</div>
+            <div class="eyebrow"></div>
             <h1 id="page-title">Главная</h1>
           </div>
           <div class="topbar-actions">
+            <label class="workspace-center" id="workspaceCenter">
+              <span class="workspace-center__label">Работа в медцентре</span>
+              <select class="center-select" id="centerSelect" aria-label="Текущий медцентр">
+                <option value="Медцентр 1">Медцентр 1</option>
+                <option value="Медцентр 2">Медцентр 2</option>
+              </select>
+            </label>
             <div class="center-pill">
               <strong id="authStatusLabel">Гость</strong>
             </div>
@@ -74,20 +77,19 @@
     </div>
 
     <script src="./doctor-presets.js?v=20260611-doctor-presets-utf8"></script>
-    <script src="./doctor-templates.js?v=20260518-chairman-template-print"></script>
-    <script src="./service-cards.js?v=20260607-prof-chairman-print"></script>
+    <script src="./doctor-templates.js?v=20260706-doctor-preset-sync"></script>
+    <script src="./service-cards.js?v=20260712-certificate-chairman-print"></script>
     <script>
       window.DEMO_API_BASE_URL =
         window.location.hostname === "demo.med-center.online"
           ? "https://api.med-center.online/api/v1"
           : "/api/v1";
     </script>
-    <script src="./services-data.js?v=20260607-certificate-doctors"></script>
-    <script src="./app.js?v=20260607-certificate-doctors"></script>
-    <script src="./blanks-page.js?v=20260506-blanks-page"></script>
-    <script src="./services-page.js?v=20260427-service-order-2"></script>
-    <script src="./client-modal.js?v=20260605-new-client-empty-fields"></script>
-  <script src="./doctor-exam-modal.js?v=20260611-doctor-cards-presets-2"></script>
+    <script src="./services-data.js?v=20260731-short-service-names-v1"></script>
+    <script src="./app.js?v=20260801-vu-tractor-front-xls"></script>
+    <script src="./blanks-page.js?v=20260731-center-workspaces-v1"></script>
+    <script src="./services-page.js?v=20260617-single-top-title"></script>
+    <script src="./client-modal.js?v=20260721-service-encounter-rows"></script>
+    <script src="./doctor-exam-modal.js?v=20260713-chairman-hide-driver-details"></script>
   </body>
 </html>
-

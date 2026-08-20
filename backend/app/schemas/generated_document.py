@@ -16,6 +16,8 @@ class GeneratedDocumentRead(BaseModel):
     file_path: str
     generated_by_user_id: int | None = None
     generated_at: datetime
+    file_deleted_at: datetime | None = None
+    file_delete_reason: str | None = None
     cancelled_at: datetime | None = None
     cancelled_by_user_id: int | None = None
     cancelled_reason: str | None = None

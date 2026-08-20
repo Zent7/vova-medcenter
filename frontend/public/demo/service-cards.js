@@ -35,15 +35,21 @@
     return String(value ?? "").trim().startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `);
   }
 
+  function getFirstNamedControl(elements) {
+    if (!elements) return null;
+    if (elements.length && elements.tagName === undefined) return elements[0] || null;
+    return elements;
+  }
+
   // ----- Определение типа карточки по услуге --------------------------------
   // driver — открывается уже существующая карточка председателя.
-  // sport  — новая карточка спортивной справки.
+  // sport/pool/GTO — открываются в общей карточке председателя.
   // прочее — placeholder.
   // Жёсткий whitelist: только для согласованных услуг — своя карточка.
   // Все остальные услуги показывают плейсхолдер «Карточка пока не готова».
   const DRIVER_LEGACY_IDS = new Set([8, 29]);
   const PROF_LEGACY_IDS = new Set([16]);
-  const SPORT_LEGACY_IDS = new Set([4, 5]);
+  const SPORT_LEGACY_IDS = new Set([3, 4, 5]);
   const EKG_LEGACY_IDS = new Set([6, 20, 21, 27]);
 
   function resolveServiceCardKind(service) {
@@ -67,6 +73,9 @@
 
     if (SPORT_LEGACY_IDS.has(legacyId)) return "sport";
     if (
+      name === "справка в бассейн" ||
+      name === "справка гто 1144" ||
+      name === "справка гто" ||
       name === "справка для участия в соревнованиях" ||
       name === "справка спорт + экг" ||
       name === "справка для спорта" ||
@@ -109,17 +118,13 @@
     const visit = window.getOrCreateDraftVisit && window.getOrCreateDraftVisit(client.id);
 
     const kind = resolveServiceCardKind(service);
-    if (kind === "driver" || kind === "prof" || kind === "chairman") {
+    if (kind === "driver" || kind === "prof" || kind === "chairman" || kind === "sport") {
       closeServiceCardOverlays();
       window.openDoctorExamCard({
         clientId: client.id,
         visitId: visit?.id || null,
         doctorRoleId: "chairman",
       });
-      return;
-    }
-    if (kind === "sport") {
-      openSportCard({ clientId: client.id, visitId: visit?.id || null, service, doctorRoleId: "chairman" });
       return;
     }
     if (kind === "ekg") {
@@ -554,20 +559,24 @@
       const form = card.querySelector("[data-sport-card-form]");
       if (form) {
         const syncAutoEkgConclusion = () => {
-          const conclusionInput = form.elements.ekgConclusion;
+          const conclusionInput = getFirstNamedControl(form.elements.ekgConclusion);
           if (!conclusionInput) return;
           const currentValue = String(conclusionInput.value || "").trim();
           if (currentValue && !isAutoEkgConclusion(currentValue)) return;
+          const ekgInput = getFirstNamedControl(form.elements.ekg);
+          const examDateInput = getFirstNamedControl(form.elements.examDate);
           const ekgDate =
-            extractRuDate(form.elements.ekg?.value) ||
-            extractRuDate(form.elements.examDate?.value) ||
+            extractRuDate(ekgInput?.value) ||
+            extractRuDate(examDateInput?.value) ||
             todayRuDate();
           conclusionInput.value = buildAutoEkgConclusion(ekgDate);
         };
-        form.elements.examDate?.addEventListener("input", syncAutoEkgConclusion);
-        form.elements.examDate?.addEventListener("change", syncAutoEkgConclusion);
-        form.elements.ekg?.addEventListener("input", syncAutoEkgConclusion);
-        form.elements.ekg?.addEventListener("change", syncAutoEkgConclusion);
+        const examDateInput = getFirstNamedControl(form.elements.examDate);
+        const ekgInput = getFirstNamedControl(form.elements.ekg);
+        examDateInput?.addEventListener("input", syncAutoEkgConclusion);
+        examDateInput?.addEventListener("change", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("input", syncAutoEkgConclusion);
+        ekgInput?.addEventListener("change", syncAutoEkgConclusion);
 
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
@@ -581,9 +590,15 @@
           printBtn.addEventListener("click", async (event) => {
             event.preventDefault();
             event.stopPropagation();
+            const targetWindow = window.open("about:blank", "_blank");
             const saved = await saveSportCard(form);
-            if (!saved) return;
-            await window.printChairmanDocumentFromExam?.(ensureSportState().examId);
+            if (!saved) {
+              if (targetWindow && !targetWindow.closed) {
+                targetWindow.close();
+              }
+              return;
+            }
+            await window.printChairmanDocumentFromExam?.(ensureSportState().examId, { targetWindow });
           });
         }
         const pickBtn = form.querySelector("[data-sport-pick-phrase]");

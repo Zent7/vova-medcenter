@@ -598,7 +598,7 @@
       key: "complaintsPreset",
       label: "Жалобы preset",
       type: "select",
-      options: ["Норма(м)", "Норма(ж)", "Кариес", "Множественный кариес", "Обострение хронического пульпита", "Обострение хронического периодонтита", "Хронический катаральный гингивит", "Пародонтит", "Частичная вторичная адентия.", "Полная вторичная адентия"],
+      options: ["Норма(м)", "Норма(ж)", "Кариес", "Множественный кариес", "Обострение хронического пульпита", "Обострение хронического периодонтита", "Хронический катаральный гингивит", "Пародонтит", "Частичная вторичная адентия. ", "Полная вторичная адентия"],
       defaultValue: "Норма(м)",
     },
     {
@@ -705,7 +705,7 @@
 },
 {
   id: "psychiatrist",
-  name: "ПСИХИАТР-НАРКОЛОГ",
+  name: "ПСИХИАТР",
   layout: "psychiatristClassic",
   fields: [
     { key: "birthDate", label: "Дата рождения", type: "text", defaultValue: "" },
@@ -873,3 +873,17 @@
   ],
 }
 ];
+
+{
+  const psychiatristTemplate = window.doctorTemplates.find((template) => template.id === "psychiatrist");
+  const alreadyHasNarcologist = window.doctorTemplates.some((template) => template.id === "psychiatrist-narcologist");
+  if (psychiatristTemplate && !alreadyHasNarcologist) {
+    const psychiatristIndex = window.doctorTemplates.indexOf(psychiatristTemplate);
+    window.doctorTemplates.splice(psychiatristIndex + 1, 0, {
+      ...psychiatristTemplate,
+      id: "psychiatrist-narcologist",
+      name: "ПСИХИАТР-НАРКОЛОГ",
+      fields: psychiatristTemplate.fields.map((field) => ({ ...field })),
+    });
+  }
+}

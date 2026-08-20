@@ -1,6 +1,6 @@
-﻿const API_BASE_URL = window.DEMO_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
+const API_BASE_URL = window.DEMO_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
+const HIDDEN_SERVICE_LEGACY_IDS = new Set([39]);
 
-const PRINT_AGENT_BASE_URL = window.DEMO_PRINT_AGENT_URL || "http://127.0.0.1:8765";
 
 function getLocalDateInputValue(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
@@ -10,6 +10,8 @@ function getLocalDateInputValue(value = new Date()) {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2"];
 
 const appState = {
   page: "dashboard",
@@ -21,11 +23,12 @@ const appState = {
     roleName: "",
   },
   selectedClientId: null,
-  centerFilter: "all",
+  centerFilter: WORKSPACE_CENTER_NAMES[0],
   clientSearch: "",
   clientEncounterDate: "",
   clientEncounterDateFrom: "",
-  clientEncounterDateTo: getLocalDateInputValue(),
+  clientEncounterDateTo: "",
+  clientPeriodFilterApplied: false,
   serviceGroupFilter: "all",
   visitServiceGroupFilter: "all",
   visitServiceSearch: "",
@@ -41,6 +44,7 @@ const appState = {
   blanksFilterBatchId: "all",
   blanksSearch: "",
   restoreInputId: null,
+  selectedEncounterId: null,
   activeVisitId: null,
   doctorExamModal: {
     isOpen: false,
@@ -65,6 +69,27 @@ let serviceGroups = [];
 let doctorRoles = [];
 let structuredServices = [];
 
+const DEFAULT_DOCTOR_DIRECTORY = {
+  therapist: "Казаков И.В.",
+  chairman: "Казаков И.В.",
+  psychiatrist: "Аносов И.Е.",
+  "psychiatrist-narcologist": "Аносов И.Е.",
+  neurologist: "Казаков И.В.",
+  otolaryngologist: "Барсуков А.Ф.",
+  surgeon: "Конюк М.В.",
+  ophthalmologist: "Дадалина Т.В.",
+  dermatologist: "Мехдиева Н.Ш.К.",
+  dentist: "Шадрикова Ю.А.",
+};
+
+function isExcludedDoctorRole(role) {
+  return false;
+}
+
+function normalizeDoctorRoleIds(roleIds) {
+  return Array.isArray(roleIds) ? roleIds.slice() : [];
+}
+
 const data = {
   serviceCatalog:
     structuredServices.length
@@ -79,17 +104,18 @@ const data = {
           "ЭКГ",
           "Флюорография",
           "Психиатр",
-          "Нарколог",
           "Терапевт",
           "Офтальмолог",
           "ЛОР",
         ],
   clients: [],
+  fullClientsById: {},
   visits: [],
   documents: [],
   doctorExams: [],
   mkb10History: [],
   backendClients: [],
+  dashboardPinnedClientIds: new Set(),
   backendClientsLoaded: false,
   dashboardDoctorStatuses: {},
   dashboardDoctorStatusesLoading: false,
@@ -106,6 +132,7 @@ const data = {
   documentTemplates: [],
   documentTemplatesLoaded: false,
   generatedDocuments: [],
+  xmlExportDays: [],
   documentJournals: [],
   spoiledBlanks: [],
   blanksTypes: [],
@@ -114,6 +141,7 @@ const data = {
   blanksForms: [],
   blanksLoading: false,
   blanksLoaded: false,
+  blanksCenterId: null,
   blanksError: "",
   blanksFormError: "",
   blanksFormSaving: false,
@@ -155,6 +183,7 @@ let clientSearchRequestId = 0;
 let clientSearchAbortController = null;
 let clientRowClickTimer = null;
 const DASHBOARD_PAGE_SIZE = 50;
+const DASHBOARD_CLIENT_LOAD_LIMIT = 100;
 const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
 
 const DEMO_STORAGE_KEY = "vova-medcenter-demo-state-v2";
@@ -182,6 +211,11 @@ function persistMedicalRecordPanelHeight(height) {
   } catch (error) {
     console.warn("Не удалось сохранить высоту медкарты", error);
   }
+}
+
+function isHiddenService(service) {
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
+  return HIDDEN_SERVICE_LEGACY_IDS.has(legacyId);
 }
 
 function initializeFallbackServiceCatalog() {
@@ -214,7 +248,7 @@ function initializeFallbackServiceCatalog() {
     ? fallback.doctorRoles.map((role) => ({
         ...role,
         code: role.code || fallbackRoleCodes[Number(role.id)] || String(role.id),
-      }))
+      })).filter((role) => !isExcludedDoctorRole(role))
     : [];
 
   if (!doctorRoles.some((role) => String(role.id) === "13")) {
@@ -227,21 +261,139 @@ function initializeFallbackServiceCatalog() {
     });
   }
 
-  data.serverServices = fallback.services.map((service) => ({
-    ...service,
-    backendId: service.backendId || service.id,
-    legacySourceId: service.legacySourceId || service.legacy_source_id || service.id,
-    recallAfterDays: service.recallAfterDays || null,
-    doctorRoleIds: Array.isArray(service.doctorRoleIds) ? service.doctorRoleIds : [],
-  }));
+  data.serverServices = fallback.services.filter((service) => !isHiddenService(service)).map((service) => {
+    const isGuardFallback = isGuardCertificateServiceName(service?.name);
+    const fallbackId = isGuardFallback ? "guard-certificate-fallback" : service.id;
+    return {
+      ...service,
+      id: fallbackId,
+      backendId: isGuardFallback ? null : service.backendId || service.id,
+      legacySourceId: service.legacySourceId || service.legacy_source_id || (isGuardFallback ? 9 : service.id),
+      recallAfterDays: service.recallAfterDays || null,
+      doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
+    };
+  });
   structuredServices = data.serverServices.slice();
   data.serverServicesLoaded = true;
+  ensureGuardCertificateService();
   refreshServiceCatalog();
+}
+
+function decodeEarlyLatin1Utf8Mojibake(value) {
+  const str = String(value ?? "");
+  if (!str || Array.from(str).some((char) => char.charCodeAt(0) > 255)) return str;
+  try {
+    return decodeURIComponent(
+      Array.from(str)
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join(""),
+    );
+  } catch (error) {
+    return str;
+  }
+}
+
+const GUARD_CERTIFICATE_DISPLAY_NAME = "Справка 002 ЧОД (для охраны)";
+
+function normalizeGuardCertificateServiceName(name) {
+  const raw = String(name || "").trim();
+  return `${raw} ${decodeEarlyLatin1Utf8Mojibake(raw)}`.toLowerCase();
+}
+
+function isGuardCertificateServiceName(name) {
+  const normalized = normalizeGuardCertificateServiceName(name);
+  return normalized.includes("\u0447\u043e\u0434") || (normalized.includes("002") && normalized.includes("\u043e\u0445\u0440\u0430\u043d"));
+}
+
+function hasGuardCertificateServiceName(services) {
+  return Array.isArray(services) && services.some((service) => isGuardCertificateServiceName(service));
+}
+
+function normalizeAdmissionServiceNames(...sources) {
+  const names = [];
+  sources.forEach((source) => {
+    const values = Array.isArray(source) ? source : [source];
+    values
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .forEach((value) => {
+        if (!names.some((item) => item.toLowerCase() === value.toLowerCase())) {
+          names.push(value);
+        }
+      });
+  });
+  return names;
+}
+
+function getClientAdmissionServiceNames(client) {
+  const rawClient = client?.rawApiClient || client || {};
+  return normalizeAdmissionServiceNames(
+    client?.services,
+    rawClient?.services,
+    rawClient?.legacy_payload_json?.services,
+  );
+}
+
+function getGuardCertificateFallbackService() {
+  const fallbackService = window.servicesData?.services?.find((service) => isGuardCertificateServiceName(service?.name));
+  const fallbackId = "guard-certificate-fallback";
+  const certificateGroupId = serviceGroups.find((group) => String(group?.name || "").toLowerCase().includes("справ"))?.id;
+  const base = fallbackService || {
+    id: fallbackId,
+    name: GUARD_CERTIFICATE_DISPLAY_NAME,
+    groupId: certificateGroupId || 7,
+    price: 3500,
+    notes: "",
+    isActive: true,
+    sortOrder: 40,
+    doctorRoleIds: [1, 7],
+  };
+  const groupId = certificateGroupId || base.groupId || 7;
+  return {
+    ...base,
+    id: fallbackId,
+    backendId: base.backendId || null,
+    legacySourceId: base.legacySourceId || base.legacy_source_id || 9,
+    groupId,
+    price: Number(base.price || 3500),
+    isActive: base.isActive !== false,
+    recallAfterDays: base.recallAfterDays || null,
+    sortOrder: base.sortOrder || 40,
+    doctorRoleIds: Array.isArray(base.doctorRoleIds) ? base.doctorRoleIds : [1, 7],
+  };
+}
+
+function ensureServiceInList(list, service) {
+  if (!Array.isArray(list)) return false;
+  const hasService = list.some((item) => isGuardCertificateServiceName(item?.name));
+  if (hasService) return false;
+
+  const nextService = { ...service };
+  const insertBeforeIndex = list.findIndex((item) =>
+    String(item?.groupId) === String(nextService.groupId) &&
+    String(item?.name || "").toLowerCase().includes("бассейн")
+  );
+  if (insertBeforeIndex >= 0) {
+    list.splice(insertBeforeIndex, 0, nextService);
+  } else {
+    list.push(nextService);
+  }
+  return true;
+}
+
+function ensureGuardCertificateService() {
+  const service = getGuardCertificateFallbackService();
+  const updatedServerServices = ensureServiceInList(data.serverServices, service);
+  const updatedStructuredServices = ensureServiceInList(structuredServices, service);
+  if (updatedServerServices || updatedStructuredServices) {
+    refreshServiceCatalog();
+  }
 }
 
 loadColumnWidths();
 initializeFallbackServiceCatalog();
 applyPersistedDemoState();
+ensureGuardCertificateService();
 
 const pageTitle = document.getElementById("page-title");
 const navRoot = document.getElementById("nav");
@@ -252,6 +404,7 @@ const actionModal = document.getElementById("actionModal");
 const actionModalTitle = document.getElementById("actionModalTitle");
 const actionModalContent = document.getElementById("actionModalContent");
 const centerSelect = document.getElementById("centerSelect");
+const workspaceCenter = document.getElementById("workspaceCenter");
 const toast = document.getElementById("toast");
 
 const navItems = [
@@ -267,7 +420,6 @@ const navItems = [
   { id: "cash", label: "Касса", toast: "Открыт блок: Касса" },
   { id: "xml", label: "XML", toast: "Открыт блок: XML" },
   { id: "reports", label: "Отчеты", toast: "Открыт блок: Отчеты" },
-  { id: "harmfulness", label: "Пункты вредности", toast: "Открыт блок: Пункты вредности" },
 ];
 
 function canManageEmployeeWorkspace() {
@@ -322,6 +474,7 @@ const doctorRoleByExcelColumn = {
   ophthalmologist: "ophthalmologist",
   therapist: "therapist",
   psychiatrist: "psychiatrist",
+  "psychiatrist-narcologist": "psychiatrist",
   infectionist: "infectionist",
   phthisiatrician: "phthisiatrist",
   uzist: "uzist",
@@ -331,22 +484,25 @@ const doctorRoleByExcelColumn = {
 const DRIVER_SERVICE_LEGACY_IDS = new Set([8, 29]);
 const TRACTOR_SERVICE_LEGACY_IDS = new Set([7]);
 const GIMS_SERVICE_LEGACY_IDS = new Set([37]);
-const LMK_SERVICE_LEGACY_IDS = new Set([18, 19]);
+const LMK_SERVICE_LEGACY_IDS = new Set([18, 19, 42]);
 const PROF_SERVICE_LEGACY_IDS = new Set([16]);
-const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 39]);
+const CERTIFICATE_SERVICE_LEGACY_IDS = new Set([2, 3, 4, 5, 9, 10, 11, 12, 24, 30, 31, 32, 38, 40, 43]);
 const SPORT_SERVICE_LEGACY_IDS = new Set([4, 5]);
 const EKG_SERVICE_LEGACY_IDS = new Set([6, 20, 21, 27]);
+const POOL_SERVICE_LEGACY_IDS = new Set([3]);
 const SPORT_SERVICE_NAMES = new Set([
   "справка для участия в соревнованиях",
   "справка спорт + экг",
   "справка для спорта",
   "спортивная справка",
+  "спорт",
 ]);
 const CHAIRMAN_FORM_CONFIGS = {
   driver: {
     type: "driver",
     label: "Председатель: водительская комиссия",
     templateType: "driver",
+    printTemplateType: "medical",
     printMode: "driver-flow",
     note: "Используется водительский шаблон и бланк водительской комиссии.",
   },
@@ -384,13 +540,6 @@ const CHAIRMAN_FORM_CONFIGS = {
     templateType: "marine",
     printMode: "document",
     note: "Подтягивается морской сертификат.",
-  },
-  drug: {
-    type: "drug",
-    label: "Председатель: drug/alcohol test",
-    templateType: "drug",
-    printMode: "document",
-    note: "Подтягивается шаблон drug/alcohol test.",
   },
   sport: {
     type: "sport",
@@ -441,6 +590,13 @@ const CHAIRMAN_FORM_CONFIGS = {
     printMode: "document",
     note: "Подтягивается шаблон справки 095у.",
   },
+  semt196: {
+    type: "semt196",
+    label: "Председатель: справка СЭМТ-196",
+    templateType: "semt196",
+    printMode: "document",
+    note: "Подтягивается шаблон справки СЭМТ-196.",
+  },
   gsu: {
     type: "gsu",
     label: "Председатель: справка 001 ГСУ",
@@ -476,6 +632,13 @@ const CHAIRMAN_FORM_CONFIGS = {
     printMode: "document",
     note: "Подтягивается шаблон справки для охраны.",
   },
+  psych342: {
+    type: "psych342",
+    label: "Председатель: справка 342н",
+    templateType: "psych342",
+    printMode: "document",
+    note: "Подтягивается шаблон психиатрического освидетельствования 342н.",
+  },
   certificate: {
     type: "certificate",
     label: "Председатель: справка",
@@ -492,6 +655,7 @@ const CHAIRMAN_FORM_CONFIGS = {
   },
 };
 const DRIVER_BASE_CATEGORIES = new Set(["A", "B", "M", "A1", "B1"]);
+const DRIVER_DEFAULT_CATEGORIES = ["A", "B", "C", "D", "BE", "M"];
 const DRIVER_CATEGORY_OPTIONS = ["A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E"];
 const DRIVER_CATEGORY_ADVANCED_ROLES = ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"];
 const DRIVER_CATEGORY_BASE_ROLES = ["therapist", "ophthalmologist", "chairman"];
@@ -517,22 +681,26 @@ const OPERATOR_SERVICE_PRIORITY_BY_LEGACY_ID = new Map([
   [8, 1],
   [29, 2],
   [18, 3],
-  [19, 4],
-  [7, 5],
-  [37, 6],
-  [12, 7],
-  [2, 8],
-  [11, 9],
-  [4, 10],
-  [5, 11],
-  [3, 12],
-  [27, 13],
-  [30, 14],
-  [24, 15],
-  [31, 16],
-  [10, 17],
-  [32, 18],
-  [38, 19],
+  [42, 4],
+  [19, 5],
+  [7, 6],
+  [37, 7],
+  [9, 8],
+  [12, 9],
+  [2, 10],
+  [11, 11],
+  [4, 12],
+  [5, 13],
+  [3, 14],
+  [27, 15],
+  [30, 16],
+  [24, 17],
+  [31, 18],
+  [10, 19],
+  [32, 20],
+  [38, 21],
+  [40, 22],
+  [43, 23],
 ]);
 
 function getOperatorServicePriority(service) {
@@ -617,13 +785,164 @@ function renderCopyableValue(value, label, options = {}) {
   `;
 }
 
-function resolveAdmissionCategoryValue(categoryValue, services) {
-  const directValue = String(categoryValue || "").trim();
-  if (directValue) return directValue;
+function formatCertificate086SeriesForSex(options = {}) {
+  const sexKey = options.sexKey || (options.client && getClientSexKey(options.client));
+  if (sexKey === "female") return "086у (Ж)";
+  if (sexKey === "male") return "086у (М)";
+  return "086у";
+}
+
+function formatAdmissionServiceSeriesList(services, options = {}) {
   const serviceNames = Array.isArray(services)
     ? services.map((service) => String(service || "").trim()).filter(Boolean)
     : [];
-  return serviceNames.join(", ");
+  return serviceNames
+    .map((name) => {
+      const service =
+        (typeof getServerServiceByName === "function" && getServerServiceByName(name)) ||
+        (typeof structuredServices !== "undefined" &&
+          Array.isArray(structuredServices) &&
+          structuredServices.find((item) => item.name === name)) ||
+        { name };
+      return buildServiceSeriesAbbreviation(service, options);
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function resolveAdmissionCategoryValue(categoryValue, services, options = {}) {
+  const directValue = String(categoryValue || "").trim();
+  const serviceNames = Array.isArray(services)
+    ? services.map((service) => String(service || "").trim()).filter(Boolean)
+    : [];
+  if (hasGuardCertificateServiceName(serviceNames)) return "002 (чод)";
+  if (directValue) return directValue;
+  return formatAdmissionServiceSeriesList(serviceNames, options) || serviceNames.join(", ");
+}
+
+function resolveDashboardAdmissionCategoryValue(categoryValue, services, options = {}) {
+  const directValue = String(categoryValue || "").trim();
+  if (hasGuardCertificateServiceName(services) || directValue === "4026") {
+    return "002 (чод)";
+  }
+  return resolveAdmissionCategoryValue(categoryValue, services, options);
+}
+
+function getVisitServiceNamesForDisplay(visit) {
+  if (!visit) return [];
+
+  const namesById = getSelectedVisitServiceIds(visit)
+    .map((serviceId) => getServiceById(serviceId)?.name)
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  if (namesById.length) return namesById;
+
+  return Array.isArray(visit.serviceNames)
+    ? visit.serviceNames.map((name) => String(name || "").trim()).filter(Boolean)
+    : [];
+}
+
+function resolveDashboardAdmissionCategory(client, visit = null) {
+  const clientServiceNames = getClientAdmissionServiceNames(client);
+  if (!visit) return resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames, { client });
+
+  const services = getServicesForVisit(visit);
+  const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit), clientServiceNames);
+  if (hasGuardCertificateServiceName(serviceNames)) return "002 (чод)";
+  const hasDriverService = services.some(isDriverService);
+  if (hasDriverService) {
+    const driverDetail = getDriverDetailFromVisit(visit);
+    const driverCategories = normalizeDriverCategories(
+      driverDetail.categories || visit.admissionCategory || client?.admissionCategory || client?.category,
+    );
+    return resolveDashboardAdmissionCategoryValue(driverCategories.join(", "), serviceNames, { client });
+  }
+
+  return resolveDashboardAdmissionCategoryValue("", serviceNames, { client }) ||
+    resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames, { client });
+}
+
+function getCompletedDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
+  const completed = new Set();
+  const addFromStatus = () => {
+    (status?.completedDoctorRoleIds || [])
+      .forEach((roleId) => completed.add(roleId));
+  };
+
+  if (!visit) {
+    addFromStatus();
+    return completed;
+  }
+
+  (Array.isArray(data.doctorExams) ? data.doctorExams : [])
+    .filter(
+      (exam) =>
+        String(exam?.clientId) === String(client?.id) &&
+        String(exam?.visitId) === String(visit.id) &&
+        exam?.isCompleted,
+    )
+    .forEach((exam) => completed.add(exam.doctorRoleId));
+
+  if (!visit.backendId || String(status?.encounterId || "") === String(visit.backendId)) {
+    addFromStatus();
+  }
+
+  return completed;
+}
+
+function getExistingDoctorRoleIdsForDashboardVisit(client, visit = null, status = null) {
+  const existing = new Set();
+  const addFromStatus = () => {
+    (status?.existingDoctorRoleIds || [])
+      .forEach((roleId) => {
+        const normalized = String(roleId || "").trim();
+        if (normalized) existing.add(normalized);
+      });
+  };
+
+  if (!visit) {
+    addFromStatus();
+    return existing;
+  }
+
+  (Array.isArray(data.doctorExams) ? data.doctorExams : [])
+    .filter(
+      (exam) =>
+        String(exam?.clientId) === String(client?.id) &&
+        String(exam?.visitId) === String(visit.id),
+    )
+    .forEach((exam) => {
+      const normalized = String(exam?.doctorRoleId || "").trim();
+      if (normalized) existing.add(normalized);
+    });
+
+  if (!visit.backendId || String(status?.encounterId || "") === String(visit.backendId)) {
+    addFromStatus();
+  }
+
+  return existing;
+}
+
+function getSuppressedDoctorRoleIdsForDashboardVisit(visit = null, status = null) {
+  const suppressed = new Set();
+  const addFromStatus = () => {
+    (status?.suppressedDoctorRoleIds || [])
+      .forEach((roleId) => {
+        const normalized = String(roleId || "").trim();
+        if (normalized) suppressed.add(normalized);
+      });
+  };
+
+  if (visit) {
+    getSuppressedDoctorRoleCodesForVisit(visit).forEach((roleId) => suppressed.add(roleId));
+    if (!visit.backendId || String(status?.encounterId || "") === String(visit.backendId)) {
+      addFromStatus();
+    }
+  } else {
+    addFromStatus();
+  }
+
+  return suppressed;
 }
 
 const _repairDemoTextMap = {
@@ -686,6 +1005,28 @@ function repairDemoText(value) {
   return str.replace(_repairDemoTextRegex, (m) => _repairDemoTextMap[m] ?? m);
 }
 
+function decodeLatin1Utf8Mojibake(value) {
+  const str = String(value ?? "");
+  if (!str || Array.from(str).some((char) => char.charCodeAt(0) > 255)) return str;
+  try {
+    return decodeURIComponent(
+      Array.from(str)
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join(""),
+    );
+  } catch (error) {
+    return str;
+  }
+}
+
+function normalizeSearchTextWithRepairs(value) {
+  const raw = String(value ?? "");
+  const decoded = decodeLatin1Utf8Mojibake(raw);
+  return [raw, repairDemoText(raw), decoded, repairDemoText(decoded)]
+    .join(" ")
+    .toLowerCase();
+}
+
 function loadPersistedDemoState() {
   try {
     const raw = window.localStorage?.getItem(DEMO_STORAGE_KEY);
@@ -696,9 +1037,23 @@ function loadPersistedDemoState() {
   }
 }
 
+function applyDefaultDoctorDirectory() {
+  if (!data.doctorDirectory || typeof data.doctorDirectory !== "object") {
+    data.doctorDirectory = {};
+  }
+  Object.entries(DEFAULT_DOCTOR_DIRECTORY).forEach(([roleId, doctorName]) => {
+    if (!String(data.doctorDirectory[roleId] || "").trim()) {
+      data.doctorDirectory[roleId] = doctorName;
+    }
+  });
+}
+
 function applyPersistedDemoState() {
   const saved = loadPersistedDemoState();
-  if (!saved || typeof saved !== "object") return;
+  if (!saved || typeof saved !== "object") {
+    applyDefaultDoctorDirectory();
+    return;
+  }
 
   data.clientOverrides = saved.clientOverrides && typeof saved.clientOverrides === "object"
     ? saved.clientOverrides
@@ -723,7 +1078,11 @@ function applyPersistedDemoState() {
   }
 
   if (Array.isArray(saved.structuredServices) && Array.isArray(structuredServices)) {
-    structuredServices.splice(0, structuredServices.length, ...saved.structuredServices);
+    const normalizedSavedServices = saved.structuredServices.map((service) => ({
+      ...service,
+      doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
+    }));
+    structuredServices.splice(0, structuredServices.length, ...normalizedSavedServices);
     data.servicesDirty = true;
     refreshServiceCatalog();
   }
@@ -744,18 +1103,27 @@ function applyPersistedDemoState() {
   if (savedAppState.selectedClientId !== undefined && savedAppState.selectedClientId !== null) {
     appState.selectedClientId = savedAppState.selectedClientId;
   }
-  if (typeof savedAppState.centerFilter === "string") appState.centerFilter = savedAppState.centerFilter;
+  if (WORKSPACE_CENTER_NAMES.includes(savedAppState.centerFilter)) {
+    appState.centerFilter = savedAppState.centerFilter;
+  }
   appState.clientSearch = "";
-  if (typeof savedAppState.clientEncounterDate === "string") appState.clientEncounterDate = savedAppState.clientEncounterDate;
-  if (typeof savedAppState.clientEncounterDateFrom === "string") {
-    appState.clientEncounterDateFrom = savedAppState.clientEncounterDateFrom;
-  }
-  if (typeof savedAppState.clientEncounterDateTo === "string" && savedAppState.clientEncounterDateTo.trim()) {
-    appState.clientEncounterDateTo = savedAppState.clientEncounterDateTo;
-  }
-  if (appState.clientEncounterDate && !appState.clientEncounterDateFrom && !appState.clientEncounterDateTo) {
-    appState.clientEncounterDateFrom = appState.clientEncounterDate;
-    appState.clientEncounterDateTo = appState.clientEncounterDate;
+  appState.clientPeriodFilterApplied = savedAppState.clientPeriodFilterApplied === true;
+  if (appState.clientPeriodFilterApplied) {
+    if (typeof savedAppState.clientEncounterDate === "string") appState.clientEncounterDate = savedAppState.clientEncounterDate;
+    if (typeof savedAppState.clientEncounterDateFrom === "string") {
+      appState.clientEncounterDateFrom = savedAppState.clientEncounterDateFrom;
+    }
+    if (typeof savedAppState.clientEncounterDateTo === "string") {
+      appState.clientEncounterDateTo = savedAppState.clientEncounterDateTo;
+    }
+    if (appState.clientEncounterDate && !appState.clientEncounterDateFrom && !appState.clientEncounterDateTo) {
+      appState.clientEncounterDateFrom = appState.clientEncounterDate;
+      appState.clientEncounterDateTo = appState.clientEncounterDate;
+    }
+  } else {
+    appState.clientEncounterDate = "";
+    appState.clientEncounterDateFrom = "";
+    appState.clientEncounterDateTo = "";
   }
   if (Number.isFinite(savedAppState.dashboardPage) && savedAppState.dashboardPage > 0) {
     appState.dashboardPage = savedAppState.dashboardPage;
@@ -799,6 +1167,7 @@ function applyPersistedDemoState() {
     appState.blanksSearch = savedAppState.blanksSearch;
   }
   if (savedAppState.restoreInputId !== undefined) appState.restoreInputId = savedAppState.restoreInputId;
+  if (savedAppState.selectedEncounterId !== undefined) appState.selectedEncounterId = savedAppState.selectedEncounterId;
   if (savedAppState.activeVisitId !== undefined) appState.activeVisitId = savedAppState.activeVisitId;
   appState.doctorExamModal = {
     isOpen: false,
@@ -806,6 +1175,7 @@ function applyPersistedDemoState() {
     visitId: null,
     doctorRoleId: null,
   };
+  applyDefaultDoctorDirectory();
   ensureDemoAuthConsistency();
 }
 
@@ -848,6 +1218,7 @@ function persistDemoState() {
         clientEncounterDate: appState.clientEncounterDate,
         clientEncounterDateFrom: appState.clientEncounterDateFrom,
         clientEncounterDateTo: appState.clientEncounterDateTo,
+        clientPeriodFilterApplied: appState.clientPeriodFilterApplied,
         dashboardPage: appState.dashboardPage,
         serviceGroupFilter: appState.serviceGroupFilter,
         visitServiceGroupFilter: appState.visitServiceGroupFilter,
@@ -864,6 +1235,7 @@ function persistDemoState() {
         blanksFilterBatchId: appState.blanksFilterBatchId,
         blanksSearch: appState.blanksSearch,
         restoreInputId: appState.restoreInputId,
+        selectedEncounterId: appState.selectedEncounterId,
         activeVisitId: appState.activeVisitId,
         doctorExamModal: appState.doctorExamModal,
       },
@@ -963,6 +1335,43 @@ function getDoctorTemplate(doctorRoleId) {
 }
 
 let _clientPoolCache = null;
+
+function getClientIdentityKey(client) {
+  const key = client?.backendId || client?.id;
+  return key === undefined || key === null || key === "" ? "" : String(key);
+}
+
+function pinDashboardClient(client) {
+  const key = getClientIdentityKey(client);
+  if (!key) return;
+  data.dashboardPinnedClientIds.add(key);
+}
+
+function clearDashboardPinnedClients() {
+  data.dashboardPinnedClientIds.clear();
+}
+
+function getDashboardPinnedClients() {
+  if (!data.dashboardPinnedClientIds.size) return [];
+  const pinnedClients = [];
+  const seen = new Set();
+  [...(data.clients || []), ...(data.backendClients || [])].forEach((client) => {
+    const key = getClientIdentityKey(client);
+    if (!key || !data.dashboardPinnedClientIds.has(key) || seen.has(key)) return;
+    seen.add(key);
+    pinnedClients.push(client);
+  });
+  return pinnedClients;
+}
+
+function mergeDashboardPinnedClients(clients = []) {
+  const seen = new Set(clients.map(getClientIdentityKey).filter(Boolean));
+  const pinnedClients = getDashboardPinnedClients().filter((client) => {
+    const key = getClientIdentityKey(client);
+    return key && !seen.has(key);
+  });
+  return [...pinnedClients, ...clients];
+}
 
 function getClientPool() {
   if (_clientPoolCache) return _clientPoolCache;
@@ -1094,7 +1503,14 @@ function getVisitPaymentTotals(services = [], amount = 0, fallbackPaymentType = 
 }
 
 function isDriverService(service) {
-  return DRIVER_SERVICE_LEGACY_IDS.has(Number(service?.legacySourceId ?? service?.id));
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
+  const normalizedName = String(service?.name || "").trim().toLowerCase();
+  return (
+    DRIVER_SERVICE_LEGACY_IDS.has(legacyId) ||
+    normalizedName.includes("водител") ||
+    normalizedName.includes("водительск") ||
+    normalizedName.includes("водительского удостовер")
+  );
 }
 
 function isTractorService(service) {
@@ -1131,6 +1547,10 @@ function isCertificateService(service) {
   );
 }
 
+function isCertificate086Service(service) {
+  return Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id) === 12;
+}
+
 function isSportService(service) {
   const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id);
   const normalizedName = String(service?.name || "").trim().toLowerCase();
@@ -1146,27 +1566,60 @@ function isStandaloneEkgService(service) {
   );
 }
 
+function isPoolService(service) {
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id);
+  const normalizedName = String(service?.name || "").trim().toLowerCase();
+  return POOL_SERVICE_LEGACY_IDS.has(legacyId) || normalizedName.includes("басс");
+}
+
+function isChairmanMarkedService(service) {
+  return Boolean(service);
+}
+
 function getServicesForVisit(visit) {
   return getSelectedVisitServiceIds(visit)
     .map((serviceId) => getServiceById(serviceId))
     .filter(Boolean);
 }
 
+function hasDriverAdmissionCategoriesForVisit(visit) {
+  if (!visit) return false;
+  const client = getClientPool().find((item) => String(item.id) === String(visit.clientId));
+  const detail = getDriverDetailFromVisit(visit);
+  const hasVisitSpecificServices = getSelectedVisitServiceIds(visit).length > 0 || (visit.serviceNames || []).length > 0;
+  const values = [
+    detail.categories,
+    visit.admissionCategory,
+    ...(hasVisitSpecificServices
+      ? []
+      : [client?.admissionCategory, client?.category, client?.rawApiClient?.admission_category]),
+  ];
+  return values.some((value) => normalizeDriverCategories(value).length > 0);
+}
+
 function getChairmanFormTypeForVisit(visit) {
   const services = getServicesForVisit(visit);
-  const serviceText = [
-    ...(Array.isArray(visit?.serviceNames) ? visit.serviceNames : []),
+  const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
+  const rawClient = client?.rawApiClient || {};
+  const visitServiceNames = Array.isArray(visit?.serviceNames) ? visit.serviceNames : [];
+  const rawVisitServiceNames = Array.isArray(visit?.rawApiEncounter?.services) ? visit.rawApiEncounter.services : [];
+  const hasVisitSpecificServices = services.length > 0 || visitServiceNames.length > 0 || rawVisitServiceNames.length > 0;
+  const serviceText = normalizeSearchTextWithRepairs([
+    ...visitServiceNames,
+    ...(hasVisitSpecificServices || !Array.isArray(client?.services) ? [] : client.services),
+    ...(hasVisitSpecificServices || !Array.isArray(rawClient?.services) ? [] : rawClient.services),
+    ...(hasVisitSpecificServices || !Array.isArray(rawClient?.legacy_payload_json?.services) ? [] : rawClient.legacy_payload_json.services),
     ...services.map((service) => service.name),
+    ...rawVisitServiceNames,
   ]
-    .join(" ")
-    .toLowerCase();
+    .join(" "));
 
   if (services.some(isDriverService) || serviceText.includes("водител")) return "driver";
   if (services.some(isGimsService) || serviceText.includes("гимс")) return "gims";
   if (services.some(isLmkService) || serviceText.includes("лмк")) return "lmk";
   if (services.some(isProfService) || serviceText.includes("профосмотр") || serviceText.includes("29н")) return "prof";
+  if (services.some((service) => isGuardCertificateServiceName(service?.name)) || isGuardCertificateServiceName(serviceText)) return "guard";
   if (services.some(isTractorService) || serviceText.includes("трактор") || serviceText.includes("071")) return "tractor";
-  if (serviceText.includes("драг") || serviceText.includes("drug") || serviceText.includes("alcohol")) return "drug";
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) return "marine";
   if (serviceText.includes("гто") || serviceText.includes("1144")) return "gto";
   if (serviceText.includes("басс")) return "pool";
@@ -1177,10 +1630,25 @@ function getChairmanFormTypeForVisit(visit) {
   if (serviceText.includes("082") || serviceText.includes("границ")) return "certificate082";
   if (serviceText.includes("086")) return "certificate086";
   if (serviceText.includes("095")) return "certificate095";
-  if (serviceText.includes("001") || serviceText.includes("гсу") || serviceText.includes("госслуж")) return "gsu";
-  if (serviceText.includes("989") || serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return "gostaina";
+  if (serviceText.includes("сэмт") || serviceText.includes("semt") || serviceText.includes("196")) return "semt196";
+  if (
+    services.some((service) => Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id) === 2) ||
+    serviceText.includes("001") ||
+    serviceText.includes("гсу") ||
+    serviceText.includes("госслуж") ||
+    /(^|\s)гс($|\s)/.test(serviceText)
+  ) return "gsu";
+  if (
+    services.some((service) => Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id) === 11) ||
+    serviceText.includes("989") ||
+    serviceText.includes("гостайн") ||
+    serviceText.includes("гос.тайн") ||
+    /(^|\s)гт($|\s)/.test(serviceText)
+  ) return "gostaina";
+  if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return "psych342";
   if (serviceText.includes("чод") || serviceText.includes("охран")) return "guard";
   if (services.some(isCertificateService)) return "certificate";
+  if (hasDriverAdmissionCategoriesForVisit(visit)) return "driver";
   return "default";
 }
 
@@ -1195,9 +1663,11 @@ function getChairmanFormInfo(examOrVisit = null, client = null) {
     : examOrVisit;
   const resolvedClient = client || (visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient());
   const config = getChairmanFormConfigForVisit(visit);
-  const template = data.documentTemplatesLoaded ? pickDocumentTemplate(config.templateType, visit, resolvedClient) : null;
+  const printTemplateType = config.printTemplateType || config.templateType;
+  const template = data.documentTemplatesLoaded ? pickDocumentTemplate(printTemplateType, visit, resolvedClient) : null;
   return {
     ...config,
+    printTemplateType,
     template,
     templateId: template?.id || null,
     templateName: template?.name || template?.file_name || "",
@@ -1218,7 +1688,7 @@ async function openChairmanTemplateFile(examId = null) {
   try {
     return await openAuthorizedFileUrl(buildTemplateFileUrl(info.templateId));
   } catch (error) {
-    showToast(humanizeApiError(error, "Не удалось открыть файловый шаблон"));
+    showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
     return false;
   }
 }
@@ -1308,6 +1778,16 @@ const DRIVER_LIMITATION_FIELD_TO_LABEL = {
 const DRIVER_LIMITATION_LABEL_TO_FIELD = Object.fromEntries(
   Object.entries(DRIVER_LIMITATION_FIELD_TO_LABEL).map(([key, value]) => [value, key]),
 );
+const DRIVER_LIMITATION_FIELD_ALIASES = {
+  restrictionAM: ["Категории A, M, A1, B1"],
+  restrictionBBE: ["Категории B, BE, B1", "BBE"],
+  restrictionCCE: ["Категории C, CE, D, DE, Tm, Tb, C1, D1, C1E, D1E", "CCE"],
+};
+
+function hasDriverLimitationSelection(limitations, fieldKey) {
+  const label = DRIVER_LIMITATION_FIELD_TO_LABEL[fieldKey];
+  return limitations.includes(label) || (DRIVER_LIMITATION_FIELD_ALIASES[fieldKey] || []).some((alias) => limitations.includes(alias));
+}
 
 function collectChairmanDriverCategories(fields = {}) {
   const categories = [];
@@ -1352,8 +1832,8 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
   const indications = Array.isArray(detail.indications) ? detail.indications : [];
   const limitations = Array.isArray(detail.limitations) ? detail.limitations : [];
   const hasCategoryOverrides = sourceCategories.length > 0;
-  const hasIndicationOverrides = indications.length > 0;
-  const hasLimitationOverrides = limitations.length > 0;
+  const hasIndicationOverrides = Array.isArray(detail.indications);
+  const hasLimitationOverrides = Array.isArray(detail.limitations);
 
   return {
     ...fields,
@@ -1387,9 +1867,9 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
     indicationHearingAid: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationHearingAid) : Boolean(fields.indicationHearingAid),
     indicationNoHiring: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationNoHiring) : Boolean(fields.indicationNoHiring),
     indicationOneYear: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationOneYear) : Boolean(fields.indicationOneYear),
-    restrictionAM: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionAM) : Boolean(fields.restrictionAM),
-    restrictionBBE: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionBBE) : Boolean(fields.restrictionBBE),
-    restrictionCCE: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionCCE) : Boolean(fields.restrictionCCE),
+    restrictionAM: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionAM") : Boolean(fields.restrictionAM),
+    restrictionBBE: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionBBE") : Boolean(fields.restrictionBBE),
+    restrictionCCE: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionCCE") : Boolean(fields.restrictionCCE),
     restrictionNoHands: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionNoHands) : Boolean(fields.restrictionNoHands),
     restrictionNoLegs: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionNoLegs) : Boolean(fields.restrictionNoLegs),
     examDate: fields.examDate || visit?.visitDate || "",
@@ -1399,58 +1879,72 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
 function getDriverDetailFromVisit(visit) {
   if (!visit) return {};
   const serviceDetails = getVisitServiceDetails(visit);
-  const details = Object.values(serviceDetails);
-  const detailWithCategories = details.find((detail) =>
-    Array.isArray(detail?.categories)
-      ? detail.categories.length
-      : String(detail?.categories || "").trim(),
-  );
-  if (detailWithCategories) return detailWithCategories;
   const driverServiceId = getSelectedVisitServiceIds(visit).find((serviceId) => isDriverService(getServiceById(serviceId)));
-  return driverServiceId ? (serviceDetails[String(driverServiceId)] ||= {}) : {};
+  const primaryDetail = driverServiceId ? (serviceDetails[String(driverServiceId)] ||= {}) : {};
+  const details = Object.values(serviceDetails).filter((detail) => detail && typeof detail === "object");
+  const driverDetails = details.filter((detail) =>
+    (Array.isArray(detail.categories) ? detail.categories.length : String(detail.categories || "").trim()) ||
+    Array.isArray(detail.indications) ||
+    Array.isArray(detail.limitations) ||
+    Object.hasOwn(detail, "boatFit"),
+  );
+  driverDetails.forEach((detail) => {
+    if (detail === primaryDetail) return;
+    if (!primaryDetail.categories && detail.categories) primaryDetail.categories = detail.categories;
+    if (!Array.isArray(primaryDetail.indications) && Array.isArray(detail.indications)) primaryDetail.indications = detail.indications.slice();
+    if (!Array.isArray(primaryDetail.limitations) && Array.isArray(detail.limitations)) primaryDetail.limitations = detail.limitations.slice();
+    if (!Object.hasOwn(primaryDetail, "boatFit") && Object.hasOwn(detail, "boatFit")) primaryDetail.boatFit = detail.boatFit;
+  });
+  if (driverServiceId) return primaryDetail;
+  return driverDetails[0] || {};
 }
 
 function getDoctorRoleCodeById(roleId) {
   return doctorRoles.find((role) => String(role.id) === String(roleId))?.code || null;
 }
 
-function getDoctorRoleCodeSetFromService(service, detail = {}) {
+function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   if (!service) return new Set();
   if (isDriverService(service)) {
-    return new Set(getDriverRoleCodes(detail.categories));
-  }
-  if (isSportService(service)) {
-    return new Set(["chairman"]);
-  }
-  if (isStandaloneEkgService(service)) {
-    return new Set(["chairman"]);
+    return new Set([...getDriverRoleCodes(detail.categories || DRIVER_DEFAULT_CATEGORIES), "chairman"]);
   }
 
   const roleCodes = (service.doctorRoleIds || [])
     .map((roleId) => getDoctorRoleCodeById(roleId))
     .filter(Boolean);
 
-  if (isCertificateService(service)) {
-    roleCodes.push("chairman");
+  if (getClientSexKey(client) === "male") {
+    const gynecologistIndex = roleCodes.indexOf("gynecologist");
+    if (gynecologistIndex >= 0) roleCodes.splice(gynecologistIndex, 1);
   }
 
-  if (
-    roleCodes.length &&
-    (isTractorService(service) || isGimsService(service) || isLmkService(service) || isProfService(service))
-  ) {
+  if (isChairmanMarkedService(service)) {
     roleCodes.push("chairman");
   }
 
   return new Set(roleCodes);
 }
 
-function getRequiredDoctorRoleCountsForVisit(visit) {
+function isDoctorRoleVisibleForClient(roleCode, client) {
+  return !(roleCode === "gynecologist" && getClientSexKey(client) === "male");
+}
+
+function getVisitClientForDoctorRules(visit, clientOverride = null) {
+  const client = clientOverride || getClientPool().find((item) => String(item.id) === String(visit?.clientId)) || null;
+  if (getClientSexKey(client) || !visit?.clientSex) return client;
+  return { ...(client || {}), sex: visit.clientSex, gender: visit.clientSex };
+}
+
+function getRequiredDoctorRoleCountsForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
+  const client = getVisitClientForDoctorRules(visit, clientOverride);
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
   const counts = new Map();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
-    getDoctorRoleCodeSetFromService(service, detail).forEach((code) => {
+    getDoctorRoleCodeSetFromService(service, detail, client).forEach((code) => {
+      if (suppressedRoles.has(code)) return;
       const current = counts.get(code) || 0;
       counts.set(code, code === "chairman" && isCertificateService(service) ? current + 1 : Math.max(current, 1));
     });
@@ -1459,13 +1953,13 @@ function getRequiredDoctorRoleCountsForVisit(visit) {
 }
 
 function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
-  const counts = new Map(currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit) : []);
+  const counts = new Map(currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : []);
   if (!client) return counts;
 
   getVisitsForClient(client.id).forEach((visit) => {
     if (currentVisit && String(visit.id) === String(currentVisit.id)) return;
     if (visit.status === "closed") return;
-    const visitCounts = getRequiredDoctorRoleCountsForVisit(visit);
+    const visitCounts = getRequiredDoctorRoleCountsForVisit(visit, client);
     const chairmanCount = Number(visitCounts.get("chairman") || 0);
     if (chairmanCount > 0) {
       counts.set("chairman", Number(counts.get("chairman") || 0) + chairmanCount);
@@ -1475,15 +1969,48 @@ function getRequiredDoctorRoleCountsForClient(client, currentVisit = null) {
   return counts;
 }
 
-function getRequiredDoctorRoleCodesForVisit(visit) {
+function getRequiredDoctorRoleCodesForVisit(visit, clientOverride = null) {
   const serviceDetails = getVisitServiceDetails(visit);
+  const client = getVisitClientForDoctorRules(visit, clientOverride);
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
   const result = new Set();
   getSelectedVisitServiceIds(visit).forEach((serviceId) => {
     const service = getServiceById(serviceId);
     const detail = serviceDetails[String(serviceId)] || {};
-    getDoctorRoleCodeSetFromService(service, detail).forEach((code) => result.add(code));
+    getDoctorRoleCodeSetFromService(service, detail, client).forEach((code) => {
+      if (!suppressedRoles.has(code)) result.add(code);
+    });
   });
   return Array.from(result);
+}
+
+function getSuppressedDoctorRoleCodesForVisit(visit) {
+  return new Set(
+    (Array.isArray(visit?.suppressedDoctorRoleIds) ? visit.suppressedDoctorRoleIds : [])
+      .map((roleId) => String(roleId || "").trim())
+      .filter(Boolean),
+  );
+}
+
+function suppressDoctorRoleForVisit(visit, doctorRoleId) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!visit || !roleId) return;
+
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
+  suppressedRoles.add(roleId);
+  visit.suppressedDoctorRoleIds = Array.from(suppressedRoles);
+}
+
+function restoreDoctorRoleForVisit(visit, doctorRoleId) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!visit || !roleId || !Array.isArray(visit.suppressedDoctorRoleIds)) return;
+
+  visit.suppressedDoctorRoleIds = visit.suppressedDoctorRoleIds.filter(
+    (value) => String(value || "").trim() !== roleId,
+  );
+  if (!visit.suppressedDoctorRoleIds.length) {
+    delete visit.suppressedDoctorRoleIds;
+  }
 }
 
 function getServerServiceByName(name) {
@@ -1494,6 +2021,7 @@ const RU_DATE_FORMAT_OPTIONS = {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
+  timeZone: "Europe/Moscow",
 };
 
 const RU_DATE_TIME_FORMAT_OPTIONS = {
@@ -1502,8 +2030,22 @@ const RU_DATE_TIME_FORMAT_OPTIONS = {
   minute: "2-digit",
 };
 
+const TIME_ZONE_AWARE_ISO_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}[T\s]+\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+function parseTimeZoneAwareIsoDateTime(value) {
+  if (!TIME_ZONE_AWARE_ISO_DATE_TIME_PATTERN.test(value)) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatDateTime(value = new Date()) {
   const text = typeof value === "string" ? value.trim() : "";
+  const timeZoneAwareDate = parseTimeZoneAwareIsoDateTime(text);
+  if (timeZoneAwareDate) {
+    return timeZoneAwareDate.toLocaleString("ru-RU", RU_DATE_TIME_FORMAT_OPTIONS);
+  }
+
   const isoDateTimeMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2}))?/);
   if (isoDateTimeMatch) {
     const dateText = `${isoDateTimeMatch[3]}.${isoDateTimeMatch[2]}.${isoDateTimeMatch[1]}`;
@@ -1520,6 +2062,42 @@ function formatDateTime(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("ru-RU", RU_DATE_TIME_FORMAT_OPTIONS);
+}
+
+function extractDisplayTime(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const timeZoneAwareDate = parseTimeZoneAwareIsoDateTime(text);
+  if (timeZoneAwareDate) {
+    return timeZoneAwareDate.toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Europe/Moscow",
+    });
+  }
+
+  const isoDateTimeMatch = text.match(/^\d{4}-\d{2}-\d{2}[T\s]+(\d{1,2}):(\d{2})/);
+  if (isoDateTimeMatch) return `${isoDateTimeMatch[1].padStart(2, "0")}:${isoDateTimeMatch[2]}`;
+
+  const ruDateTimeMatch = text.match(/^\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})[,\s]+(\d{1,2}):(\d{2})/);
+  if (ruDateTimeMatch) return `${ruDateTimeMatch[1].padStart(2, "0")}:${ruDateTimeMatch[2]}`;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})$/.test(text)) return "";
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Moscow",
+  });
+}
+
+function formatDateTimeWithFallbackTime(value, fallbackTimeValue) {
+  const formatted = formatDateTime(value);
+  if (!formatted || /,\s*\d{2}:\d{2}$/.test(formatted)) return formatted;
+
+  const fallbackTime = extractDisplayTime(fallbackTimeValue);
+  return fallbackTime ? `${formatted}, ${fallbackTime}` : formatted;
 }
 
 function formatApiDate(value) {
@@ -1550,16 +2128,25 @@ function joinDocument(client) {
 
 function mapApiClient(client) {
   const services = Array.isArray(client.services) ? client.services : [];
+  const admissionServices = getClientAdmissionServiceNames(client);
+  const encounterId = client.encounter_id ?? null;
+  const encounterDateText = client.encounter_date || client.encounter_date_text || client.real_date_text || client.created_at || "";
+  const encounterTimeSource = client.encounter_created_at || client.latest_encounter_created_at || client.created_at || "";
+  const encounterDateTime = formatDateTimeWithFallbackTime(encounterDateText, encounterTimeSource);
   return {
     id: client.id,
     backendId: client.id,
+    dashboardRowId: encounterId ? `encounter-${encounterId}` : `client-${client.id}`,
+    encounterId,
+    encounterStatus: client.encounter_status || "",
     patientNumber: client.patient_number,
     fullName: joinClientName(client) || `Пациент ${client.patient_number || client.id}`,
     birthDate: formatApiDate(client.birth_date),
     sex: client.sex || "",
     gender: client.sex || "",
     phone: client.phone || "",
-    center: client.center || "Медцентр 1",
+    centerId: client.center_id ?? null,
+    center: client.center_name || client.center || "Медцентр 1",
     document: joinDocument(client),
     documentType: client.document_type || "",
     documentSeries: client.document_series || "",
@@ -1568,12 +2155,12 @@ function mapApiClient(client) {
     documentIssuedDate: formatApiDate(client.document_issued_date),
     snils: client.snils || "",
     email: client.email || "",
-    note: client.notes || "",
-    lastVisit: formatDateTime(client.real_date_text || client.encounter_date_text || ""),
+    note: encounterId !== null ? client.comment || "" : client.notes || "",
+    lastVisit: encounterDateTime,
     services,
     registration: client.registration_text || client.address_text || "",
     admissionCategory: client.admission_category || "",
-    category: resolveAdmissionCategoryValue(client.admission_category, services),
+    category: resolveAdmissionCategoryValue(client.admission_category, admissionServices, { client }),
     referenceNumber: client.reference_number || "",
     gynecologist: client.doctor_gynecologist || "",
     stomatologist: client.doctor_stomatologist || "",
@@ -1587,7 +2174,7 @@ function mapApiClient(client) {
     infectionist: client.doctor_infectionist || "",
     phthisiatrician: client.doctor_phthisiatrician || "",
     uzist: client.doctor_uzist || "",
-    encounterDate: formatDateTime(client.encounter_date_text || client.real_date_text || ""),
+    encounterDate: encounterDateTime,
     cardNumber: client.card_number || "",
     profession: client.profession || "",
     workPlace: client.work_place || "",
@@ -1595,6 +2182,8 @@ function mapApiClient(client) {
     agent: client.agent || client.legacy_payload_json?.agent || "",
     mkb10: client.mkb10 || "",
     realDate: client.real_date_text || "",
+    createdAt: client.created_at || "",
+    latestEncounterCreatedAt: encounterTimeSource || "",
     rawApiClient: client,
   };
 }
@@ -1617,6 +2206,32 @@ const doctorRoleToClientFieldMap = {
 
 function getClientDoctorFieldKey(doctorRoleId) {
   return doctorRoleToClientFieldMap[String(doctorRoleId || "").trim()] || "";
+}
+
+function getClientDoctorFullName(client, doctorRoleId) {
+  const fieldKey = getClientDoctorFieldKey(doctorRoleId);
+  if (!client || !fieldKey) return "";
+
+  const directValue = String(client[fieldKey] || "").trim();
+  if (directValue) return directValue;
+
+  const raw = client.rawApiClient || {};
+  const rawFieldByKey = {
+    gynecologist: "doctor_gynecologist",
+    stomatologist: "doctor_stomatologist",
+    dermatologist: "doctor_dermatologist",
+    neurologist: "doctor_neurologist",
+    surgeon: "doctor_surgeon",
+    otolaryngologist: "doctor_otolaryngologist",
+    ophthalmologist: "doctor_ophthalmologist",
+    therapist: "doctor_therapist",
+    psychiatrist: "doctor_psychiatrist",
+    infectionist: "doctor_infectionist",
+    phthisiatrician: "doctor_phthisiatrician",
+    uzist: "doctor_uzist",
+    chairman: "doctor_therapist",
+  };
+  return String(raw[rawFieldByKey[fieldKey]] || "").trim();
 }
 
 function syncCompletedDoctorMarksToClient(client, exams = []) {
@@ -1642,6 +2257,148 @@ function syncCompletedDoctorMarksToClient(client, exams = []) {
     byKey.set(key, exam);
   });
   client.doctorExamHistory = Array.from(byKey.values());
+}
+
+function getClientRecordsForExam(exam) {
+  const records = [];
+  const seen = new Set();
+  const clientId = String(exam?.clientId || "");
+
+  [...(data.clients || []), ...(data.backendClients || [])].forEach((client) => {
+    if (!client) return;
+    const matches =
+      String(client.id || "") === clientId ||
+      String(client.backendId || "") === clientId;
+    if (!matches || seen.has(client)) return;
+    seen.add(client);
+    records.push(client);
+  });
+
+  return records;
+}
+
+function isSameDoctorExamScope(entry, exam) {
+  if (!entry || !exam) return false;
+
+  const entryBackendEncounterId = String(entry.backendEncounterId || "");
+  const examBackendEncounterId = String(exam.backendEncounterId || "");
+  if (entryBackendEncounterId && examBackendEncounterId) {
+    return entryBackendEncounterId === examBackendEncounterId;
+  }
+
+  const entryVisitId = String(entry.visitId || "");
+  const examVisitId = String(exam.visitId || "");
+  if (entryVisitId && examVisitId) {
+    return entryVisitId === examVisitId;
+  }
+
+  return !entryBackendEncounterId && !entryVisitId;
+}
+
+function snapshotDoctorMarkCaches(exam) {
+  return {
+    dashboardDoctorStatuses: Object.fromEntries(
+      Object.entries(data.dashboardDoctorStatuses || {}).map(([key, status]) => [
+        key,
+        {
+          ...status,
+          existingDoctorRoleIds: Array.isArray(status?.existingDoctorRoleIds)
+            ? status.existingDoctorRoleIds.slice()
+            : [],
+          completedDoctorRoleIds: Array.isArray(status?.completedDoctorRoleIds)
+            ? status.completedDoctorRoleIds.slice()
+            : [],
+          suppressedDoctorRoleIds: Array.isArray(status?.suppressedDoctorRoleIds)
+            ? status.suppressedDoctorRoleIds.slice()
+            : [],
+        },
+      ]),
+    ),
+    clientHistories: getClientRecordsForExam(exam).map((client) => ({
+      client,
+      hasHistory: Array.isArray(client.doctorExamHistory),
+      history: Array.isArray(client.doctorExamHistory) ? client.doctorExamHistory.slice() : [],
+    })),
+  };
+}
+
+function restoreDoctorMarkCaches(snapshot) {
+  if (!snapshot) return;
+
+  data.dashboardDoctorStatuses = snapshot.dashboardDoctorStatuses || {};
+  (snapshot.clientHistories || []).forEach(({ client, hasHistory, history }) => {
+    if (!client) return;
+    if (hasHistory) {
+      client.doctorExamHistory = history.slice();
+    } else {
+      delete client.doctorExamHistory;
+    }
+  });
+}
+
+function removeDoctorMarkCachesForExam(exam) {
+  if (!exam?.doctorRoleId) return;
+
+  const roleId = String(exam.doctorRoleId);
+  const clientRecords = getClientRecordsForExam(exam);
+  const clientKeys = new Set([String(exam.clientId || "")]);
+  clientRecords.forEach((client) => {
+    if (client?.id) clientKeys.add(String(client.id));
+    if (client?.backendId) clientKeys.add(String(client.backendId));
+    if (!Array.isArray(client.doctorExamHistory)) return;
+    client.doctorExamHistory = client.doctorExamHistory.filter(
+      (entry) => String(entry?.doctorRoleId || "") !== roleId || !isSameDoctorExamScope(entry, exam),
+    );
+  });
+
+  Object.entries(data.dashboardDoctorStatuses || {}).forEach(([key, status]) => {
+    const clientMatches = clientKeys.has(String(key));
+    const encounterMatches =
+      !exam.backendEncounterId ||
+      !status?.encounterId ||
+      String(status.encounterId) === String(exam.backendEncounterId);
+
+    if (!clientMatches || !encounterMatches) return;
+    if (Array.isArray(status.existingDoctorRoleIds)) {
+      status.existingDoctorRoleIds = status.existingDoctorRoleIds.filter(
+        (existingRoleId) => String(existingRoleId) !== roleId,
+      );
+    }
+    if (Array.isArray(status.completedDoctorRoleIds)) {
+      status.completedDoctorRoleIds = status.completedDoctorRoleIds.filter(
+        (completedRoleId) => String(completedRoleId) !== roleId,
+      );
+    }
+  });
+}
+
+function suppressDashboardDoctorRoleForExam(exam) {
+  if (!exam?.doctorRoleId) return;
+
+  const roleId = String(exam.doctorRoleId);
+  const clientRecords = getClientRecordsForExam(exam);
+  const clientKeys = new Set([String(exam.clientId || "")]);
+  clientRecords.forEach((client) => {
+    if (client?.id) clientKeys.add(String(client.id));
+    if (client?.backendId) clientKeys.add(String(client.backendId));
+  });
+
+  Object.entries(data.dashboardDoctorStatuses || {}).forEach(([key, status]) => {
+    const clientMatches = clientKeys.has(String(key));
+    const encounterMatches =
+      !exam.backendEncounterId ||
+      !status?.encounterId ||
+      String(status.encounterId) === String(exam.backendEncounterId);
+
+    if (!clientMatches || !encounterMatches) return;
+    const suppressedRoles = new Set(
+      (Array.isArray(status.suppressedDoctorRoleIds) ? status.suppressedDoctorRoleIds : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    );
+    suppressedRoles.add(roleId);
+    status.suppressedDoctorRoleIds = Array.from(suppressedRoles);
+  });
 }
 
 function hasCompletedDoctorExamHistory(clientId, doctorRoleId, currentVisitId = null) {
@@ -1672,25 +2429,32 @@ function hasCompletedDoctorExamHistory(clientId, doctorRoleId, currentVisitId = 
   );
 }
 
-function buildDoctorMark(roleCode, requiredDoctors, completedDoctors) {
+function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors = new Set(), existingDoctors = new Set()) {
   const requiredCount = requiredDoctors instanceof Map
     ? Number(requiredDoctors.get(roleCode) || 0)
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
   if (completedDoctors.has(roleCode)) {
-    return { value: "✓", title: "Врач пройден в текущем обращении" };
+    return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
+  }
+  if (existingDoctors.has(roleCode)) {
+    return { value: "✓", title: "Карточка врача добавлена в текущем обращении", state: "existing" };
+  }
+  if (suppressedDoctors.has(roleCode)) {
+    return { value: "", title: "", state: "empty" };
   }
   if (requiredCount > 0) {
     const requiredTitle = requiredCount > 1
       ? `Требуется в текущем обращении: ${requiredCount}`
       : "Требуется в текущем обращении";
     return {
-      value: "×",
+      value: "✓",
       title: requiredTitle,
+      state: "required",
     };
   }
-  return { value: "", title: "" };
+  return { value: "", title: "", state: "empty" };
 }
 
 function mapApiService(service) {
@@ -1705,7 +2469,7 @@ function mapApiService(service) {
     requiresSequence: Boolean(service.requires_sequence),
     recallAfterDays: service.recall_after_days || null,
     sortOrder: service.legacy_source_id || service.id,
-    doctorRoleIds: Array.isArray(service.doctor_role_ids) ? service.doctor_role_ids : [],
+    doctorRoleIds: normalizeDoctorRoleIds(service.doctor_role_ids),
   };
 }
 
@@ -1752,11 +2516,17 @@ function humanizeApiError(error, fallback = "Не удалось выполни�
   return message;
 }
 
+const DEFAULT_API_REQUEST_TIMEOUT_MS = 60000;
+
 async function apiRequest(path, options = {}) {
   ensureDemoAuthConsistency();
-  const optionHeaders = options.headers || {};
+  const {
+    timeoutMs = DEFAULT_API_REQUEST_TIMEOUT_MS,
+    ...fetchOptions
+  } = options;
+  const optionHeaders = fetchOptions.headers || {};
   const authHeaders = getDemoAuthHeaders();
-  let requestBody = options.body;
+  let requestBody = fetchOptions.body;
   if (
     requestBody &&
     typeof requestBody !== "string" &&
@@ -1766,20 +2536,41 @@ async function apiRequest(path, options = {}) {
   ) {
     requestBody = JSON.stringify(requestBody);
   }
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...(requestBody instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...authHeaders,
-      ...optionHeaders,
-    },
-    body: requestBody,
-  });
 
-  if (!response.ok) {
-    let detail = "";
-    try {
-      const errorBody = await response.json();
+  const timeoutController =
+    !fetchOptions.signal && Number(timeoutMs) > 0 && typeof AbortController === "function"
+      ? new AbortController()
+      : null;
+  const timeoutId = timeoutController
+    ? window.setTimeout(() => timeoutController.abort(), Number(timeoutMs))
+    : null;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchOptions,
+      signal: fetchOptions.signal || timeoutController?.signal,
+      headers: {
+        ...(requestBody instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...authHeaders,
+        ...optionHeaders,
+      },
+      body: requestBody,
+    });
+
+    if (!response.ok) {
+      let detail = "";
+      let errorBody = null;
+      let errorText = "";
+      try {
+        errorText = await response.text();
+      } catch {
+        errorText = "";
+      }
+      try {
+        errorBody = errorText ? JSON.parse(errorText) : null;
+      } catch {
+        errorBody = null;
+      }
       if (errorBody?.detail?.message) {
         detail = errorBody.detail.message;
       } else if (typeof errorBody?.detail === "string") {
@@ -1788,15 +2579,24 @@ async function apiRequest(path, options = {}) {
         detail = JSON.stringify({ detail: errorBody.detail });
       } else if (errorBody?.detail && typeof errorBody.detail === "object") {
         detail = JSON.stringify(errorBody.detail);
+      } else {
+        detail = errorText;
       }
-    } catch {
-      detail = await response.text();
+      throw new Error(detail || `HTTP ${response.status}`);
     }
-    throw new Error(detail || `HTTP ${response.status}`);
-  }
 
-  if (response.status === 204) return null;
-  return response.json();
+    if (response.status === 204) return null;
+    return response.json();
+  } catch (error) {
+    if (error?.name === "AbortError" && timeoutController?.signal.aborted) {
+      throw new Error(`Сервер не ответил за ${Math.round(Number(timeoutMs) / 1000)} сек.`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
 }
 
 function getDemoAuthHeaders() {
@@ -1838,15 +2638,38 @@ async function fetchAuthorizedFileObjectUrl(url) {
   return URL.createObjectURL(await response.blob());
 }
 
-async function openAuthorizedFileUrl(url, { print = false } = {}) {
+async function downloadAuthorizedFileUrl(url, fileName = "") {
   if (!url) return false;
   let objectUrl = "";
   try {
     objectUrl = await fetchAuthorizedFileObjectUrl(url);
-    const fileWindow = window.open(objectUrl, "_blank");
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName || "";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    return true;
+  } catch (error) {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+async function openAuthorizedFileUrl(url, { print = false, targetWindow = null } = {}) {
+  if (!url) return false;
+  let objectUrl = "";
+  try {
+    objectUrl = await fetchAuthorizedFileObjectUrl(url);
+    const fileWindow = targetWindow && !targetWindow.closed ? targetWindow : window.open(objectUrl, "_blank");
     if (!fileWindow) {
       URL.revokeObjectURL(objectUrl);
       return false;
+    }
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = objectUrl;
     }
 
     if (print) {
@@ -1879,6 +2702,27 @@ function normalizeCenterLookupValue(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function getWorkspaceCenterName() {
+  return WORKSPACE_CENTER_NAMES.includes(appState.centerFilter)
+    ? appState.centerFilter
+    : WORKSPACE_CENTER_NAMES[0];
+}
+
+function getCenterNameForContext(centerId, visit = null, client = null) {
+  const numericCenterId = Number(centerId || 0);
+  const center = data.centers.find((item) => Number(item?.id) === numericCenterId);
+  return String(center?.name || visit?.center || client?.center || getWorkspaceCenterName()).trim();
+}
+
+async function resolveWorkspaceCenterId() {
+  const centerName = getWorkspaceCenterName();
+  return resolveCenterIdForVisit({ center: centerName }, { center: centerName });
+}
+
+function renderPrintCenterContext(centerName) {
+  return `<div class="driver-print-classic__center"><span>Работа в медцентре:</span><strong>${escapeHtml(centerName || getWorkspaceCenterName())}</strong></div>`;
+}
+
 async function ensureCentersLoaded() {
   if (data.centersLoaded) return data.centers;
   if (data.centersLoadingPromise) return data.centersLoadingPromise;
@@ -1901,6 +2745,11 @@ async function resolveCenterIdForVisit(visit, client) {
   const centers = await ensureCentersLoaded();
   if (!Array.isArray(centers) || !centers.length) {
     throw new Error("Не удалось загрузить список центров");
+  }
+
+  const explicitCenterId = Number(visit?.centerId || client?.centerId || 0);
+  if (explicitCenterId && centers.some((center) => Number(center?.id) === explicitCenterId)) {
+    return explicitCenterId;
   }
 
   const candidateNames = [
@@ -2044,10 +2893,11 @@ async function loadServicesFromBackend() {
       apiRequest("/services"),
     ]);
     serviceGroups = Array.isArray(categories) ? categories.map(mapApiServiceCategory) : [];
-    doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole) : [];
-    data.serverServices = Array.isArray(services) ? services.map(mapApiService) : [];
+    doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole).filter((role) => !isExcludedDoctorRole(role)) : [];
+    data.serverServices = Array.isArray(services) ? services.map(mapApiService).filter((service) => !isHiddenService(service)) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
+    ensureGuardCertificateService();
     refreshServiceCatalog();
     renderApp();
   } catch (error) {
@@ -2089,6 +2939,15 @@ async function replaceDocumentTemplateFile(templateId, file) {
   renderApp();
 }
 
+async function resetDocumentTemplateFile(templateId) {
+  const template = await apiRequest(`/documents/templates/${encodeURIComponent(templateId)}/reset`, {
+    method: "POST",
+  });
+  data.documentTemplates = (data.documentTemplates || []).map((item) => (String(item.id) === String(template.id) ? template : item));
+  data.templateOperationStatus = `Для шаблона "${template.name || template.file_name}" восстановлена встроенная версия.`;
+  renderApp();
+}
+
 function getSelectedBackendClientId() {
   const client = getSelectedClient();
   return client?.backendId || client?.id || null;
@@ -2115,6 +2974,10 @@ function buildGeneratedDocumentUrl(fileName, { inline = false } = {}) {
   return `${API_BASE_URL}/documents/generated/${encodeURIComponent(fileName)}${query}`;
 }
 
+function buildXmlExportArchiveUrl(exportDate) {
+  return `${API_BASE_URL}/xml-exports/days/${encodeURIComponent(exportDate)}/archive`;
+}
+
 function resolveApiUrl(url) {
   if (!url) return "";
   try {
@@ -2122,6 +2985,113 @@ function resolveApiUrl(url) {
   } catch {
     return new URL(url, API_BASE_URL).href;
   }
+}
+
+function isWordDocumentFile(fileName = "") {
+  return String(fileName || "").toLowerCase().endsWith(".docx");
+}
+
+function isXmlGeneratedDocument(documentItem) {
+  const type = String(documentItem?.type || documentItem?.templateType || "").toLowerCase();
+  const fileName = String(documentItem?.fileName || documentItem?.file_name || "").toLowerCase();
+  return type === "xml" || fileName.endsWith(".xml");
+}
+
+function buildWordProtocolUrl(fileUrl) {
+  return `ms-word:ofv|u|${encodeURI(fileUrl)}`;
+}
+
+function renderDocumentTargetWindow(targetWindow, options = {}) {
+  if (!targetWindow || targetWindow.closed) return false;
+  const {
+    title = "Подготовка документа",
+    message = "Документ формируется. Не закрывайте это окно.",
+    fileUrl = "",
+    wordUrl = "",
+    error = false,
+  } = options;
+  const actions =
+    fileUrl || wordUrl
+      ? `
+        <div class="actions">
+          ${wordUrl ? `<a class="primary" href="${escapeHtml(wordUrl)}">Открыть в Microsoft Word</a>` : ""}
+          ${fileUrl ? `<a href="${escapeHtml(fileUrl)}">Скачать документ</a>` : ""}
+        </div>
+        <p class="hint">Если Word не открылся автоматически, нажмите кнопку выше.</p>
+      `
+      : "";
+  try {
+    targetWindow.document.open();
+    targetWindow.document.write(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, "Segoe UI", Arial, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; color: #17202a; }
+    main { width: min(560px, calc(100% - 40px)); box-sizing: border-box; padding: 32px; border-radius: 18px; background: #fff; box-shadow: 0 18px 60px rgba(30, 47, 62, .14); }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { margin: 0; line-height: 1.5; color: ${error ? "#a61b1b" : "#52616f"}; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+    a { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 18px; border: 1px solid #c8d1da; border-radius: 10px; color: #243746; text-decoration: none; font-weight: 600; }
+    a.primary { border-color: #147d64; background: #147d64; color: #fff; }
+    .hint { margin-top: 18px; font-size: 14px; color: #6f7d89; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(message)}</p>
+    ${actions}
+  </main>
+</body>
+</html>`);
+    targetWindow.document.close();
+    return true;
+  } catch (error) {
+    console.warn("Не удалось обновить окно документа", error);
+    return false;
+  }
+}
+
+function openDocumentTargetWindow(message = "Документ формируется. Не закрывайте это окно.") {
+  const targetWindow = window.open("about:blank", "_blank");
+  if (!targetWindow) {
+    showToast("Браузер заблокировал окно документа");
+    return null;
+  }
+  renderDocumentTargetWindow(targetWindow, { message });
+  return targetWindow;
+}
+
+function showDocumentTargetError(targetWindow, message) {
+  return renderDocumentTargetWindow(targetWindow, {
+    title: "Не удалось открыть документ",
+    message: message || "Повторите печать или скачайте документ из истории.",
+    error: true,
+  });
+}
+
+function openDocumentFileUrl(fileUrl, documentItem = null, targetWindow = null) {
+  const fileName = documentItem?.fileName || documentItem?.file_name || fileUrl;
+  const wordDocument = isWordDocumentFile(fileName);
+  const destinationUrl = wordDocument ? buildWordProtocolUrl(fileUrl) : fileUrl;
+  if (targetWindow && !targetWindow.closed) {
+    if (wordDocument) {
+      renderDocumentTargetWindow(targetWindow, {
+        title: "Документ готов",
+        message: "Открываем справку в Microsoft Word.",
+        fileUrl,
+        wordUrl: destinationUrl,
+      });
+    }
+    targetWindow.location.href = destinationUrl;
+    return true;
+  }
+  window.location.href = destinationUrl;
+  return true;
 }
 
 async function requestGeneratedDocumentPrintTicket(documentItem) {
@@ -2136,79 +3106,6 @@ async function requestGeneratedDocumentPrintTicket(documentItem) {
     ...ticket,
     file_url: resolveApiUrl(ticket?.file_url),
   };
-}
-
-async function ensurePrintAgentAvailable() {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 1500);
-  try {
-    const response = await fetch(`${PRINT_AGENT_BASE_URL}/health`, {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return true;
-  } catch (error) {
-    throw new Error("Печатный агент не запущен. Запустите print_agent/start-print-agent.ps1 на этом компьютере.");
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
-async function sendDocumentToPrintAgent(documentItem, options = {}) {
-  await ensurePrintAgentAvailable();
-  const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
-  const response = await fetch(`${PRINT_AGENT_BASE_URL}/print`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file_url: ticket.file_url,
-      file_name: ticket.file_name || documentItem?.fileName || "",
-      printer_name: options.printerName || "",
-      copies: options.copies || 1,
-    }),
-  });
-  let body = null;
-  try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-  if (!response.ok || body?.ok === false) {
-    throw new Error(body?.error || `Печатный агент вернул ошибку HTTP ${response.status}`);
-  }
-  return body || { ok: true };
-}
-
-function showPrintAgentFallback(documentItem, error) {
-  openActionModal(
-    "Печатный агент недоступен",
-    `
-      <div class="client-create-summary">
-        <strong>${escapeHtml(documentItem?.fileName || documentItem?.title || "Документ")}</strong>
-        <p>${escapeHtml(humanizeApiError(error, "Не удалось отправить документ в тихую печать"))}</p>
-      </div>
-      <div class="client-create-actions">
-        <button type="button" class="primary-button" id="manualPrintDocumentFallback">Открыть вручную</button>
-        <button type="button" class="ghost-button" id="closePrintAgentFallback">Закрыть</button>
-      </div>
-    `,
-  );
-  document.getElementById("manualPrintDocumentFallback")?.addEventListener("click", async () => {
-    try {
-      if (await openGeneratedDocumentInBrowser(documentItem)) {
-        showToast("Документ открыт вручную");
-      }
-    } catch (fallbackError) {
-      showToast(humanizeApiError(fallbackError, "Не удалось открыть документ вручную"));
-    }
-  });
-  document.getElementById("closePrintAgentFallback")?.addEventListener("click", () => {
-    actionModal?.classList.add("hidden");
-  });
 }
 
 function buildTemplateFileUrl(templateId) {
@@ -2227,14 +3124,76 @@ async function openGeneratedDocumentInBrowser(documentItem) {
   return openAuthorizedFileUrl(inlineUrl);
 }
 
-async function openGeneratedDocumentForPrint(documentItem) {
+async function downloadGeneratedDocument(documentItem) {
+  const fileName = documentItem?.fileName || documentItem?.file_name || "";
+  if (!fileName) {
+    throw new Error("Не найден файл документа для скачивания");
+  }
+  return downloadAuthorizedFileUrl(buildGeneratedDocumentUrl(fileName), fileName);
+}
+
+async function downloadXmlExportDayArchive(exportDate) {
+  return downloadAuthorizedFileUrl(buildXmlExportArchiveUrl(exportDate), `xml-export-${exportDate}.zip`);
+}
+
+async function deleteXmlExportDay(exportDate) {
+  await apiRequest(`/xml-exports/days/${encodeURIComponent(exportDate)}`, { method: "DELETE" });
+  await loadWorkflowData();
+}
+
+async function deleteXmlGeneratedDocument(documentItem) {
+  const documentId = documentItem?.backendId || documentItem?.id;
+  if (!documentId || !isXmlGeneratedDocument(documentItem)) return;
+  await apiRequest(`/xml-exports/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" });
+  await loadWorkflowData();
+}
+
+async function openGeneratedDocumentManually(documentItem, options = {}) {
   try {
-    await sendDocumentToPrintAgent(documentItem);
-    return true;
+    const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
+    const targetWindow = options.targetWindow;
+    if (isWordDocumentFile(documentItem?.fileName || ticket.file_name || ticket.file_url)) {
+      return openDocumentFileUrl(ticket.file_url, documentItem, targetWindow);
+    }
+
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.location.href = ticket.file_url;
+      return true;
+    }
+    const fileWindow = window.open(ticket.file_url, "_blank");
+    if (fileWindow) {
+      return true;
+    }
+
+    if (options.sameTabFallback !== false) {
+      window.location.href = ticket.file_url;
+      return true;
+    }
   } catch (error) {
-    console.warn("Не удалось отправить документ в тихую печать", error);
-    showPrintAgentFallback(documentItem, error);
-    return false;
+    console.warn("Не удалось открыть документ по временной ссылке", error);
+  }
+  return openGeneratedDocumentInBrowser(documentItem);
+}
+
+async function openGeneratedDocumentDirectly(documentItem, options = {}) {
+  const targetWindow = options.targetWindow || null;
+  try {
+    const ticket = await requestGeneratedDocumentPrintTicket(documentItem);
+    return openDocumentFileUrl(ticket.file_url, documentItem, targetWindow);
+  } catch (error) {
+    console.warn("Не удалось открыть документ по временной ссылке, пробуем авторизованное открытие", error);
+    try {
+      const inlineUrl = buildGeneratedDocumentUrl(documentItem?.fileName, { inline: true });
+      if (await openAuthorizedFileUrl(inlineUrl, { targetWindow })) {
+        return true;
+      }
+    } catch (fallbackError) {
+      console.warn("Не удалось открыть документ через авторизованную ссылку", fallbackError);
+    }
+    if (targetWindow && !targetWindow.closed) {
+      showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть документ"));
+    }
+    throw error;
   }
 }
 
@@ -2243,6 +3202,8 @@ function mapGeneratedDocument(item) {
   return {
     id: item.id,
     backendId: item.id,
+    type: template?.template_type || "",
+    templateType: template?.template_type || "",
     templateId: item.template_id,
     clientId: item.client_id,
     encounterId: item.encounter_id,
@@ -2254,6 +3215,8 @@ function mapGeneratedDocument(item) {
     blankNumber: item.blank_number_snapshot || "",
     cancelledAt: item.cancelled_at || null,
     cancelledReason: item.cancelled_reason || "",
+    fileDeletedAt: item.file_deleted_at || null,
+    fileDeleteReason: item.file_delete_reason || "",
     createdAt: item.generated_at,
     downloadUrl: buildGeneratedDocumentUrl(item.file_name),
   };
@@ -2276,15 +3239,21 @@ async function loadWorkflowData(options = {}) {
       spoiledBlanks,
       patientConsents,
       medicalRecords,
+      xmlExportDays,
     ] = await Promise.all([
       apiRequest(`/generated-documents${clientEncounterQuery}`),
       apiRequest(`/document-journals${clientQuery}`),
       apiRequest("/document-journals/spoiled-blanks"),
       apiRequest(`/patient-consents${clientEncounterQuery}`),
       apiRequest(`/medical-records${clientQuery}`),
+      apiRequest("/xml-exports/days").catch((error) => {
+        console.warn("Failed to load XML export days", error);
+        return [];
+      }),
     ]);
 
     data.generatedDocuments = Array.isArray(generatedDocuments) ? generatedDocuments.map(mapGeneratedDocument) : [];
+    data.xmlExportDays = Array.isArray(xmlExportDays) ? xmlExportDays : [];
     data.documentJournals = Array.isArray(documentJournals) ? documentJournals : [];
     data.spoiledBlanks = Array.isArray(spoiledBlanks) ? spoiledBlanks : [];
     data.patientConsents = Array.isArray(patientConsents) ? patientConsents : [];
@@ -2328,20 +3297,32 @@ function expandTwoDigitYear(value) {
 function upsertClientInMemory(client) {
   if (!client) return null;
   const mappedClient = client.rawApiClient ? client : mapApiClient(client);
+  if (mappedClient.rawApiClient && Object.hasOwn(mappedClient.rawApiClient, "legacy_payload_json")) {
+    data.fullClientsById[String(mappedClient.backendId || mappedClient.id)] = mappedClient;
+  }
+  const mergeClient = (existing, incoming) => {
+    const existingServices = Array.isArray(existing?.services) ? existing.services : [];
+    const incomingServices = Array.isArray(incoming?.services) ? incoming.services : [];
+    return {
+      ...existing,
+      ...incoming,
+      services: incomingServices.length ? incomingServices : existingServices,
+    };
+  };
   const existingIndex = data.clients.findIndex(
     (item) =>
       String(item.backendId || item.id) === String(mappedClient.backendId || mappedClient.id) ||
       String(item.patientNumber || "") === String(mappedClient.patientNumber || ""),
   );
   if (existingIndex >= 0) {
-    data.clients[existingIndex] = { ...data.clients[existingIndex], ...mappedClient };
+    data.clients[existingIndex] = mergeClient(data.clients[existingIndex], mappedClient);
   } else {
     data.clients.unshift(mappedClient);
   }
 
   const backendIndex = data.backendClients.findIndex((item) => String(item.id) === String(mappedClient.id));
   if (backendIndex >= 0) {
-    data.backendClients[backendIndex] = mappedClient;
+    data.backendClients[backendIndex] = mergeClient(data.backendClients[backendIndex], mappedClient);
   } else {
     data.backendClients.unshift(mappedClient);
   }
@@ -2353,6 +3334,9 @@ function upsertClientInMemory(client) {
 function showClientInDashboardResults(client, options = {}) {
   const mappedClient = upsertClientInMemory(client);
   if (!mappedClient) return null;
+  if (options.pin !== false) {
+    pinDashboardClient(mappedClient);
+  }
 
   if (options.resetSearch) {
     appState.clientSearch = "";
@@ -2389,6 +3373,7 @@ function getDoctorRoleIdByLabel(label) {
     "отоларинголог": "otolaryngologist",
     "офтальмолог": "ophthalmologist",
     "терапевт": "therapist",
+    "психиатр-нарколог": "psychiatrist-narcologist",
     "психиатр": "psychiatrist",
     "инфекционист": "infectionist",
     "фтизиатр": "phthisiatrist",
@@ -2417,7 +3402,10 @@ function setDoctorFullName(doctorRoleId, value) {
   }
 }
 
-function getDoctorDisplayName(doctorRoleId) {
+function getDoctorDisplayName(doctorRoleId, client = null) {
+  const clientDoctorName = getClientDoctorFullName(client, doctorRoleId);
+  if (clientDoctorName) return clientDoctorName;
+
   const fullName = getDoctorFullName(doctorRoleId);
   if (fullName) return fullName;
   const template = getDoctorTemplate(doctorRoleId);
@@ -2425,6 +3413,29 @@ function getDoctorDisplayName(doctorRoleId) {
 
   const role = doctorRoles.find((item) => String(item.id) === String(doctorRoleId) || item.code === doctorRoleId);
   return role?.name || doctorRoleId;
+}
+
+function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") {
+  const roleId = String(doctorRoleId || "").trim();
+  const normalizedFallback = String(fallbackName || "").trim();
+  const template = getDoctorTemplate(roleId);
+  const role = doctorRoles.find((item) => String(item.id) === roleId || item.code === roleId);
+  const genericNames = new Set(
+    [template?.name, role?.name, roleId, "Врач", "Председатель", "ПРЕДСЕДАТЕЛЬ"]
+      .filter(Boolean)
+      .map((value) => String(value).trim().toLowerCase()),
+  );
+  if (normalizedFallback && !genericNames.has(normalizedFallback.toLowerCase())) {
+    return normalizedFallback;
+  }
+
+  const directoryName = getDoctorFullName(roleId);
+  if (directoryName) return directoryName;
+
+  const clientDoctorName = getClientDoctorFullName(client, roleId);
+  if (clientDoctorName) return clientDoctorName;
+
+  return getDoctorDisplayName(roleId, client);
 }
 
 function buildDoctorExamFields(template) {
@@ -2450,45 +3461,247 @@ const CHAIRMAN_CERTIFICATE_DEFAULTS = {
   certificate086: {
     diagnosis:
       "патология органа зрения не выявлено, Патология ЛОР-органов не выявлено, рентгенологической симптоматики не выявлено, хирургической патологии не выявлено, По здоровью, По здоровью, по здоровью",
+    clearDriverFields: true,
   },
   certificate095: {
     diagnosis:
       "патология органа зрения не выявлено, Патология ЛОР-органов не выявлено, рентгенологической симптоматики не выявлено, хирургической патологии не выявлено, По здоровью, По здоровью, по здоровью",
+    clearDriverFields: true,
+  },
+  pool: {
+    medicalRequirements: (client) => `${buildPoolAdmissionVerb(client)} к занятиям спортом и плаванию в бассейне.`,
+    conclusionText: (client) => `${buildPoolAdmissionVerb(client)} к занятиям спортом и плаванию в бассейне.`,
+    diagnosis:
+      "патология органа зрения не выявлено, Патология ЛОР-органов не выявлено, очаговой инфильтративной симптоматики не выявлено, хирургической патологии не выявлено, По здоровью, По здоровью, Практически здоров",
+    validity: "6 мес",
+    clearDriverFields: true,
   },
 };
 
+const CHAIRMAN_DRIVER_FIELD_KEYS = [
+  "driverCategories",
+  "categoryA",
+  "categoryB",
+  "categoryC",
+  "categoryD",
+  "categoryBE",
+  "categoryCE",
+  "categoryDE",
+  "categoryTram",
+  "categoryTrolleybus",
+  "categoryM",
+  "categoryA1",
+  "categoryB1",
+  "categoryC1",
+  "categoryD1",
+  "categoryC1E",
+  "categoryD1E",
+  "categoryTractor",
+  "categoryBoat",
+  "categorySailing",
+  "indicationManual",
+  "indicationAutomatic",
+  "indicationAcoustic",
+  "indicationGlasses",
+  "indicationHearingAid",
+  "indicationNoHiring",
+  "indicationOneYear",
+  "restrictionAM",
+  "restrictionBBE",
+  "restrictionCCE",
+  "restrictionNoHands",
+  "restrictionNoLegs",
+];
+
+function getClientSexKey(client) {
+  const sex = String(client?.sex || client?.rawApiClient?.sex || client?.gender || client?.rawApiClient?.gender || "").toLowerCase();
+  if (/^(f|female|woman|ж|жен|женский)$/.test(sex) || sex.includes("жен")) return "female";
+  if (/^(m|male|man|м|муж|мужской)$/.test(sex) || sex.includes("муж")) return "male";
+  const patronymic = String(client?.fullName || "").trim().split(/\s+/)[2] || "";
+  if (/(вна|чна|ична)$/i.test(patronymic)) return "female";
+  if (/(вич|ич)$/i.test(patronymic)) return "male";
+  return "";
+}
+
+function buildPoolAdmissionVerb(client) {
+  const sex = getClientSexKey(client);
+  if (sex === "female") return "Допущена";
+  if (sex === "male") return "Допущен";
+  return "Допущен(а)";
+}
+
 function extractRuDate(value) {
   return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{4}|\d{2})\b/)?.[0] || "";
+}
+
+function extractDemoDate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const ruDate = extractRuDate(text);
+  if (ruDate) return ruDate;
+  if (/^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(text)) return formatApiDate(text);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toLocaleDateString("ru-RU", RU_DATE_FORMAT_OPTIONS);
+  }
+  return "";
+}
+
+function getObjectValueByKey(source, key) {
+  if (!source || typeof source !== "object") return "";
+  if (Object.prototype.hasOwnProperty.call(source, key)) return source[key];
+  const normalizedKey = String(key || "").trim().toLowerCase();
+  if (!normalizedKey) return "";
+  const matchedKey = Object.keys(source).find((sourceKey) => String(sourceKey || "").trim().toLowerCase() === normalizedKey);
+  return matchedKey ? source[matchedKey] : "";
+}
+
+function firstFilledValueFromObjects(objects = [], keys = []) {
+  for (const source of objects) {
+    if (!source || typeof source !== "object") continue;
+    for (const key of keys) {
+      const value = getObjectValueByKey(source, key);
+      if (String(value ?? "").trim()) return value;
+    }
+  }
+  return "";
+}
+
+const CHAIRMAN_EKG_DATE_KEYS = [
+  "ekgDate",
+  "ekg_date",
+  "ecgDate",
+  "ecg_date",
+  "ekg",
+  "ecg",
+  "EKG",
+  "ECG",
+  "DateEKG",
+  "EKGDate",
+  "ECGDate",
+  "qdfMain.EKG",
+  "qdfMain.EKGDate",
+  "instrumental_study_date",
+  "ЭКГ",
+  "Дата ЭКГ",
+  "instrumentalStudyDate",
+];
+
+const CHAIRMAN_FLUOROGRAPHY_DATE_KEYS = [
+  "fluorographyDate",
+  "fluorography_date",
+  "fluorography",
+  "fluoroDate",
+  "fluoro_date",
+  "fluoro",
+  "flg",
+  "flg_date",
+  "FLG",
+  "FLGDate",
+  "DateFLG",
+  "qdfMain.flg",
+  "qdfMain.FLG",
+  "qdfMain.Fluorography",
+  "ФЛГ",
+  "Флюорография",
+  "Дата флюорографии",
+];
+
+function getChairmanInitialDate(client, visit, keys) {
+  const raw = client?.rawApiClient || {};
+  const legacy = raw.legacy_payload_json || client?.legacy_payload_json || {};
+  const details = Object.values(getVisitServiceDetails(visit)).filter((detail) => detail && typeof detail === "object");
+  return extractDemoDate(firstFilledValueFromObjects([client, raw, legacy, getDriverDetailFromVisit(visit), ...details], keys));
 }
 
 function todayRuDate() {
   return new Date().toLocaleDateString("ru-RU", RU_DATE_FORMAT_OPTIONS);
 }
 
-function buildChairmanAutoEkgConclusion(date) {
+const CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX =
+  "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей";
+const GUARD_CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX =
+  "Ритм синусовый, ЧСС, ЭОС нормальное положение, ЭКГ без особенностей";
+const CHAIRMAN_AUTO_EKG_PREFIX = "Медицинский центр ООО «Мед-Авто»";
+const LEGACY_CHAIRMAN_AUTO_EKG_PREFIX = 'Медицинский центр ООО "ЦМО "ЮЛМЕД"';
+
+function buildChairmanAutoEkgConclusion(date, formType = "") {
   const finalDate = extractRuDate(date) || todayRuDate();
-  return `Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей от ${finalDate}`;
+  if (formType === "guard") {
+    return `${GUARD_CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
+  }
+  return `${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
+}
+
+function buildChairmanAutoEkgText(date) {
+  return `${CHAIRMAN_AUTO_EKG_PREFIX}, ЭКГ от ${extractRuDate(date) || todayRuDate()}`;
+}
+
+function buildChairmanAutoFluorographyText(date) {
+  return `от ${extractRuDate(date) || todayRuDate()} ОГК б.п.`;
+}
+
+function isChairmanAutoEkgText(value) {
+  const text = String(value ?? "").trim();
+  if (!text.includes("ЭКГ от ")) return false;
+  return [CHAIRMAN_AUTO_EKG_PREFIX, LEGACY_CHAIRMAN_AUTO_EKG_PREFIX].some((prefix) => text.startsWith(prefix));
+}
+
+function isChairmanAutoFluorographyText(value) {
+  return /^от \d{2}\.\d{2}\.(?:\d{4}|\d{2}) ОГК б\.п\.$/.test(String(value ?? "").trim());
+}
+
+function isChairmanAutoEkgConclusionText(value, formType = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  if (text.startsWith(`${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `)) return true;
+  return formType === "guard" && text.startsWith(`${GUARD_CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `);
 }
 
 function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
   const formType = getChairmanFormTypeForVisit(visit);
-  const defaults = CHAIRMAN_CERTIFICATE_DEFAULTS[formType];
-  if (!defaults) return fields;
+  const defaults = CHAIRMAN_CERTIFICATE_DEFAULTS[formType] || {};
+  const usesDriverBaseDefaults = formType === "driver" || formType === "default";
+  if (!CHAIRMAN_CERTIFICATE_DEFAULTS[formType] && formType !== "guard" && !usesDriverBaseDefaults) return fields;
 
   const result = { ...fields };
+  const client = visit ? getClientPool().find((item) => String(item.id) === String(visit.clientId)) : getSelectedClient();
   const visitDate = extractRuDate(visit?.visitDate) || extractRuDate(visit?.createdAt) || todayRuDate();
+  const currentEkgValue = String(result.ekg ?? "").trim();
+  const storedAutoEkgDate = isChairmanAutoEkgText(currentEkgValue) ? extractRuDate(currentEkgValue) : "";
+  const ekgDate = storedAutoEkgDate || getChairmanInitialDate(client, visit, CHAIRMAN_EKG_DATE_KEYS) || visitDate;
+  const fluorographyDate = getChairmanInitialDate(client, visit, CHAIRMAN_FLUOROGRAPHY_DATE_KEYS) || visitDate;
+  const resolveDefault = (value) => (typeof value === "function" ? value(client, visit, result) : value);
   const setIfBlank = (key, value) => {
     if (String(result[key] ?? "").trim()) return;
-    result[key] = value;
+    result[key] = resolveDefault(value);
+  };
+  const setIfBlankOrAuto = (key, value, isAutoValue) => {
+    const currentValue = String(result[key] ?? "").trim();
+    if (currentValue && !isAutoValue(currentValue)) return;
+    result[key] = resolveDefault(value);
   };
 
+  if (defaults.clearDriverFields) {
+    CHAIRMAN_DRIVER_FIELD_KEYS.forEach((key) => {
+      result[key] = key === "driverCategories" ? "" : false;
+    });
+  }
+
+  setIfBlank("birthDate", client?.birthDate || formatApiDate(client?.rawApiClient?.birth_date) || "");
   setIfBlank("examDate", visitDate);
-  setIfBlank("ekg", `Медицинский центр ООО "ЦМО "ЮЛМЕД", ЭКГ от ${visitDate}`);
-  setIfBlank("ekgConclusion", buildChairmanAutoEkgConclusion(visitDate));
-  setIfBlank("fluorography", `от ${visitDate} ОГК б.п.`);
-  setIfBlank("diagnosis", defaults.diagnosis);
+  setIfBlankOrAuto("ekg", buildChairmanAutoEkgText(ekgDate), isChairmanAutoEkgText);
+  if (formType === "guard" && String(result.ekgConclusion ?? "").trim().startsWith(`${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `)) {
+    result.ekgConclusion = "";
+  }
+  setIfBlankOrAuto("ekgConclusion", buildChairmanAutoEkgConclusion(ekgDate, formType), (value) =>
+    isChairmanAutoEkgConclusionText(value, formType),
+  );
+  setIfBlankOrAuto("fluorography", buildChairmanAutoFluorographyText(fluorographyDate), isChairmanAutoFluorographyText);
+  if (defaults.medicalRequirements) setIfBlank("medicalRequirements", defaults.medicalRequirements);
+  if (Object.prototype.hasOwnProperty.call(defaults, "diagnosis")) setIfBlank("diagnosis", defaults.diagnosis);
+  if (defaults.conclusionText) setIfBlank("conclusionText", defaults.conclusionText);
   setIfBlank("conclusion", "Годен");
-  setIfBlank("validity", "1 год");
+  setIfBlank("validity", defaults.validity || "1 год");
   setIfBlank("organ", "По возрасту");
 
   return result;
@@ -2529,6 +3742,7 @@ function createVisitForClient(clientId, options = {}) {
     serviceNames,
     serviceIds: Array.isArray(options.serviceIds) ? options.serviceIds.map((id) => String(id)) : [],
     serviceDetails: options.serviceDetails || {},
+    clientSex: options.clientSex || getClientSexKey(client) || "",
     center: client.center || "Медцентр 1",
     paymentType: options.paymentType || "Наличные",
     amount: Number(options.amount ?? calculateVisitAmount(serviceNames)),
@@ -2544,15 +3758,100 @@ function createVisitForClient(clientId, options = {}) {
   appState.visitServiceSearch = "";
   persistDemoState();
   ensureRequiredDoctorExamsForVisit(client, visit);
-  syncVisitToBackend(visit, client);
+  if (options.syncBackend !== false) syncVisitToBackend(visit, client);
 
   return visit;
+}
+
+async function createVisitsForClientByServices(client, serviceDrafts = []) {
+  const drafts = Array.isArray(serviceDrafts) ? serviceDrafts.filter((item) => item?.serviceId) : [];
+  if (!client || !drafts.length) return [];
+
+  const centerId = await resolveCenterIdForVisit({ center: client.center, centerId: client.centerId }, client);
+  const encounterDate = getLocalDateInputValue();
+  const savedItems = await apiRequest("/encounters/by-services", {
+    method: "POST",
+    body: JSON.stringify({
+      center_id: centerId,
+      client_id: Number(client.backendId || client.id),
+      encounter_date: encounterDate,
+      services: drafts.map((draft) => ({
+        service_id: Number(draft.serviceId),
+        unit_price: Number(draft.amount || 0),
+        payment_type: draft.paymentType || "cash",
+        comment: draft.comment || null,
+        notes: JSON.stringify(draft.detail || {}),
+      })),
+    }),
+  });
+
+  if (!Array.isArray(savedItems) || savedItems.length !== drafts.length) {
+    throw new Error("Backend вернул неполный список созданных обращений");
+  }
+
+  const visits = savedItems.map((savedItem, index) => {
+    const draft = drafts[index];
+    const visit = createVisitForClient(client.id, {
+      serviceNames: [draft.serviceName],
+      serviceIds: [String(draft.serviceId)],
+      serviceDetails: { [String(draft.serviceId)]: { ...(draft.detail || {}) } },
+      clientSex: draft.clientSex || getClientSexKey(client) || "",
+      amount: Number(draft.amount || 0),
+      paymentType: draft.paymentType || "cash",
+      comment: draft.comment || "",
+      syncBackend: false,
+    });
+    if (!visit) return null;
+    visit.backendId = savedItem?.encounter?.id || null;
+    visit.status = savedItem?.encounter?.status || "draft";
+    visit.__backendServicesSaved = true;
+    return visit;
+  }).filter(Boolean);
+
+  await Promise.all(visits.map((visit) => loadDoctorExamsForClient(client, visit)));
+
+  const activeVisit = visits[0] || null;
+  appState.activeVisitId = activeVisit?.id || null;
+  appState.selectedEncounterId = activeVisit?.backendId || null;
+  persistDemoState();
+  return visits;
 }
 
 function createVisitForClientIfNeeded(clientId, options = {}) {
   const existing = getCurrentVisitForClient(clientId);
   if (!options.forceNew && existing && existing.status !== "closed") return existing;
   return createVisitForClient(clientId, options);
+}
+
+async function createVisitAndOpenEditor(selectedClient) {
+  if (!selectedClient) {
+    showToast("Сначала выбери клиента");
+    return null;
+  }
+
+  const visit = createVisitForClient(selectedClient.id, {
+    serviceNames: [],
+    serviceIds: [],
+    serviceDetails: {},
+    amount: 0,
+  });
+
+  if (!visit) {
+    showToast("Не удалось создать обращение");
+    return null;
+  }
+
+  appState.selectedClientId = selectedClient.id;
+  appState.activeVisitId = visit.id;
+  appState.page = "chart";
+  persistDemoState();
+  renderApp();
+
+  await syncVisitToBackend(visit, selectedClient);
+  await loadClientWorkspace(selectedClient);
+  renderApp();
+  showToast("Обращение создано, выбери услуги");
+  return visit;
 }
 
 function updateVisit(visitId, patch = {}) {
@@ -2570,11 +3869,12 @@ function updateVisit(visitId, patch = {}) {
   return visit;
 }
 
-async function syncVisitToBackend(visit, client) {
+async function syncVisitToBackend(visit, client, options = {}) {
   if (!visit || !client) return null;
   if (visit.__backendSyncPromise) return visit.__backendSyncPromise;
   const clientId = client.backendId || client.id;
-  if (!clientId || !data.serverServicesLoaded) return null;
+  if (!clientId) return null;
+  const { syncRequiredDoctorExams = true } = options;
 
   visit.__backendSyncPromise = (async () => {
     visit.__backendSyncing = true;
@@ -2583,10 +3883,11 @@ async function syncVisitToBackend(visit, client) {
       const payload = {
         center_id: centerId,
         client_id: Number(clientId),
-        encounter_date: parseRuDateToIso(visit.visitDate, new Date().toISOString().slice(0, 10)),
+        encounter_date: parseRuDateToIso(visit.visitDate, getLocalDateInputValue()),
         payment_type: visit.paymentType || "cash",
         total_amount: Number(visit.amount || calculateVisitAmountByIds(getSelectedVisitServiceIds(visit), getVisitServiceDetails(visit))),
         comment: visit.comment || "",
+        suppressed_doctor_role_ids: Array.from(getSuppressedDoctorRoleCodesForVisit(visit)),
         status: visit.status || "draft",
       };
 
@@ -2596,10 +3897,11 @@ async function syncVisitToBackend(visit, client) {
       });
       visit.backendId = encounter.id;
       visit.status = encounter.status || visit.status || "draft";
+      visit.suppressedDoctorRoleIds = normalizeDoctorRoleIds(encounter.suppressed_doctor_role_ids);
 
-      const selectedServiceIds = getSelectedVisitServiceIds(visit);
+      const selectedServiceIds = data.serverServicesLoaded ? getSelectedVisitServiceIds(visit) : [];
       const serviceDetails = getVisitServiceDetails(visit);
-      if (Array.isArray(selectedServiceIds)) {
+      if (data.serverServicesLoaded && Array.isArray(selectedServiceIds)) {
         await apiRequest(`/encounter-services?encounter_id=${encodeURIComponent(visit.backendId)}`, {
           method: "DELETE",
         });
@@ -2624,7 +3926,9 @@ async function syncVisitToBackend(visit, client) {
         visit.__backendServicesSaved = true;
       }
 
-      await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
+      if (syncRequiredDoctorExams) {
+        await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
+      }
       persistDemoState();
       return visit;
     } catch (error) {
@@ -2687,6 +3991,9 @@ async function loadEncountersForClient(client) {
         return result;
       }, {});
       const existingVisit = existingVisitsByBackendId.get(String(encounter.id));
+      const suppressedDoctorRoleIds = normalizeDoctorRoleIds(
+        encounter.suppressed_doctor_role_ids || existingVisit?.suppressedDoctorRoleIds || [],
+      );
       mappedVisits.push({
         ...(existingVisit || {}),
         id: `encounter-${encounter.id}`,
@@ -2701,6 +4008,7 @@ async function loadEncountersForClient(client) {
         paymentType: encounter.payment_type || "cash",
         amount: Number(encounter.total_amount || 0),
         comment: encounter.comment || "",
+        suppressedDoctorRoleIds,
         examIds: [],
         documentIds: [],
         status: encounter.status || "draft",
@@ -2735,6 +4043,7 @@ async function loadDoctorExamsForClient(client, visit = null) {
       visitId: visit?.id || `encounter-${exam.encounter_id}`,
       backendEncounterId: exam.encounter_id || null,
       doctorRoleId: exam.doctor_role_id,
+      doctorName: getDoctorSignatureName(exam.doctor_role_id, client, exam.doctor_name),
       status: exam.is_completed ? "completed" : "draft",
       isCompleted: Boolean(exam.is_completed),
       updatedAt: new Date().toISOString(),
@@ -2766,27 +4075,46 @@ function parseDashboardDoctorStatusServiceDetail(notes) {
   }
 }
 
-function mapDashboardDoctorStatus(status) {
+function mapDashboardDoctorStatus(status, previousStatus = null) {
   const services = Array.isArray(status?.services)
     ? status.services.map((service) => ({
         serviceId: String(service.service_id),
         detail: parseDashboardDoctorStatusServiceDetail(service.notes),
       }))
     : [];
+  const suppressedDoctorRoleIds = Array.isArray(status?.suppressed_doctor_role_ids)
+    ? status.suppressed_doctor_role_ids.slice()
+    : Array.isArray(previousStatus?.suppressedDoctorRoleIds)
+      ? previousStatus.suppressedDoctorRoleIds.slice()
+      : [];
   return {
     clientId: status?.client_id,
     encounterId: status?.encounter_id || null,
     encounterStatus: status?.encounter_status || null,
+    blankNumber: status?.blank_number || "",
     services,
+    existingDoctorRoleIds: Array.isArray(status?.existing_doctor_role_ids)
+      ? status.existing_doctor_role_ids.slice()
+      : Array.isArray(previousStatus?.existingDoctorRoleIds)
+        ? previousStatus.existingDoctorRoleIds.slice()
+        : [],
     completedDoctorRoleIds: Array.isArray(status?.completed_doctor_role_ids)
       ? status.completed_doctor_role_ids.slice()
       : [],
+    suppressedDoctorRoleIds,
   };
 }
 
+function getDashboardDoctorStatusStorageKey(value) {
+  const encounterId = value?.encounterId ?? value?.encounter_id ?? null;
+  if (encounterId) return `encounter-${encounterId}`;
+  const clientId = value?.clientId ?? value?.client_id ?? value?.backendId ?? value?.id ?? null;
+  return clientId ? `client-${clientId}` : "";
+}
+
 function getDashboardDoctorStatus(client) {
-  const clientId = client?.backendId || client?.id;
-  return clientId ? data.dashboardDoctorStatuses[String(clientId)] || null : null;
+  const key = getDashboardDoctorStatusStorageKey(client);
+  return key ? data.dashboardDoctorStatuses[key] || null : null;
 }
 
 function getDashboardDoctorStatusVisit(client) {
@@ -2801,20 +4129,42 @@ function getDashboardDoctorStatusVisit(client) {
       result[service.serviceId] = service.detail;
       return result;
     }, {}),
+    suppressedDoctorRoleIds: Array.isArray(status.suppressedDoctorRoleIds)
+      ? status.suppressedDoctorRoleIds.slice()
+      : [],
     status: status.encounterStatus || "draft",
   };
 }
 
+function getDashboardBlankNumber(client, status = null) {
+  const statusBlankNumber = String(status?.blankNumber || "").trim();
+  if (statusBlankNumber) return statusBlankNumber;
+
+  const backendClientId = client?.backendId || client?.id;
+  const encounterId = status?.encounterId ? String(status.encounterId) : "";
+  const documents = [...(data.generatedDocuments || []), ...(data.documents || [])]
+    .filter((documentItem) => {
+      const blankNumber = String(documentItem?.blankNumber || "").trim();
+      if (!blankNumber || documentItem?.cancelledAt) return false;
+      if (encounterId && String(documentItem.encounterId || documentItem.visitId || "") === encounterId) return true;
+      return backendClientId && String(documentItem.clientId || "") === String(backendClientId);
+    })
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  return String(documents[0]?.blankNumber || "").trim();
+}
+
 function areDashboardDoctorStatusesReady(clients) {
   return (Array.isArray(clients) ? clients : []).every((client) => {
-    const clientId = client?.backendId || client?.id;
-    return clientId && Object.hasOwn(data.dashboardDoctorStatuses, String(clientId));
+    const key = getDashboardDoctorStatusStorageKey(client);
+    return key && Object.hasOwn(data.dashboardDoctorStatuses, key);
   });
 }
 
 async function loadDashboardDoctorStatuses(clients, { render = true } = {}) {
   const items = Array.isArray(clients) ? clients.filter(Boolean) : [];
-  const ids = items.map((c) => c?.backendId || c?.id).filter(Boolean);
+  const ids = Array.from(new Set(items.map((item) => item?.backendId || item?.id).filter(Boolean)));
+  const encounterIds = Array.from(new Set(items.map((item) => item?.encounterId).filter(Boolean)));
   if (!ids.length) {
     data.dashboardDoctorStatusesLoading = false;
     data.dashboardDoctorStatusesError = "";
@@ -2828,16 +4178,26 @@ async function loadDashboardDoctorStatuses(clients, { render = true } = {}) {
   if (render) renderApp();
 
   try {
-    const params = ids.map((id) => `client_ids=${encodeURIComponent(id)}`).join("&");
+    const params = [
+      ...ids.map((id) => `client_ids=${encodeURIComponent(id)}`),
+      ...encounterIds.map((id) => `encounter_ids=${encodeURIComponent(id)}`),
+    ].join("&");
     const statuses = await apiRequest(`/dashboard/client-doctor-statuses?${params}`);
     if (requestId !== data.dashboardDoctorStatusesRequestId) return;
 
     const nextStatuses = { ...data.dashboardDoctorStatuses };
-    ids.forEach((id) => {
-      nextStatuses[String(id)] = mapDashboardDoctorStatus({ client_id: id });
+    items.forEach((item) => {
+      const key = getDashboardDoctorStatusStorageKey(item);
+      if (!key) return;
+      nextStatuses[key] = mapDashboardDoctorStatus(
+        { client_id: item?.backendId || item?.id, encounter_id: item?.encounterId || null },
+        nextStatuses[key],
+      );
     });
     for (const status of Array.isArray(statuses) ? statuses : []) {
-      nextStatuses[String(status.client_id)] = mapDashboardDoctorStatus(status);
+      const key = getDashboardDoctorStatusStorageKey(status);
+      if (!key) continue;
+      nextStatuses[key] = mapDashboardDoctorStatus(status, nextStatuses[key]);
     }
     data.dashboardDoctorStatuses = nextStatuses;
   } catch (error) {
@@ -2854,21 +4214,53 @@ async function loadDashboardDoctorStatuses(clients, { render = true } = {}) {
 async function refreshDashboardDoctorStatusForExam(exam, options = {}) {
   const client = getClientPool().find((item) => String(item.id) === String(exam?.clientId));
   if (!client) return;
-  await loadDashboardDoctorStatuses([client], options);
+  const visit = data.visits.find((item) => String(item.id) === String(exam?.visitId));
+  await loadDashboardDoctorStatuses([{ ...client, encounterId: visit?.backendId || exam?.backendEncounterId || null }], options);
 }
 
-async function loadClientWorkspace(client) {
+function activateClientEncounter(clientId, encounterId) {
+  if (!encounterId) return getCurrentVisitForClient(clientId);
+  const visit = data.visits.find(
+    (item) => String(item.clientId) === String(clientId) && String(item.backendId || "") === String(encounterId),
+  );
+  if (visit) appState.activeVisitId = visit.id;
+  return visit || null;
+}
+
+async function loadClientWorkspace(client, { encounterId = null } = {}) {
   if (!client) return;
   data.medicalRecordEditMode = false;
   data.medicalRecordSaveError = "";
   await loadEncountersForClient(client);
-  const visit = getCurrentVisitForClient(client.id);
+  const visit = activateClientEncounter(client.id, encounterId) || getCurrentVisitForClient(client.id);
+  appState.selectedEncounterId = visit?.backendId || encounterId || null;
   await loadDoctorExamsForClient(client, visit);
   await loadWorkflowData({
     clientId: client.backendId || client.id,
     encounterId: visit?.backendId || null,
   });
+  persistDemoState();
   renderApp();
+}
+
+function mergeFullClientWithDashboardRow(client, fullClient) {
+  const hasEncounter = client?.encounterId !== null && client?.encounterId !== undefined;
+  return {
+    ...client,
+    ...fullClient,
+    dashboardRowId: client?.dashboardRowId || fullClient?.dashboardRowId,
+    encounterId: hasEncounter ? client.encounterId : fullClient?.encounterId ?? null,
+    encounterStatus: hasEncounter ? client.encounterStatus : fullClient?.encounterStatus || "",
+    centerId: client?.centerId ?? fullClient?.centerId ?? null,
+    center: client?.center || fullClient?.center || "Медцентр 1",
+    services: hasEncounter && Array.isArray(client?.services) ? client.services.slice() : fullClient?.services || [],
+    note: hasEncounter ? client?.note || "" : fullClient?.note || "",
+    lastVisit: hasEncounter ? client?.lastVisit || "" : fullClient?.lastVisit || "",
+    encounterDate: hasEncounter ? client?.encounterDate || "" : fullClient?.encounterDate || "",
+    latestEncounterCreatedAt: hasEncounter
+      ? client?.latestEncounterCreatedAt || ""
+      : fullClient?.latestEncounterCreatedAt || "",
+  };
 }
 
 async function ensureFullClientLoaded(client) {
@@ -2876,8 +4268,14 @@ async function ensureFullClientLoaded(client) {
   if (client.rawApiClient && Object.hasOwn(client.rawApiClient, "legacy_payload_json")) return client;
 
   const clientId = client.backendId || client.id;
-  const apiClient = await apiRequest(`/clients/${encodeURIComponent(clientId)}`);
-  return upsertClientInMemory(apiClient);
+  const cacheKey = String(clientId);
+  let fullClient = data.fullClientsById[cacheKey] || null;
+  if (!fullClient) {
+    const apiClient = await apiRequest(`/clients/${encodeURIComponent(clientId)}`);
+    fullClient = mapApiClient(apiClient);
+    data.fullClientsById[cacheKey] = fullClient;
+  }
+  return mergeFullClientWithDashboardRow(client, fullClient);
 }
 
 async function restoreWorkplaceSelection() {
@@ -2938,13 +4336,18 @@ function getDoctorExamById(examId) {
   return data.doctorExams.find((item) => String(item.id) === String(examId)) || null;
 }
 
-function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
+function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
   ensureVisitsStore();
+
+  const { restoreSuppressed = true } = options;
+  const visit = data.visits.find((item) => String(item.id) === String(visitId));
+  if (restoreSuppressed) {
+    restoreDoctorRoleForVisit(visit, doctorRoleId);
+  }
 
   let exam = getDoctorExam(clientId, visitId, doctorRoleId);
   if (exam) {
     if (doctorRoleId === "chairman") {
-      const visit = data.visits.find((item) => String(item.id) === String(visitId));
       const nextFields = applyCertificateDefaultsToChairmanFields(exam.fields || {}, visit);
       if (JSON.stringify(nextFields) !== JSON.stringify(exam.fields || {})) {
         exam.fields = nextFields;
@@ -2966,6 +4369,10 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
     clientId,
     visitId,
     doctorRoleId,
+    doctorName: getDoctorSignatureName(
+      doctorRoleId,
+      getClientPool().find((item) => String(item.id) === String(clientId)) || null,
+    ),
     status: "draft",
     isCompleted: false,
     updatedAt: new Date().toISOString(),
@@ -2973,7 +4380,6 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
   };
 
   if (doctorRoleId === "chairman") {
-    const visit = data.visits.find((item) => String(item.id) === String(visitId));
     if (visit) {
       exam.fields = applyDriverSelectionsToChairmanFields(exam.fields, getDriverDetailFromVisit(visit), visit);
       exam.fields = applyCertificateDefaultsToChairmanFields(exam.fields, visit);
@@ -2982,7 +4388,6 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
 
   data.doctorExams.push(exam);
 
-  const visit = data.visits.find((item) => item.id === visitId);
   if (visit && !visit.examIds.includes(exam.id)) {
     visit.examIds.push(exam.id);
   }
@@ -2994,18 +4399,17 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId) {
 
 async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend = false } = {}) {
   if (!client || !visit) return [];
-  const requiredRoleCodes = getRequiredDoctorRoleCodesForVisit(visit);
+  const requiredRoleCodes = getRequiredDoctorRoleCodesForVisit(visit, client);
   const createdOrExisting = [];
 
   requiredRoleCodes.forEach((doctorRoleId) => {
-    const exam = getOrCreateDoctorExam(client.id, visit.id, doctorRoleId);
+    const exam = getOrCreateDoctorExam(client.id, visit.id, doctorRoleId, { restoreSuppressed: false });
     if (!exam) return;
 
     if (!exam.isCompleted && exam.status !== "draft") {
       exam.status = "draft";
       exam.updatedAt = new Date().toISOString();
     }
-
     createdOrExisting.push(exam);
   });
 
@@ -3020,6 +4424,32 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
   return createdOrExisting;
 }
 
+async function prepareVisitDoctorExamsForDocuments(client, visit) {
+  if (!client || !visit) return [];
+  await syncVisitToBackend(visit, client, { syncRequiredDoctorExams: false });
+  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
+  const exams = (Array.isArray(data.doctorExams) ? data.doctorExams : []).filter(
+    (exam) =>
+      String(exam.clientId) === String(client.id) &&
+      String(exam.visitId) === String(visit.id) &&
+      !suppressedRoles.has(String(exam.doctorRoleId || "").trim()),
+  );
+  const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
+  if (chairmanExam && !chairmanExam.isCompleted && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
+    const nextFields = applyDriverSelectionsToChairmanFields(chairmanExam.fields || {}, getDriverDetailFromVisit(visit), visit);
+    if (JSON.stringify(nextFields) !== JSON.stringify(chairmanExam.fields || {})) {
+      chairmanExam.fields = nextFields;
+      chairmanExam.updatedAt = new Date().toISOString();
+      visit.chairmanFields = { ...nextFields };
+      persistDemoState();
+    }
+  }
+  for (const exam of exams) {
+    await syncDoctorExamToBackend(exam);
+  }
+  return exams;
+}
+
 function openDoctorExamCard({ clientId, visitId, doctorRoleId }) {
   if (!clientId || !doctorRoleId) return;
 
@@ -3031,7 +4461,7 @@ function openDoctorExamCard({ clientId, visitId, doctorRoleId }) {
   const chairmanFormType = getChairmanFormTypeForVisit(visit);
   if (
     doctorRoleId === "chairman" &&
-    (chairmanFormType === "sport" || chairmanFormType === "ekg") &&
+    chairmanFormType === "ekg" &&
     typeof window.openSportCard === "function"
   ) {
     const cardService = getServicesForVisit(visit).find((service) =>
@@ -3151,7 +4581,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
   const indicationsText = indicationsList.join(", ") || String(fields.diagnosis || raw.indications || "").trim() || null;
   const chairmanMedicalRecordData = buildChairmanMedicalRecordData(fields);
 
-  if (isDriverChairmanFlow && visit && Object.keys(driverDetail).length) {
+  if (isDriverChairmanFlow && visit) {
     driverDetail.categories = chairmanCategories.slice();
     driverDetail.indications = indicationsList;
     driverDetail.limitations = limitationsList;
@@ -3169,7 +4599,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
     mkb10: chairmanMedicalRecordData.mkb10 || String(raw.mkb10 || "").trim() || null,
   };
 
-  client.category = resolveAdmissionCategoryValue(nextRaw.admission_category, client.services);
+  client.category = resolveAdmissionCategoryValue(nextRaw.admission_category, client.services, { client });
   client.admissionCategory = nextRaw.admission_category || "";
   client.mkb10 = nextRaw.mkb10 || "";
   client.rawApiClient = nextRaw;
@@ -3282,7 +4712,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
   persistDemoState();
 }
 
-async function saveDoctorExam(examId, updatedFields) {
+async function saveDoctorExam(examId, updatedFields, options = {}) {
   ensureVisitsStore();
 
   const exam = data.doctorExams.find((item) => item.id === examId);
@@ -3316,13 +4746,21 @@ async function saveDoctorExam(examId, updatedFields) {
   try {
     if (exam.doctorRoleId === "chairman") {
       await syncDoctorExamToBackend(exam);
-      try {
-        await syncChairmanExamToClientAndMedicalRecord(exam);
-      } catch (chairmanSyncError) {
-        console.warn("Не удалось полностью досинхронизировать председателя", chairmanSyncError);
-        showToast("Карточка председателя сохранена, но обращение/карта обновились не полностью");
+      const syncSecondaryChairmanData = async () => {
+        try {
+          await syncChairmanExamToClientAndMedicalRecord(exam);
+        } catch (chairmanSyncError) {
+          console.warn("Не удалось полностью досинхронизировать председателя", chairmanSyncError);
+          showToast("Карточка председателя сохранена, но обращение/карта обновились не полностью");
+        }
+        await refreshDashboardDoctorStatusForExam(exam, { render: false });
+      };
+      if (options.waitForSecondarySync === false) {
+        exam.__saving = false;
+        void syncSecondaryChairmanData();
+        return true;
       }
-      await refreshDashboardDoctorStatusForExam(exam, { render: false });
+      await syncSecondaryChairmanData();
       exam.__saving = false;
       return true;
     }
@@ -3373,21 +4811,29 @@ function saveDoctorExamDraft(examId, updatedFields) {
   return true;
 }
 
-async function deleteDoctorExam(examId) {
+async function deleteDoctorExam(examId, options = {}) {
   ensureVisitsStore();
 
+  const { renderOptimistic = false } = options;
   const examIndex = data.doctorExams.findIndex((item) => item.id === examId);
   if (examIndex < 0) return false;
 
   const [exam] = data.doctorExams.splice(examIndex, 1);
+  const doctorMarkCacheSnapshot = snapshotDoctorMarkCaches(exam);
   const visit = data.visits.find((item) => String(item.id) === String(exam.visitId));
   if (visit) {
     visit.examIds = Array.isArray(visit.examIds)
       ? visit.examIds.filter((value) => String(value) !== String(exam.id))
       : [];
+    suppressDoctorRoleForVisit(visit, exam.doctorRoleId);
   }
+  removeDoctorMarkCachesForExam(exam);
+  suppressDashboardDoctorRoleForExam(exam);
 
   persistDemoState();
+  if (renderOptimistic) {
+    renderApp();
+  }
 
   if (!exam.backendId) {
     return true;
@@ -3406,8 +4852,13 @@ async function deleteDoctorExam(examId) {
       if (!visit.examIds.includes(exam.id)) {
         visit.examIds.push(exam.id);
       }
+      restoreDoctorRoleForVisit(visit, exam.doctorRoleId);
     }
+    restoreDoctorMarkCaches(doctorMarkCacheSnapshot);
     persistDemoState();
+    if (renderOptimistic) {
+      renderApp();
+    }
     showToast("Не удалось удалить карточку врача");
     console.warn("Не удалось удалить карточку врача в backend", error);
     return false;
@@ -3419,7 +4870,7 @@ function closeActionModal() {
 }
 
 function openCompletedDoctorExamActions({ selectedClient, activeVisit, doctorRoleId, currentExam }) {
-  const doctorName = getDoctorDisplayName(doctorRoleId);
+  const doctorName = currentExam?.doctorName || getDoctorDisplayName(doctorRoleId, selectedClient);
   openActionModal(
     "Осмотр врача",
     `
@@ -3444,9 +4895,9 @@ function openCompletedDoctorExamActions({ selectedClient, activeVisit, doctorRol
   });
 
   document.getElementById("deleteCompletedDoctorExam")?.addEventListener("click", async () => {
-    const removed = await deleteDoctorExam(currentExam.id);
+    closeActionModal();
+    const removed = await deleteDoctorExam(currentExam.id, { renderOptimistic: true });
     if (removed) {
-      closeActionModal();
       showToast(`Карточка врача "${doctorName}" удалена`);
       renderApp();
     }
@@ -3524,7 +4975,7 @@ async function syncDoctorExamToBackend(exam) {
       client_id: Number(clientId),
       encounter_id: visit?.backendId ? Number(visit.backendId) : null,
       doctor_role_id: exam.doctorRoleId,
-      doctor_name: getDoctorDisplayName(exam.doctorRoleId),
+      doctor_name: getDoctorSignatureName(exam.doctorRoleId, client, exam.doctorName),
       fields_json: exam.fields || {},
       is_completed: Boolean(exam.isCompleted),
     }),
@@ -3532,6 +4983,7 @@ async function syncDoctorExamToBackend(exam) {
   exam.backendId = savedExam.id;
   exam.backendEncounterId = savedExam.encounter_id || visit?.backendId || null;
   exam.updatedAt = savedExam.completed_at || savedExam.updated_at || new Date().toISOString();
+  exam.doctorName = getDoctorSignatureName(exam.doctorRoleId, client, savedExam.doctor_name);
   exam.fields = savedExam.fields_json || exam.fields || {};
   exam.isCompleted = Boolean(savedExam.is_completed);
   exam.status = exam.isCompleted ? "completed" : "draft";
@@ -3550,10 +5002,11 @@ function getDoctorExamStatus(clientId, doctorRoleId) {
 
   const visit = getCurrentVisitForClient(clientId);
   if (!visit) return "empty";
+  const client = getClientPool().find((item) => String(item.id) === String(clientId)) || null;
   const exam = getDoctorExam(clientId, visit.id, doctorRoleId);
 
   if (!exam) {
-    const isRequired = getRequiredDoctorRoleCodesForVisit(visit).includes(doctorRoleId);
+    const isRequired = getRequiredDoctorRoleCodesForVisit(visit, client).includes(doctorRoleId);
     const hasHistory = hasCompletedDoctorExamHistory(clientId, doctorRoleId, visit.id);
     if (isRequired && hasHistory) return "draft-history";
     if (isRequired) return "draft";
@@ -3626,11 +5079,47 @@ function getVisibleDashboardClients() {
   return getDashboardClientPage().currentClients;
 }
 
+function getSelectedDashboardRow(clients = getVisibleDashboardClients()) {
+  const rows = Array.isArray(clients) ? clients : [];
+  const selectedClientId = appState.selectedClientId;
+  if (!selectedClientId) return null;
+  return rows.find(
+    (client) =>
+      String(client.id) === String(selectedClientId) &&
+      (!appState.selectedEncounterId || String(client.encounterId || "") === String(appState.selectedEncounterId)),
+  ) || null;
+}
+
+function getNewEncounterTargetClient() {
+  const visibleClients = getVisibleDashboardClients();
+  const selectedRow = getSelectedDashboardRow(visibleClients);
+  let targetRow = selectedRow;
+
+  if (!targetRow && appState.clientSearch.trim()) {
+    const uniqueClientIds = Array.from(new Set(visibleClients.map((client) => String(client.id)).filter(Boolean)));
+    if (uniqueClientIds.length === 1) {
+      targetRow = visibleClients.find((client) => String(client.id) === uniqueClientIds[0]) || null;
+    }
+  }
+
+  if (!targetRow && !appState.clientSearch.trim()) {
+    targetRow = getSelectedClient();
+  }
+  if (!targetRow) return null;
+
+  return getClientPool().find((client) => String(client.id) === String(targetRow.id)) || targetRow;
+}
+
 async function loadClientsFromBackend(searchValue) {
   const search = String(searchValue || "").trim();
-  const legacyEncounterDate = parseRuDateToIso(appState.clientEncounterDate, "");
-  const encounterDateFrom = parseRuDateToIso(appState.clientEncounterDateFrom || legacyEncounterDate, "");
-  const encounterDateTo = parseRuDateToIso(appState.clientEncounterDateTo || legacyEncounterDate, "");
+  const shouldFilterByEncounterDate = appState.clientPeriodFilterApplied === true;
+  const legacyEncounterDate = shouldFilterByEncounterDate ? parseRuDateToIso(appState.clientEncounterDate, "") : "";
+  const encounterDateFrom = shouldFilterByEncounterDate
+    ? parseRuDateToIso(appState.clientEncounterDateFrom || legacyEncounterDate, "")
+    : "";
+  const encounterDateTo = shouldFilterByEncounterDate
+    ? parseRuDateToIso(appState.clientEncounterDateTo || legacyEncounterDate, "")
+    : "";
   const requestId = ++clientSearchRequestId;
   clientSearchAbortController?.abort();
   const abortController = new AbortController();
@@ -3641,17 +5130,18 @@ async function loadClientsFromBackend(searchValue) {
   setTimeout(renderApp, 0);
 
   try {
-    const params = new URLSearchParams({ limit: String(DASHBOARD_PAGE_SIZE) });
+    const params = new URLSearchParams({ limit: String(DASHBOARD_CLIENT_LOAD_LIMIT) });
     if (search) params.set("search", search);
     if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
     if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
-    const url = `${API_BASE_URL}/clients/search?${params.toString()}`;
+    const url = `${API_BASE_URL}/dashboard/encounter-rows?${params.toString()}`;
     const response = await fetch(url, { signal: abortController.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const clients = await response.json();
     if (requestId !== clientSearchRequestId) return;
 
-    data.backendClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
+    const mappedClients = Array.isArray(clients) ? clients.map(mapApiClient) : [];
+    data.backendClients = mergeDashboardPinnedClients(mappedClients);
     data.backendClientsLoaded = true;
     invalidateClientPool();
     data.backendSearch = search;
@@ -3676,9 +5166,10 @@ async function loadClientsFromBackend(searchValue) {
   }
 }
 
-function scheduleClientSearch(searchValue, { render = true } = {}) {
+function scheduleClientSearch(searchValue, { render = true, clearPinned = true } = {}) {
   window.clearTimeout(clientSearchTimer);
   clientSearchAbortController?.abort();
+  if (clearPinned) clearDashboardPinnedClients();
   data.backendSearchLoading = true;
   data.backendSearchError = "";
   if (render) renderApp();
@@ -3702,8 +5193,10 @@ function resetDashboardClientSelection() {
   appState.clientEncounterDate = "";
   appState.clientEncounterDateFrom = "";
   appState.clientEncounterDateTo = "";
+  appState.clientPeriodFilterApplied = false;
   appState.dashboardPage = 1;
   appState.selectedClientId = null;
+  appState.selectedEncounterId = null;
   appState.activeVisitId = null;
   data.backendSearch = "";
   data.backendSearchError = "";
@@ -3788,8 +5281,10 @@ function renderNav() {
               class="${appState.page === item.id ? "active" : ""}"
               data-page="${item.id}"
               data-toast="${item.toast || ""}"
+              title="${escapeHtml(item.label)}"
+              aria-label="${escapeHtml(item.label)}"
             >
-              ${item.label}
+              ${escapeHtml(item.label)}
             </button>
           `,
         )
@@ -3827,7 +5322,7 @@ function renderNav() {
       if (page === "reports" && !data.reportLoading) {
         loadReportsSummary();
       }
-      if ((page === "blanks" || page === "chart") && !data.workflowDataLoading) {
+      if ((page === "chart" || page === "xml") && !data.workflowDataLoading) {
         loadWorkflowData();
       }
       if (page === "blanks" && typeof window.loadBlanksData === "function" && !data.blanksLoading) {
@@ -3864,18 +5359,45 @@ function buildExcelRows(clients) {
 
   return clients.map((client) => {
     const status = getDashboardDoctorStatus(client);
-    const currentVisit = getDashboardDoctorStatusVisit(client);
-    const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit) : new Map();
-    const completedDoctors = new Set(status?.completedDoctorRoleIds || []);
-    const markDoctor = (roleCode) => buildDoctorMark(roleCode, requiredDoctors, completedDoctors);
+    const fallbackServiceIds = (Array.isArray(client.services) ? client.services : [])
+      .map((name) => getServerServiceByName(name))
+      .filter(Boolean)
+      .map((service) => getServiceToken(service))
+      .filter(Boolean);
+    const localVisit = client.encounterId
+      ? data.visits.find(
+          (visit) => String(visit.clientId) === String(client.id) && String(visit.backendId || "") === String(client.encounterId),
+        ) || null
+      : getCurrentVisitForClient(client.id);
+    const currentVisit = localVisit || getDashboardDoctorStatusVisit(client) || (
+      fallbackServiceIds.length
+        ? {
+            id: `dashboard-client-services-${client.id}`,
+            clientId: client.id,
+            serviceIds: fallbackServiceIds,
+            serviceDetails: {},
+            status: "draft",
+          }
+        : null
+    );
+    const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : new Map();
+    const completedDoctors = getCompletedDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
+    const existingDoctors = getExistingDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
+    const suppressedDoctors = getSuppressedDoctorRoleIdsForDashboardVisit(currentVisit, status);
+    const markDoctor = (roleCode) =>
+      isDoctorRoleVisibleForClient(roleCode, client)
+        ? buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors, existingDoctors)
+        : { value: "", title: "", state: "empty" };
 
     return {
       id: client.id,
+      encounterId: client.encounterId || currentVisit?.backendId || null,
+      rowId: client.dashboardRowId || (client.encounterId ? `encounter-${client.encounterId}` : `client-${client.id}`),
       patientNumber: client.patientNumber ?? client.id,
       fullName: client.fullName,
       birthDate: client.birthDate,
       registration: client.registration || client.document || "",
-      category: resolveAdmissionCategoryValue(client.category, client.services),
+      category: resolveDashboardAdmissionCategory(client, currentVisit),
       referenceNumber: client.referenceNumber || "",
       gynecologist: markDoctor("gynecologist"),
       stomatologist: markDoctor("dentist"),
@@ -3893,7 +5415,7 @@ function buildExcelRows(clients) {
       stamp: "",
       note: client.note || "",
       encounterDate: client.encounterDate || "",
-      cardNumber: client.cardNumber || "",
+      blankNumber: getDashboardBlankNumber(client, status),
       organization: client.organization || "",
       agent: client.agent || "",
     };
@@ -3908,14 +5430,16 @@ function renderDoctorButton(label, selectedClient) {
   const title = getDoctorExamStatusTitle(status);
 
   return `
-    <button
-      class="doctor-pill doctor-pill--${status}"
-      title="${escapeHtml(title)}"
-      data-doctor-label="${escapeHtml(label)}"
-      data-doctor-role-id="${escapeHtml(doctorRoleId || "")}"
-    >
-      ${label}
-    </button>
+    <span class="doctor-pill-wrap">
+      <button
+        class="doctor-pill"
+        title="${escapeHtml(title)}"
+        data-doctor-label="${escapeHtml(label)}"
+        data-doctor-role-id="${escapeHtml(doctorRoleId || "")}"
+      >
+        ${label}
+      </button>
+    </span>
   `;
 }
 
@@ -3924,8 +5448,7 @@ function renderExcelDoctorCell(row, key) {
   const mark = row[key];
   const value = typeof mark === "object" && mark !== null ? mark.value || "" : mark || "";
   const title = typeof mark === "object" && mark !== null ? mark.title || "" : "";
-  const modifier = value === "✓" ? "done" : value === "×" ? "required" : "empty";
-  return `<span class="excel-doctor-mark excel-doctor-mark--${modifier}" title="${escapeHtml(title)}" data-row-doctor-role-id="${escapeHtml(doctorRoleId)}">${escapeHtml(value)}</span>`;
+  return `<span class="excel-doctor-mark" title="${escapeHtml(title)}" data-row-doctor-role-id="${escapeHtml(doctorRoleId)}">${escapeHtml(value)}</span>`;
 }
 
 function renderExcelActionCell(value, actionId) {
@@ -4044,12 +5567,13 @@ function renderAmbulatoryCardPage() {
 
       ${renderWorkflowLoadState()}
       ${renderMedicalRecordBackendBlock(selectedClient, exams)}
+      ${renderVisitPanel(selectedClient)}
 
       <div class="two-col chart-main-grid">
         <article class="card chart-profile-card">
           <h3>Паспортная часть</h3>
           <div class="chart-fields">
-            <div><span>ФИО</span>${renderCopyableValue(selectedClient.fullName, "ФИО", { fallback: "не указано", copyMessage: "ФИО скопировано" })}</div>
+            <div><span>ФИО</span><strong>${escapeHtml(selectedClient.fullName || "не указано")}</strong></div>
             <div><span>Дата рождения</span><strong>${escapeHtml(selectedClient.birthDate || "не указана")}</strong></div>
             <div><span>Телефон</span><strong>${escapeHtml(selectedClient.phone || "не указан")}</strong></div>
             <div><span>Документ</span><strong>${escapeHtml(selectedClient.document || "не указан")}</strong></div>
@@ -4205,7 +5729,9 @@ function renderSketchHome() {
     pageStartIndex,
     totalPages,
   } = getDashboardClientPage();
-  const selectedClient = currentClients.find((client) => client.id === appState.selectedClientId) || getSelectedClient();
+  const selectedDashboardRow = getSelectedDashboardRow(currentClients);
+  const selectedClient = getSelectedClient() || selectedDashboardRow;
+  const newEncounterTarget = getNewEncounterTargetClient();
   const duplicateCandidates = findDuplicateCandidates(appState.clientSearch).filter((client) => client.id !== selectedClient?.id);
   const hasSelectedClient = Boolean(selectedClient);
   const doctorButtons = [
@@ -4221,6 +5747,7 @@ function renderSketchHome() {
     "Инфекционист",
     "Фтизиатр",
     "Узист",
+    "Председатель",
   ];
   const excelColumns = [
     "Дата обращения",
@@ -4243,7 +5770,7 @@ function renderSketchHome() {
     "Узист",
     "Председатель",
     "Примечания",
-    "Номер карты",
+    "Номер бланка",
     "Организация",
     "Агент",
   ];
@@ -4277,26 +5804,35 @@ function renderSketchHome() {
     <section class="sketch-layout">
       <div class="sketch-main sketch-main--full">
         <article class="sketch-panel sketch-panel--dashboard">
-          <div class="dashboard-sticky-controls">
-            <div class="sketch-doctors-block">
-              <div class="sketch-doctors sketch-doctors--top">
-                ${doctorButtons.map((label) => renderDoctorButton(label, selectedClient)).join("")}
-              </div>
+          <div class="dashboard-doctors-sticky">
+            <div class="sketch-doctors sketch-doctors--top">
+              ${doctorButtons.map((label) => renderDoctorButton(label, selectedClient)).join("")}
             </div>
+          </div>
 
+          <div class="dashboard-sticky-controls">
             <div class="sketch-toolbar">
               <label class="field sketch-search">
                 <span></span>
                 <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="поиск" autocapitalize="words" />
               </label>
               <div class="sketch-toolbar__actions">
-                <button class="primary-button" id="addClientButton" type="button">Добавить</button>
+                <button class="primary-button" id="addClientButton" type="button" title="Создать новую карточку пациента">Новый клиент</button>
+                <button
+                  class="primary-button"
+                  id="printSelectedClientContractButton"
+                  type="button"
+                  ${hasSelectedClient ? "" : "disabled"}
+                  title="${hasSelectedClient ? "Распечатать договор для выбранного клиента" : "Сначала выберите клиента в таблице"}"
+                >
+                  Печать договора
+                </button>
                 <button
                   class="secondary-button dashboard-new-visit-button"
                   id="createVisitFromDashboardButton"
                   type="button"
-                  ${hasSelectedClient ? "" : "disabled"}
-                  title="${hasSelectedClient ? "Создать новое обращение для выбранного клиента" : "Сначала выберите клиента в таблице"}"
+                  ${newEncounterTarget ? "" : "disabled"}
+                  title="${newEncounterTarget ? "Создать отдельное обращение на каждую выбранную услугу" : "Найдите одного клиента или выберите его в таблице"}"
                 >
                   Новое обращение
                 </button>
@@ -4308,7 +5844,7 @@ function renderSketchHome() {
                 </label>
                 <label>
                   <span>По дату</span>
-                  <input id="clientEncounterDateToInput" type="date" value="${escapeHtml(parseRuDateToIso(appState.clientEncounterDateTo || appState.clientEncounterDate, getLocalDateInputValue()))}" />
+                  <input id="clientEncounterDateToInput" type="date" value="${escapeHtml(parseRuDateToIso(appState.clientEncounterDateTo || appState.clientEncounterDate, ""))}" />
                 </label>
                 <button class="primary-button" id="applyClientPeriodFilterButton" type="button">Показать</button>
                 <button class="ghost-button" id="clearClientPeriodFilterButton" type="button">Сброс</button>
@@ -4364,9 +5900,9 @@ function renderSketchHome() {
                 ? excelRows
                     .map(
                       (row) => `
-                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && selectedClient.id === row.id ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" title="Двойной клик откроет амбулаторную карту">
+                        <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && String(selectedClient.id) === String(row.id) && String(appState.selectedEncounterId || "") === String(row.encounterId || "") ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" data-encounter-id="${row.encounterId || ""}" data-dashboard-row-id="${escapeHtml(row.rowId)}" title="Один щелчок — выбрать обращение, двойной — изменить клиента">
                           <span>${escapeHtml(row.encounterDate)}</span>
-                          <span>${renderCopyableValue(row.fullName, "ФИО", { className: "copyable-table-value", fallback: "—", copyMessage: "ФИО скопировано", keyboard: false })}</span>
+                          <span class="sketch-table__fio">${escapeHtml(displayTableValue(row.fullName))}</span>
                           <span>${escapeHtml(row.birthDate)}</span>
                           <span>${renderCopyableValue(row.registration, "регистрацию", { className: "copyable-table-value", fallback: "—", copyMessage: "Регистрация скопирована", keyboard: false })}</span>
                           <span title="${escapeHtml(row.category || "не указана")}">${escapeHtml(displayTableValue(row.category))}</span>
@@ -4385,7 +5921,7 @@ function renderSketchHome() {
                           ${renderExcelDoctorCell(row, "uzist")}
                           ${renderExcelDoctorCell(row, "chairman")}
                           <span>${escapeHtml(row.note)}</span>
-                          <span>${escapeHtml(row.cardNumber)}</span>
+                          <span>${escapeHtml(row.blankNumber)}</span>
                           <span>${escapeHtml(row.organization)}</span>
                           <span>${escapeHtml(row.agent)}</span>
                         </button>
@@ -4488,7 +6024,7 @@ async function commitClientImport() {
         file_content_base64: data.importFileBase64,
       }),
     });
-    data.importSuccess = `Импорт завершен. Создано: ${result.created}. Обновлено: ${result.updated}.`;
+    data.importSuccess = `Импорт завершен. Создано клиентов: ${result.created}. Обновлено: ${result.updated}. Создано обращений: ${result.encounters_created || 0}.`;
     data.importPreview = null;
     scheduleClientSearch(appState.clientSearch || "");
   } catch (error) {
@@ -4509,7 +6045,11 @@ function renderClientImportPage() {
             <h3>Загрузка клиентов</h3>
             <p class="muted">Скачай шаблон, отправь его заводу для заполнения, потом загрузи готовый Excel сюда.</p>
           </div>
-          <a class="primary-button" href="./client-import-template.xlsx" download>Скачать шаблон Excel</a>
+          <a
+            class="primary-button"
+            href="./client-import-template.xlsx?v=20260729-services-v1"
+            download="client-import-template.xlsx"
+          >Скачать шаблон Excel</a>
         </div>
 
         <div class="import-help">
@@ -4517,7 +6057,8 @@ function renderClientImportPage() {
             <strong>Как это работает</strong>
             <ol>
               <li>Скачать шаблон.</li>
-              <li>Отправить его клиенту/заводу для заполнения.</li>
+              <li>Заполнить обязательные поля: фамилию, имя и дату рождения.</li>
+              <li>При необходимости выбрать услугу из выпадающего списка.</li>
               <li>Выбрать заполненный файл ниже.</li>
               <li>Сначала посмотреть предпросмотр, потом загрузить в базу.</li>
             </ol>
@@ -4527,6 +6068,7 @@ function renderClientImportPage() {
             <ul>
               <li>создавать новых клиентов;</li>
               <li>обновлять существующих по СНИЛС, документу или ФИО + дате рождения;</li>
+              <li>создавать обращение по выбранной услуге;</li>
               <li>поддерживает файлы <code>.xlsx</code> и <code>.xls</code>.</li>
             </ul>
           </div>
@@ -4567,6 +6109,10 @@ function renderClientImportPage() {
                   <div class="summary-card__label">Будет обновлено</div>
                   <div class="summary-card__value">${preview.update_candidates}</div>
                 </div>
+                <div class="summary-card">
+                  <div class="summary-card__label">Обращений с услугой</div>
+                  <div class="summary-card__value">${preview.service_rows || 0}</div>
+                </div>
               </div>
 
               <div class="import-preview-list">
@@ -4577,6 +6123,11 @@ function renderClientImportPage() {
                         <div>
                           <strong>${escapeHtml(row.full_name)}</strong>
                           <small>Строка ${row.row_number}${row.birth_date ? ` В· ${escapeHtml(row.birth_date)}` : ""}${row.organization ? ` В· ${escapeHtml(row.organization)}` : ""}</small>
+                          ${
+                            row.service_name
+                              ? `<small>Услуга: ${escapeHtml(row.service_name)}${row.encounter_date ? ` · ${escapeHtml(row.encounter_date)}` : ""}</small>`
+                              : ""
+                          }
                         </div>
                         ${row.agent ? `<small>Агент: ${escapeHtml(row.agent)}</small>` : ""}
                         <div class="import-preview-row__meta">
@@ -4615,8 +6166,6 @@ function renderEmployeePage() {
 
   return `
     <section class="card">
-      <h3>Сотрудники</h3>
-      <p class="muted">Демо-страница для проверки аутентификации сотрудников и ролей. Председатель создает учетные записи и назначает роли, админ работает в ограниченном режиме без отчетов и без управления доступами.</p>
       <div class="employee-grid">
         <div class="summary-card">
           <div class="summary-card__label">Текущий пользователь</div>
@@ -4752,12 +6301,12 @@ function formatPaymentTypeLabel(value) {
   const normalized = String(value || "").trim().toLowerCase();
   const map = {
     cash: "нал",
-    card: "карта",
+    card: "безнал",
     invoice: "безнал",
     "наличные": "нал",
-    "карта": "карта",
+    "карта": "безнал",
     "безнал": "безнал",
-    "организация": "организация",
+    "организация": "безнал",
   };
   return map[normalized] || value || "не указано";
 }
@@ -4808,6 +6357,10 @@ function getCashVisitRows() {
     .slice()
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     .filter((visit) => isVisitInCashPeriod(visit))
+    .filter((visit) => {
+      const client = getClientPool().find((item) => String(item.id) === String(visit.clientId));
+      return matchesCenter(visit.center || client?.center);
+    })
     .map((visit) => {
       const client = getClientPool().find((item) => String(item.id) === String(visit.clientId));
       const serviceDetails = getVisitServiceDetails(visit);
@@ -4865,20 +6418,245 @@ function getCashVisitRows() {
     });
 }
 
-function renderCashPage() {
-  const rows = getCashVisitRows();
+function getCashReportPeriod() {
+  let dateFrom = normalizeCashFilterDate(appState.cashDateFrom) || getLocalDateInputValue();
+  let dateTo = normalizeCashFilterDate(appState.cashDateTo) || dateFrom;
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    [dateFrom, dateTo] = [dateTo, dateFrom];
+  }
+  return { dateFrom, dateTo };
+}
+
+function formatCashReportDate(value) {
+  return value ? formatApiDate(value) : "";
+}
+
+function formatCashReportMoney(value) {
+  return `${Number(value || 0).toLocaleString("ru-RU")} ₽`;
+}
+
+function renderCashReportPrintHtml(rows) {
+  const centerName = getWorkspaceCenterName();
+  const { dateFrom, dateTo } = getCashReportPeriod();
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
   const discountTotal = rows.reduce((sum, row) => sum + row.discount, 0);
   const cashTotal = rows.reduce((sum, row) => sum + row.cashAmount, 0);
   const nonCashTotal = rows.reduce((sum, row) => sum + row.nonCashAmount, 0);
-  const dateFrom = normalizeCashFilterDate(appState.cashDateFrom) || getLocalDateInputValue();
-  const dateTo = normalizeCashFilterDate(appState.cashDateTo) || dateFrom;
+  const periodLabel = dateFrom === dateTo
+    ? formatCashReportDate(dateFrom)
+    : `${formatCashReportDate(dateFrom)} - ${formatCashReportDate(dateTo)}`;
+  const printedAt = formatDateTime(new Date());
+  const reportRows = rows.length
+    ? rows
+        .map((row, index) => {
+          const visit = row.visit;
+          const client = row.client;
+          const services = row.services.length
+            ? row.services.map((service) => service.name).join(", ")
+            : "Услуги не выбраны";
+          return `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${escapeHtml(visit.visitDate || formatDateTime(visit.createdAt))}</td>
+              <td>${escapeHtml(client?.fullName || "Клиент не найден")}</td>
+              <td>${escapeHtml(services)}</td>
+              <td>${escapeHtml(row.paymentLabel)}</td>
+              <td class="number">${formatCashReportMoney(row.cashAmount)}</td>
+              <td class="number">${formatCashReportMoney(row.nonCashAmount)}</td>
+              <td class="number">${formatCashReportMoney(row.discount)}</td>
+              <td class="number">${formatCashReportMoney(row.amount)}</td>
+            </tr>
+          `;
+        })
+        .join("")
+    : `
+        <tr>
+          <td colspan="9" class="empty">Оплат за выбранный период нет</td>
+        </tr>
+      `;
+
+  return `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Отчет кассы за ${escapeHtml(periodLabel)}</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 28px;
+      color: #111827;
+      font-family: "Arial Cyr", Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+    }
+
+    .meta {
+      margin-bottom: 18px;
+      color: #4b5563;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    .summary div {
+      min-height: 58px;
+      padding: 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+    }
+
+    .summary span {
+      display: block;
+      margin-bottom: 6px;
+      color: #4b5563;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .summary strong {
+      font-size: 15px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 7px 6px;
+      border: 1px solid #d1d5db;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #f3f4f6;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .number {
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .empty {
+      padding: 18px;
+      color: #6b7280;
+      text-align: center;
+    }
+
+    .signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-top: 34px;
+    }
+
+    .signature-line {
+      padding-top: 24px;
+      border-top: 1px solid #111827;
+      color: #4b5563;
+    }
+
+    @page {
+      size: A4 landscape;
+      margin: 12mm;
+    }
+
+    @media print {
+      body {
+        padding: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Отчет кассы</h1>
+  <div class="meta">Медцентр: ${escapeHtml(centerName)} · Период: ${escapeHtml(periodLabel)} · Сформировано: ${escapeHtml(printedAt)}</div>
+
+  <section class="summary">
+    <div><span>Обращений</span><strong>${rows.length.toLocaleString("ru-RU")}</strong></div>
+    <div><span>Итого</span><strong>${formatCashReportMoney(total)}</strong></div>
+    <div><span>Наличные</span><strong>${formatCashReportMoney(cashTotal)}</strong></div>
+    <div><span>Безнал</span><strong>${formatCashReportMoney(nonCashTotal)}</strong></div>
+    <div><span>Скидки</span><strong>${formatCashReportMoney(discountTotal)}</strong></div>
+  </section>
+
+  <table>
+    <thead>
+      <tr>
+        <th>№</th>
+        <th>Дата</th>
+        <th>Клиент</th>
+        <th>Услуги</th>
+        <th>Оплата</th>
+        <th>Нал</th>
+        <th>Безнал</th>
+        <th>Скидка</th>
+        <th>Итого</th>
+      </tr>
+    </thead>
+    <tbody>${reportRows}</tbody>
+  </table>
+
+  <section class="signatures">
+    <div class="signature-line">Кассир</div>
+    <div class="signature-line">Ответственный</div>
+  </section>
+</body>
+</html>`;
+}
+
+function printCashReport() {
+  const rows = getCashVisitRows();
+  const printWindow = window.open("about:blank", "_blank");
+  if (!printWindow) {
+    showToast("Браузер заблокировал окно печати");
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(renderCashReportPrintHtml(rows));
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => {
+    try {
+      printWindow.print();
+    } catch (error) {
+      console.warn("Не удалось открыть печать отчета кассы", error);
+    }
+  }, 250);
+}
+
+function renderCashPage() {
+  const rows = getCashVisitRows();
+  const centerName = getWorkspaceCenterName();
+  const total = rows.reduce((sum, row) => sum + row.amount, 0);
+  const discountTotal = rows.reduce((sum, row) => sum + row.discount, 0);
+  const cashTotal = rows.reduce((sum, row) => sum + row.cashAmount, 0);
+  const nonCashTotal = rows.reduce((sum, row) => sum + row.nonCashAmount, 0);
+  const { dateFrom, dateTo } = getCashReportPeriod();
 
   return `
     <section class="cash-page">
       <div class="card cash-toolbar">
         <div>
-          <h3>Касса</h3>
+          <p class="blanks-page__center">${escapeHtml(centerName)}</p>
           <p class="muted">По умолчанию показана текущая смена за сегодня. Период можно выбрать вручную.</p>
         </div>
         <div class="cash-toolbar__filters">
@@ -4891,6 +6669,7 @@ function renderCashPage() {
             <input id="cashDateTo" type="date" value="${escapeHtml(dateTo)}" />
           </label>
           <button type="button" class="ghost-button" id="cashPeriodTodayButton">Сегодня</button>
+          <button type="button" class="primary-button" id="cashPrintReportButton">Печать отчета</button>
         </div>
       </div>
       <div class="cash-summary">
@@ -4905,7 +6684,7 @@ function renderCashPage() {
           <div class="summary-card__meta">по выбранному типу оплаты</div>
         </article>
         <article class="summary-card">
-          <div class="summary-card__label">Карта / безнал</div>
+          <div class="summary-card__label">Безнал</div>
           <div class="summary-card__value">${nonCashTotal.toLocaleString("ru-RU")} ₽</div>
           <div class="summary-card__meta">все кроме наличных</div>
         </article>
@@ -4987,7 +6766,6 @@ function renderReportsPage() {
     <section class="cash-page">
       <div class="card cash-toolbar">
         <div>
-          <h3>Отчеты</h3>
           <p class="muted">Сводка по центрам за день или период: клиенты, документы, услуги и выручка.</p>
         </div>
         <div class="cash-toolbar__filters">
@@ -5086,6 +6864,7 @@ function renderDoctorsPage() {
     ["Офтальмолог", "ophthalmologist"],
     ["Терапевт", "therapist"],
     ["Психиатр", "psychiatrist"],
+    ["Психиатр-нарколог", "psychiatrist-narcologist"],
     ["Инфекционист", "infectionist"],
     ["Фтизиатр", "phthisiatrist"],
     ["Узист", "uzist"],
@@ -5094,7 +6873,6 @@ function renderDoctorsPage() {
 
   return `
     <section class="card">
-      <h3>Врачи</h3>
       <p class="muted">Карточки врачей подключены. Чтобы открыть осмотр, вернись на главную, найди клиента и нажми нужного врача.</p>
       <div class="cards-grid">
         ${roles
@@ -5240,6 +7018,8 @@ function renderVisitServicePicker(activeVisit) {
 }
 
 function renderOperatorVisitForm(selectedClient, activeVisit) {
+  const activePaymentType = formatPaymentTypeLabel(activeVisit.paymentType || "Наличные") === "нал" ? "Наличные" : "Безнал";
+
   return `
     <form class="operator-visit-form" id="operatorVisitForm" data-visit-id="${escapeHtml(activeVisit.id)}">
       <div class="operator-visit-form__title">
@@ -5254,13 +7034,13 @@ function renderOperatorVisitForm(selectedClient, activeVisit) {
         </label>
         <label>
           <span>Центр</span>
-          <input name="center" value="${escapeHtml(activeVisit.center || selectedClient.center || "Медцентр 1")}" />
+          <input name="center" value="${escapeHtml(activeVisit.center || selectedClient.center || getWorkspaceCenterName())}" readonly />
         </label>
         <label>
           <span>Оплата</span>
           <select name="paymentType">
-            ${["Наличные", "Карта", "Безнал", "Организация"]
-              .map((item) => `<option ${item === activeVisit.paymentType ? "selected" : ""}>${item}</option>`)
+            ${["Наличные", "Безнал"]
+              .map((item) => `<option ${item === activePaymentType ? "selected" : ""}>${item}</option>`)
               .join("")}
           </select>
         </label>
@@ -5295,6 +7075,7 @@ function renderOperatorVisitForm(selectedClient, activeVisit) {
       <div class="operator-visit-actions">
         <button type="button" class="ghost-button" id="recalculateVisitAmountButton">Пересчитать сумму</button>
         <button type="submit" class="primary-button">Сохранить обращение</button>
+        <button type="button" class="primary-button" id="printVisitContractButton">Печать договора</button>
         <button type="button" class="ghost-button" id="openVisitDocumentsButton">Документы</button>
         <button type="button" class="ghost-button" id="closeVisitButton">Завершить</button>
       </div>
@@ -5320,24 +7101,7 @@ function renderVisitPanel(selectedClient) {
 
       ${
         activeVisit
-          ? `
-            <div class="encounter-grid">
-              <div><span>Дата</span><strong>${escapeHtml(activeVisit.visitDate || formatDateTime(activeVisit.createdAt))}</strong></div>
-              <div><span>Центр</span><strong>${escapeHtml(activeVisit.center || selectedClient.center || "Медцентр 1")}</strong></div>
-              <div><span>Оплата</span><strong>${escapeHtml(activeVisit.paymentType || "Наличные")}</strong></div>
-              <div><span>Сумма</span><strong>${Number(activeVisit.amount || 0).toLocaleString("ru-RU")} ₽</strong></div>
-            </div>
-            <div class="encounter-services">
-              ${(activeVisit.serviceNames || selectedClient.services || [])
-                .map((service) => `<span>${escapeHtml(service)}</span>`)
-                .join("") || "<span>Услуги не выбраны</span>"}
-            </div>
-            ${
-              activeVisit.comment
-                ? `<div class="muted" style="margin-top:8px;">${escapeHtml(activeVisit.comment)}</div>`
-                : ""
-            }
-          `
+          ? renderOperatorVisitForm(selectedClient, activeVisit)
           : `<p class="muted" style="margin:8px 0 0 0;">Создай обращение, чтобы привязать к нему услуги, врачей и документы.</p>`
       }
 
@@ -5371,9 +7135,8 @@ function renderTemplatesPage() {
 
   return `
     <section class="card">
-      <h3>Шаблоны</h3>
       <div class="template-page-head">
-        <p class="muted">${canManageTemplates ? "Файловые шаблоны можно посмотреть, заменить новым файлом и перечитать из папки." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} Желтые ячейки с подписью “авто” заполняются системой.</p>
+        <p class="muted">${canManageTemplates ? "Файловые шаблоны можно скачать, отредактировать в Excel и загрузить обратно." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} У шаблонов с отметкой «Свободный макет» разрешено переносить поля и блоки, вставлять строки и столбцы, менять оформление, изображения и область печати. Скрытые маркеры удалять нельзя.</p>
         ${canManageTemplates ? '<button class="primary-button" type="button" data-refresh-document-templates>Перечитать папку</button>' : ""}
       </div>
       ${data.templateOperationStatus ? `<div class="template-status">${escapeHtml(data.templateOperationStatus)}</div>` : ""}
@@ -5388,12 +7151,13 @@ function renderTemplatesPage() {
                         <strong>${escapeHtml(template.name || template.file_name || `Шаблон ${template.id}`)}</strong>
                         <span>${escapeHtml(template.file_name || "")}</span>
                       </div>
-                      <small>${escapeHtml(template.template_type || "")}${template.requires_numbered_blank ? " · номерной бланк" : ""}</small>
+                      <small>${escapeHtml(template.template_type || "")}${template.requires_numbered_blank ? " · номерной бланк" : ""}${template.supports_layout_editing ? " · Свободный макет" : ""}${template.has_override ? " · клиентская версия" : ""}</small>
                       ${
                         canManageTemplates
                           ? `<div class="document-template-card__actions">
                               <button class="ghost-button" type="button" data-open-document-template="${escapeHtml(template.id)}">Посмотреть</button>
                               <button class="ghost-button" type="button" data-replace-document-template="${escapeHtml(template.id)}">Обновить шаблон</button>
+                              ${template.has_override ? `<button class="ghost-button" type="button" data-reset-document-template="${escapeHtml(template.id)}">Вернуть исходный</button>` : ""}
                             </div>`
                           : ""
                       }
@@ -5404,7 +7168,7 @@ function renderTemplatesPage() {
             : `<div class="empty-state">Файловые шаблоны еще не загружены с backend.</div>`
         }
       </div>
-      <input class="hidden" id="documentTemplateUploadInput" type="file" accept=".docx,.xml,.xls" />
+      <input class="hidden" id="documentTemplateUploadInput" type="file" accept=".docx,.xml,.xls,.xlsx" />
     </section>
 
     <section class="card">
@@ -5574,7 +7338,7 @@ function buildMedicalRecordDraft(selectedClient, record = {}, entries = []) {
   const documentParts = splitClientDocumentParts(selectedClient);
   const omsParts = splitOmsPolicy(record.oms_policy || raw.oms_policy || "");
   const address = splitClientAddressParts(selectedClient);
-  const sourceEntries = buildAmbulatorySheetEntries(entries, getClientDoctorExamHistory(selectedClient?.id)).slice(0, 6);
+  const sourceEntries = buildAmbulatorySheetEntries(entries, getClientDoctorExamHistory(selectedClient?.id), selectedClient).slice(0, 6);
 
   while (sourceEntries.length < 6) {
     sourceEntries.push({
@@ -5695,13 +7459,27 @@ function getExamFieldValue(exam, keys) {
   return keys.map((key) => String(fields[key] || "").trim()).find(Boolean) || "";
 }
 
-function buildAmbulatorySheetEntries(entries, exams) {
+function getVisitForDoctorExam(exam) {
+  if (!exam?.visitId) return null;
+  return data.visits.find((visit) => String(visit.id) === String(exam.visitId)) || null;
+}
+
+function shouldShowDoctorExamInAmbulatorySheet(exam, selectedClient = null) {
+  if (!exam) return false;
+  if (exam.isCompleted) return true;
+  const visit = getVisitForDoctorExam(exam);
+  if (!visit || visit.status === "closed") return false;
+  if (selectedClient && String(visit.clientId) !== String(selectedClient.id)) return false;
+  return getRequiredDoctorRoleCodesForVisit(visit, selectedClient).includes(exam.doctorRoleId);
+}
+
+function buildAmbulatorySheetEntries(entries, exams, selectedClient = null) {
   const backendEntries = (Array.isArray(entries) ? entries : []).map((entry) => ({
     id: `record-${entry.id}`,
     source: "backend",
     backendId: entry.id,
     doctorRoleId: entry.doctor_role_id || "",
-    doctorName: entry.doctor_name || getDoctorDisplayName(entry.doctor_role_id) || "Врач",
+    doctorName: getDoctorSignatureName(entry.doctor_role_id, selectedClient, entry.doctor_name) || "Врач",
     entryDate: formatApiDate(entry.entry_date) || "—",
     complaints: normalizeSheetValue(entry.complaints),
     anamnesis: normalizeSheetValue(entry.anamnesis),
@@ -5716,14 +7494,14 @@ function buildAmbulatorySheetEntries(entries, exams) {
   );
 
   const localEntries = (Array.isArray(exams) ? exams : [])
-    .filter((exam) => exam?.isCompleted)
+    .filter((exam) => shouldShowDoctorExamInAmbulatorySheet(exam, selectedClient))
     .map((exam) => ({
       id: exam.id,
       source: "exam",
       backendId: null,
       doctorRoleId: exam.doctorRoleId || "",
-      doctorName: getDoctorDisplayName(exam.doctorRoleId) || "Врач",
-      entryDate: formatApiDate(exam.updatedAt) || "—",
+      doctorName: getDoctorSignatureName(exam.doctorRoleId, selectedClient, exam.doctorName) || "Врач",
+      entryDate: formatApiDate(exam.isCompleted ? exam.updatedAt : getVisitForDoctorExam(exam)?.visitDate || exam.updatedAt) || "-",
       complaints: normalizeSheetValue(getExamFieldValue(exam, ["complaints", "complaintsPreset"])),
       anamnesis: normalizeSheetValue(getExamFieldValue(exam, ["anamnesis", "epidAnamnesis", "allergyAnamnesis"])),
       objective: normalizeSheetValue(
@@ -5760,7 +7538,7 @@ function renderMedicalRecordBackendBlock(selectedClient, exams = []) {
   }
 
   const draft = buildMedicalRecordDraft(selectedClient, record, data.medicalRecordEntries);
-  const entries = buildAmbulatorySheetEntries(data.medicalRecordEntries, exams);
+  const entries = buildAmbulatorySheetEntries(data.medicalRecordEntries, exams, selectedClient);
   const chairmanExam = getCompletedChairmanExam(exams);
   const chairmanMedicalRecordData = buildChairmanMedicalRecordData(chairmanExam?.fields || {});
   const primaryEntries = entries.slice(0, 3);
@@ -5784,7 +7562,7 @@ function renderMedicalRecordBackendBlock(selectedClient, exams = []) {
     .join(", ");
   const healthGroup = draft.healthGroup;
   const serviceDiagnosis = draft.dispensaryObservation || diagnosis;
-  const chairmanName = normalizeSheetValue(selectedClient?.chairman || selectedClient?.therapist);
+  const chairmanName = normalizeSheetValue(getDoctorSignatureName("chairman", selectedClient));
   const visibleEntries = data.medicalRecordEditMode ? draft.entries : entries;
   const memberNames = normalizeSheetValue(visibleEntries.map((entry) => entry.doctorName).slice(0, 4).join(", "));
   const commissionDate = (data.medicalRecordEditMode ? draft.entries : primaryEntries)[0]?.entryDate || openedAt;
@@ -6283,17 +8061,25 @@ function renderGeneratedDocumentsTable(items = data.generatedDocuments) {
             <div class="chart-list">
               ${documents
                 .map(
-                  (item) => `
-                    <div class="chart-list__row">
-                      <div>
-                        <strong>${escapeHtml(item.title || item.fileName || "Документ")}</strong>
-                        <small>${escapeHtml(formatDateTime(item.createdAt))}</small>
-                        <small>${escapeHtml([item.series, item.number].filter(Boolean).join(" ") || item.fileName || "")}</small>
-                        ${item.blankNumber ? `<small class="blank-badge">№ бланка: ${escapeHtml(item.blankNumber)}</small>` : ""}
+                  (item) => {
+                    const isDeleted = Boolean(item.fileDeletedAt);
+                    const canDeleteXml = !isDeleted && item.backendId && isXmlGeneratedDocument(item);
+                    return `
+                      <div class="chart-list__row">
+                        <div>
+                          <strong>${escapeHtml(item.title || item.fileName || "Документ")}</strong>
+                          <small>${escapeHtml(formatDateTime(item.createdAt))}</small>
+                          <small>${escapeHtml([item.series, item.number].filter(Boolean).join(" ") || item.fileName || "")}</small>
+                          ${item.blankNumber ? `<small class="blank-badge">№ бланка: ${escapeHtml(item.blankNumber)}</small>` : ""}
+                          ${isDeleted ? `<small class="blank-badge">XML-файл удален${item.fileDeleteReason ? `: ${escapeHtml(item.fileDeleteReason)}` : ""}</small>` : ""}
+                        </div>
+                        <div class="document-actions">
+                          ${isDeleted ? "" : `<button class="ghost-button" data-open-document-id="${escapeHtml(item.id)}">Открыть</button>`}
+                          ${canDeleteXml ? `<button class="ghost-button danger-button" data-delete-xml-document-id="${escapeHtml(item.id)}">Удалить XML</button>` : ""}
+                        </div>
                       </div>
-                      <button class="ghost-button" data-open-document-id="${escapeHtml(item.id)}">Открыть</button>
-                    </div>
-                  `,
+                    `;
+                  },
                 )
                 .join("")}
             </div>
@@ -6301,6 +8087,61 @@ function renderGeneratedDocumentsTable(items = data.generatedDocuments) {
           : `<p class="muted">Пока нет документов, выданных через backend. Сформируй договор, справку или XML по обращению.</p>`
       }
     </article>
+  `;
+}
+
+function renderXmlExportDaysPanel() {
+  const days = Array.isArray(data.xmlExportDays) ? data.xmlExportDays : [];
+  return `
+    <article class="card">
+      <h3>XML-выгрузка за день</h3>
+      ${
+        days.length
+          ? `
+            <div class="chart-list">
+              ${days
+                .map((day) => {
+                  const exportDate = day.date || "";
+                  const availableCount = Number(day.available_count || 0);
+                  const totalCount = Number(day.total_count || 0);
+                  const deletedCount = Number(day.deleted_count || 0);
+                  return `
+                    <div class="chart-list__row">
+                      <div>
+                        <strong>${escapeHtml(formatApiDate(exportDate) || exportDate)}</strong>
+                        <small>${escapeHtml(`XML: ${availableCount} доступно из ${totalCount}`)}</small>
+                        ${deletedCount ? `<small class="blank-badge">Удалено: ${escapeHtml(deletedCount)}</small>` : ""}
+                      </div>
+                      <div class="document-actions">
+                        ${
+                          availableCount
+                            ? `<button class="ghost-button" data-download-xml-export-day="${escapeHtml(exportDate)}">Скачать ZIP</button>
+                               <button class="ghost-button danger-button" data-delete-xml-export-day="${escapeHtml(exportDate)}">Удалить день</button>`
+                            : `<span class="calendar-status calendar-status--done">Файлы удалены</span>`
+                        }
+                      </div>
+                    </div>
+                  `;
+                })
+                .join("")}
+            </div>
+          `
+          : `<p class="muted">XML-файлы за дни пока не сформированы.</p>`
+      }
+    </article>
+  `;
+}
+
+function renderXmlPage() {
+  const xmlDocuments = (data.generatedDocuments || []).filter(isXmlGeneratedDocument);
+  return `
+    ${renderWorkflowLoadState()}
+    <section class="card">
+      <h3>XML</h3>
+      <p class="muted">Дневные XML-пачки для ручной загрузки на госсайт. XML сохраняются по датам, их можно скачать ZIP-архивом или удалить из хранилища.</p>
+    </section>
+    ${renderXmlExportDaysPanel()}
+    ${renderGeneratedDocumentsTable(xmlDocuments)}
   `;
 }
 
@@ -6536,8 +8377,11 @@ function getDocumentTitle(type) {
   if (type === "contract") return "Договор на оказание платных медицинских услуг";
   if (type === "driver") return "Водительская справка";
   if (type === "xml") return "XML-файл по обращению";
+  if (type === "lmk_title") return "Личная медицинская книжка";
+  if (type === "lmk") return "Печать справки";
   if (type === "prof") return "Заключение 29Н";
   if (type === "prof_extract") return "Выписка профосмотра";
+  if (type === "prof_ambulatory") return "Амбулаторная карта";
   return "Медицинская справка";
 }
 
@@ -6579,7 +8423,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   const normalizeTemplateKey = (value) =>
     String(value || "")
       .toLowerCase()
-      .replace(/\.(docx|xml|xls)$/i, "")
+      .replace(/\.(docx|xml|xlsx|xls)$/i, "")
       .replace(/ё/g, "е")
       .replace(/[c]/g, "с")
       .replace(/[a]/g, "а")
@@ -6603,7 +8447,9 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     return keywords.some((keyword) => text.includes(keyword));
   };
   const docxTemplates = usableTemplates.filter((template) => template.template_type === "docx");
-  const xlsTemplates = usableTemplates.filter((template) => template.template_type === "xls");
+  const xlsTemplates = usableTemplates
+    .filter((template) => ["xlsx", "xls"].includes(template.template_type))
+    .sort((left, right) => (right.template_type === "xlsx") - (left.template_type === "xlsx"));
   const xmlTemplates = usableTemplates.filter((template) => template.template_type === "xml");
   const findDocx = (keywords) => docxTemplates.find((template) => matchesAny(template, keywords)) || null;
   const findXls = (keywords) => xlsTemplates.find((template) => matchesAny(template, keywords)) || null;
@@ -6627,6 +8473,10 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     null;
   const findDocxSafely = (preferredKeys, fallbackKeywords = [], excludedKeywords = []) =>
     findTemplateSafely(docxTemplates, preferredKeys, fallbackKeywords, excludedKeywords);
+  const findNewXls = (preferredKeys) =>
+    findTemplateSafely(xlsTemplates, preferredKeys, [], []);
+  const findChodXlsTemplate = () =>
+    findTemplateSafely(xlsTemplates, ["ву"], ["чод"], []);
   const findStandaloneEkgTemplate = () => findDocxSafely(["экг_шаблон", "экг шаблон"], ["экг"], ["спорт"]);
   const getClientSexKey = () => {
     const sex = String(client?.sex || client?.rawApiClient?.sex || client?.gender || client?.rawApiClient?.gender || "").toLowerCase();
@@ -6640,57 +8490,103 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   const find086Template = () => {
     const sex = getClientSexKey();
     if (sex === "male") {
-      return findDocxSafely(["086у.муж_шаблон", "086у муж шаблон", "086у.муж_шаблон_2", "086у муж шаблон 2"], ["086у.муж", "086у муж"], ["жен"]);
+      return findDocxSafely(["086у.муж_шаблон_2", "086у муж шаблон 2", "086у.муж_шаблон", "086у муж шаблон"], ["086у.муж", "086у муж"], ["жен"]);
     }
     if (sex === "female") {
       return findDocxSafely(["086у.жен_шаблон", "086у жен шаблон", "086у.жен_шаблон_2", "086у жен шаблон 2"], ["086у.жен", "086у жен"], ["муж"]);
     }
-    return findDocxSafely(["086у.муж_шаблон", "086у.жен_шаблон"], ["086"], []);
+    return findDocxSafely(["086у.муж_шаблон_2", "086у.жен_шаблон"], ["086"], []);
   };
+  const findAmbulatoryExtractTemplate = () =>
+    findTemplateSafely(
+      xlsTemplates,
+      ["выписка из амб карты профа", "выписка из амб карты", "амб карты профа"],
+      ["выписка", "амб"],
+      [],
+    );
+
+  const findProfAmbulatoryTemplate = () =>
+    xlsTemplates.find((template) => {
+      const key = getTemplateKeys(template).join(" ");
+      return (
+        key.includes("\u0430\u043c\u0431") &&
+        (key.includes("\u043f\u0440\u043e\u0444\u043e\u0441\u043c\u043e\u0442\u0440") || key.includes("\u043a\u0430\u0440\u0442")) &&
+        !key.includes("\u0432\u044b\u043f\u0438\u0441\u043a")
+      );
+    }) || null;
+
+  if (normalizedType === "medical") {
+    return findDocxSafely(
+      [
+        "C\u043f\u0440\u0430\u0432\u043a\u0430_\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440_\u0448\u0430\u0431\u043b\u043e\u043d",
+        "\u0421\u043f\u0440\u0430\u0432\u043a\u0430_\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440_\u0448\u0430\u0431\u043b\u043e\u043d",
+        "\u0421\u043f\u0440\u0430\u0432\u043a\u0430 \u0448\u0430\u0431\u043b\u043e\u043d",
+      ],
+      ["\u043c\u0435\u0434. \u043e\u0441\u043c\u043e\u0442\u0440", "\u043c\u0435\u0434\u0438\u0446\u0438\u043d\u0441\u043a\u0430\u044f \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f"],
+      ["086", "095", "070", "072", "082", "13082", "13098", "\u0431\u0430\u0441\u0441\u0435\u0439\u043d", "\u0441\u043f\u043e\u0440\u0442", "\u0433\u0442\u043e"],
+    );
+  }
 
   if (normalizedType === "contract") {
-    return findDocx(["договор_шаблон_2", "договор"]) || null;
+    return findDocxSafely(["договор_шаблон_2", "договор шаблон 2"], ["договор"], []) || null;
   }
 
   if (normalizedType === "xml") {
-    if (serviceText.includes("трактор")) return findXml(["трактор"]) || xmlTemplates[0] || null;
-    if (serviceText.includes("чод") || serviceText.includes("охран")) return findXml(["чод"]) || xmlTemplates[0] || null;
-    return findXml(["водительская_шаблон2", "водительская_шаблон", "водитель"]) || xmlTemplates[0] || null;
+    if (serviceText.includes("трактор")) return null;
+    if (serviceText.includes("чод") || serviceText.includes("охран")) {
+      return findTemplateByPreferredKeys(xmlTemplates, ["чод_новый"]);
+    }
+    return findTemplateByPreferredKeys(xmlTemplates, ["водительская(новая)"]);
   }
 
-  if (normalizedType === "070") return findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
+  if (normalizedType === "070") return findNewXls(["скк 070 новый формат"]);
   if (normalizedType === "071") return findDocxSafely(["cправка_мед. осмотр_шаблон", "справка_мед. осмотр_шаблон", "справка шаблон"], ["071", "мед. осмотр"]);
-  if (normalizedType === "072") return findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], ["13072"]);
+  if (normalizedType === "072") return findNewXls(["скк 72 новый формат"]);
   if (normalizedType === "082") return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
   if (normalizedType === "086") return find086Template();
   if (normalizedType === "095") return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
-  if (normalizedType === "gsu") return findDocxSafely(["гсу001_шаблон"], ["гсу001", "001"], []);
-  if (normalizedType === "gostaina") return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гостайн", "гос.тайн", "989"], []);
+  if (normalizedType === "semt196") return findDocxSafely(["сэмт196_шаблон", "сэмт-196_шаблон"], ["сэмт", "196"], []);
+  if (normalizedType === "gsu") return findNewXls(["гс новый формат"]);
+  if (normalizedType === "gostaina") return findNewXls(["гт"]);
+  if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);
+  if (normalizedType === "ambulatory_extract") return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]);
   if (normalizedType === "gto") return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
-  if (normalizedType === "sport") return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
+  if (normalizedType === "sport") return findNewXls(["спорт"]);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
-  if (normalizedType === "lmk") return findDocxSafely(["лмк_шаблон"], ["лмк"], []);
-  if (normalizedType === "gims") return findDocxSafely(["гимс"], ["гимс"], []);
+  if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
+  if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
+  if (normalizedType === "gims") {
+    return (
+      findNewXls(["гимс судна"]) ||
+      findTemplateSafely(
+        xmlTemplates,
+        ["гимс_шаблон_для_загрузки_из_файла", "гимс шаблон для загрузки из файла"],
+        ["гимс"],
+        [],
+      ) || findDocxSafely(["гимс"], ["гимс"], [])
+    );
+  }
   if (normalizedType === "chod" || normalizedType === "guard") {
-    return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
+    return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   }
   if (normalizedType === "prof_extract") {
     return findDocxSafely(["профосмотрвыписка_шаблон", "профосмотр выписка шаблон"], ["профосмотрвыписка", "выписка"], []);
   }
+  if (normalizedType === "prof_ambulatory") {
+    return findProfAmbulatoryTemplate() || findDocxSafely(
+      ["амб_карты_профосмотр_шаблон", "амб карты профосмотр шаблон", "мед карта профосмотр"],
+      ["амб", "мед.карта", "медицинская карта"],
+      [],
+    );
+  }
   if (normalizedType === "prof") return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр", "29н"], []);
-  if (normalizedType === "drug") return findDocxSafely(["драг тест морская шаблон"], ["драг"], []);
   if (normalizedType === "marine") return findDocxSafely(["серт морская шаблон"], ["морская", "marine", "seafarer"], ["драг"]);
   if (normalizedType === "13082") return findDocxSafely(["13082"], ["13082"], []);
   if (normalizedType === "13098") return findDocxSafely(["13098"], ["13098"], []);
 
-  if (normalizedType === "driver" || serviceText.includes("водител")) {
-    return (
-      findXls(["все нужные шаблоны", "водительская", "тракторная"]) ||
-      findDocx(["водительскаясправка_шаблон.docx", "водительскаясправка_шаблон"]) ||
-      findDocx(["водитель"]) ||
-      null
-    );
+  if (normalizedType === "driver" || (normalizedType !== "medical" && serviceText.includes("водител"))) {
+    return findTemplateSafely(xlsTemplates, ["ву"], ["водительская"], ["тракторная"]) || null;
   }
 
   if (serviceText.includes("082") || serviceText.includes("границ")) return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
@@ -6698,23 +8594,21 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("095")) return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
   if (serviceText.includes("бассейн")) return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (serviceText.includes("070") || serviceText.includes("путевк")) {
-    return findDocxSafely(["070 новый шабл"], ["070"], ["13070"]);
+    return findNewXls(["скк 070 новый формат"]);
   }
   if (serviceText.includes("гто")) return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
-  if (serviceText.includes("гимс")) return findDocxSafely(["гимс"], ["гимс"], []);
-  if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findDocxSafely(["гос.тайна_шаблон", "гос тайна шаблон"], ["гос.тайна"], []);
-  if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findDocxSafely(["гсу001_шаблон"], ["гсу001"], []);
-  if (serviceText.includes("охран") || serviceText.includes("чод")) return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
+  if (serviceText.includes("гимс")) return findNewXls(["гимс судна"]) || findDocxSafely(["гимс"], ["гимс"], []);
+  if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findNewXls(["гт"]);
+  if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
+  if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findNewXls(["гс новый формат"]);
+  if (serviceText.includes("охран") || serviceText.includes("чод")) return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   if (serviceText.includes("трактор")) return findDocx(["трактроная", "трактор"]) || null;
-  if (serviceText.includes("спорт")) return findDocxSafely(["cпортэкг_шаблон", "спортэкг_шаблон"], ["спортэкг", "спорт"], []);
+  if (serviceText.includes("спорт")) return findNewXls(["спорт"]);
   if (serviceText.includes("экг")) return findStandaloneEkgTemplate();
-  if (serviceText.includes("лмк")) return findDocxSafely(["лмк_шаблон"], ["лмк"], []);
+  if (serviceText.includes("лмк")) return findDocxSafely(["лмк_справка_шаблон", "лмк_шаблон_2"], ["лмк"], []);
   if (serviceText.includes("профосмотр") || serviceText.includes("29н")) return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр"], ["выписка"]);
   if (serviceText.includes("санатор")) {
-    return findDocxSafely(["072у_шаблон", "072 сюрина ноый шабл"], ["072"], []);
-  }
-  if (serviceText.includes("драг") || serviceText.includes("drug") || serviceText.includes("alcohol")) {
-    return findDocxSafely(["драг тест морская шаблон"], ["драг"], []);
+    return findNewXls(["скк 72 новый формат"]);
   }
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) {
     return findDocxSafely(["серт морская шаблон"], ["морская", "marine", "seafarer"], ["драг"]);
@@ -6723,7 +8617,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   const haystack = `${normalizedType} ${(visit?.serviceNames || []).join(" ")}`.toLowerCase();
   return (
     docxTemplates.find((template) => haystack && haystack.includes(String(template.name || "").toLowerCase())) ||
-    findDocx(["справка_шаблон"]) ||
     docxTemplates[0] ||
     null
   );
@@ -6731,8 +8624,125 @@ function pickDocumentTemplate(type, visit = null, client = null) {
 
 function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   const config = getChairmanFormConfigForVisit(visit);
+  if (String(printKind || "").endsWith("_certificate")) {
+    return String(printKind).replace(/_certificate$/, "");
+  }
+  const fixedPrintTypes = {
+    sport_certificate: "sport",
+    pool_certificate: "pool",
+    gto_certificate: "gto",
+    lmk_title: "lmk_title",
+    lmk_certificate: "lmk",
+    prof_conclusion: "prof",
+    prof_ambulatory_extract: "ambulatory_extract",
+    ambulatory_card: "prof_ambulatory",
+    prof_ambulatory: "prof_ambulatory",
+  };
+  if (fixedPrintTypes[printKind]) return fixedPrintTypes[printKind];
   if (config.type === "prof" && printKind === "extract") return "prof_extract";
-  return config.templateType;
+  return config.printTemplateType || config.templateType;
+}
+
+function shouldOpenChairmanResultsPrintMenu(visit) {
+  const formType = getChairmanFormConfigForVisit(visit).type;
+  return formType === "lmk" || formType === "prof" || CHAIRMAN_CERTIFICATE_PRINT_GROUPS.has(formType);
+}
+
+function getChairmanPrintActionForVisit(visit) {
+  return {
+    label: "Печать",
+    kind: shouldOpenChairmanResultsPrintMenu(visit) ? "menu" : "conclusion",
+  };
+}
+
+const CHAIRMAN_PRINT_BLANK_SERIES = new Map([
+  ["lmk_title", "ЛМК"],
+  ["lmk_certificate", "ЛМК"],
+  ["prof_conclusion", "29Н"],
+  ["prof_ambulatory_extract", "29Н"],
+  ["prof_ambulatory", "29Н"],
+  ["ambulatory_card", "29Н"],
+]);
+
+const CHAIRMAN_CERTIFICATE_PRINT_SERIES = new Map([
+  ["pool", "БАСС"],
+  ["sport", "СПОРТ"],
+  ["gto", "ГТО"],
+  ["gostaina", "ГТ"],
+  ["gsu", "ГС"],
+  ["072", "072у"],
+  ["070", "070у"],
+  ["095", "095у"],
+  ["semt196", "СЭМТ-196"],
+]);
+
+const CHAIRMAN_CERTIFICATE_PRINT_GROUPS = new Map([
+  ["sport", { currentType: "sport", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
+  ["pool", { currentType: "pool", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
+  ["gto", { currentType: "gto", items: [["pool", "Справка для бассейна"], ["sport", "Справка Спорт"], ["gto", "Справка ГТО"]] }],
+  ["gostaina", { currentType: "gostaina", items: [["gostaina", "ГТ"], ["gsu", "ГС"]] }],
+  ["gsu", { currentType: "gsu", items: [["gostaina", "ГТ"], ["gsu", "ГС"]] }],
+  ["certificate072", { currentType: "072", items: [["072", "072 у СКК"], ["070", "070у"]] }],
+  ["certificate070", { currentType: "070", items: [["072", "072 у СКК"], ["070", "070у"]] }],
+  ["certificate095", { currentType: "095", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+  ["certificate086", { currentType: "086", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+  ["semt196", { currentType: "semt196", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+]);
+
+function getChairmanCertificatePrintSeries(type, client = null) {
+  if (String(type || "").toLowerCase() === "086") return formatCertificate086SeriesForSex({ client });
+  return CHAIRMAN_CERTIFICATE_PRINT_SERIES.get(String(type || "").toLowerCase()) || "";
+}
+
+function getChairmanBlankSeriesForPrintKind(printKind) {
+  return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
+}
+
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "095У", "СЭМТ-196"]);
+
+function canAutoCreateChairmanBlankSeries(series) {
+  return CHAIRMAN_AUTO_CREATE_BLANK_SERIES.has(normalizeBlankSeries(series).toUpperCase());
+}
+
+const CHAIRMAN_NUMBERED_CERTIFICATE_SERIES = new Map([
+  ["086", "086"],
+  ["095", "095"],
+]);
+
+function getChairmanNumberedCertificateSeries(printType) {
+  return CHAIRMAN_NUMBERED_CERTIFICATE_SERIES.get(String(printType || "").toLowerCase()) || "";
+}
+
+const CHAIRMAN_CERTIFICATE_PRINT_FLOWS = new Map([
+  ["sport", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "sport" }],
+  ["gto", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "gto" }],
+  ["071", { preselectedSeries: "071у", certificateTypes: ["071"], selectedCertificateType: "071", compactCertificateFlow: true }],
+  ["gims", { preselectedSeries: "ГИМС", certificateTypes: ["gims"], selectedCertificateType: "gims", compactCertificateFlow: true }],
+]);
+
+function getChairmanCertificatePrintFlowOptions(printType) {
+  return CHAIRMAN_CERTIFICATE_PRINT_FLOWS.get(String(printType || "").toLowerCase()) || null;
+}
+
+const XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE = new Map([
+  ["070", "070"],
+  ["072", "072"],
+  ["086", "086"],
+  ["pool", "pool"],
+  ["sport", "sport"],
+  ["gto", "gto"],
+  ["gsu", "gsu"],
+  ["gostaina", "gostaina"],
+  ["gims", "gims"],
+  ["guard", "guard"],
+  ["chod", "chod"],
+  ["ekg", "ekg"],
+  ["ambulatory_extract", "ambulatory_extract"],
+  ["prof_ambulatory", "prof_ambulatory"],
+]);
+
+function getXlsPrintVariantForDocumentType(type) {
+  return XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE.get(String(type || "").toLowerCase()) || "";
 }
 
 function registerGeneratedDocument(result, type, client, visit) {
@@ -6795,12 +8805,6 @@ function getAutoGeneratedMedicalDocumentConfig(visit) {
     };
   }
 
-  if (serviceText.includes("драг") || serviceText.includes("drug") || serviceText.includes("alcohol")) {
-    return {
-      toast: "Драг-тест сформирован",
-      errorMessage: "Не удалось автоматически сформировать драг-тест",
-    };
-  }
 
   if (serviceText.includes("морск") || serviceText.includes("marine") || serviceText.includes("seafar")) {
     return {
@@ -6829,7 +8833,7 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
     await loadDocumentTemplatesFromBackend();
   }
 
-  await syncVisitToBackend(visit, client);
+  await prepareVisitDoctorExamsForDocuments(client, visit);
 
   const template = pickDocumentTemplate(type, visit, client);
   if (!template) {
@@ -6843,11 +8847,12 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
     client_id: Number(clientId),
     encounter_id: visit.backendId ? Number(visit.backendId) : null,
   };
+  const xlsPrintVariant = getXlsPrintVariantForDocumentType(type);
   if (options.blankFormId) {
     payload.blank_form_id = Number(options.blankFormId);
   }
-  if (options.printVariant) {
-    payload.print_variant = options.printVariant;
+  if (options.printVariant || xlsPrintVariant) {
+    payload.print_variant = options.printVariant || xlsPrintVariant;
   }
   const result = await apiRequest(endpoint, {
     method: "POST",
@@ -6856,19 +8861,78 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
 
   const documentItem = registerGeneratedDocument(result, type, client, visit);
   await refreshDocumentWorkflowState(clientId, visit.backendId || null);
-  return documentItem;
-}
-
-async function printDocumentForVisit(type, client, visit, options = {}) {
-  const documentItem = await createDocumentForVisit(type, client, visit, { ...options, print: true });
-  const sentToPrinter = await openGeneratedDocumentForPrint(documentItem);
-  if (!sentToPrinter) {
-    throw new Error("Документ сформирован, но не отправлен в тихую печать");
+  if (shouldAutoGenerateXmlForCertificate(type) && options.autoXml !== false) {
+    await ensureXmlAfterDriverCertificate(client, visit, { blankFormId: result.blank_form_id });
   }
   return documentItem;
 }
 
-async function printChairmanDocumentFromExam(examId) {
+function hasAvailableXmlDocumentForVisit(visit) {
+  if (!visit) return false;
+  const encounterId = visit.backendId || null;
+  return (data.generatedDocuments || []).some((documentItem) => {
+    if (!isXmlGeneratedDocument(documentItem) || documentItem.fileDeletedAt) return false;
+    if (encounterId) return String(documentItem.encounterId || "") === String(encounterId);
+    return String(documentItem.visitId || "") === String(visit.id || "");
+  });
+}
+
+async function ensureXmlDocumentForVisit(client, visit, options = {}) {
+  if (!client || !visit) return null;
+  if (!data.documentTemplatesLoaded) {
+    await loadDocumentTemplatesFromBackend();
+  }
+  if (!pickDocumentTemplate("xml", visit, client)) {
+    return null;
+  }
+  if (!data.workflowDataLoading) {
+    await loadWorkflowData({
+      clientId: client.backendId || client.id || null,
+      encounterId: visit.backendId || null,
+    });
+  }
+  if (hasAvailableXmlDocumentForVisit(visit)) {
+    return null;
+  }
+  return createDocumentForVisit("xml", client, visit, {
+    blankFormId: options.blankFormId || null,
+    autoXml: false,
+  });
+}
+
+async function ensureXmlAfterDriverCertificate(client, visit, options = {}) {
+  try {
+    const xmlDocument = await ensureXmlDocumentForVisit(client, visit, options);
+    if (xmlDocument) {
+      showToast(`XML-файл сформирован: ${xmlDocument.fileName || xmlDocument.title}`);
+    }
+    return xmlDocument;
+  } catch (error) {
+    console.warn("Не удалось автоматически сформировать XML", error);
+    showToast(humanizeApiError(error, "Справка сформирована, но XML автоматически не создался"));
+    return null;
+  }
+}
+
+function shouldAutoGenerateXmlForCertificate(type) {
+  const normalizedType = String(type || "").toLowerCase();
+  return ["driver", "guard", "chod"].includes(normalizedType);
+}
+
+async function printDocumentForVisit(type, client, visit, options = {}) {
+  const normalizedType = String(type || "").toLowerCase();
+  const printOptions = { ...options };
+  const xlsPrintVariant = getXlsPrintVariantForDocumentType(normalizedType);
+  if (xlsPrintVariant && !printOptions.printVariant) {
+    printOptions.printVariant = xlsPrintVariant;
+  }
+  const documentItem = await createDocumentForVisit(type, client, visit, { ...printOptions, print: true });
+  await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
+  return documentItem;
+}
+
+async function printChairmanDocumentFromExam(examId, options = {}) {
+  const targetWindow = options.targetWindow || null;
   const exam = data.doctorExams.find((item) => String(item.id) === String(examId));
   const client = exam
     ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
@@ -6883,29 +8947,85 @@ async function printChairmanDocumentFromExam(examId) {
     return null;
   }
 
+  const printType = getChairmanTemplatePrintType(visit);
   const formInfo = getChairmanFormInfo(visit, client);
   if (formInfo.printMode === "driver-flow") {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.close();
+    }
+    appState.selectedClientId = client.id;
+    appState.activeVisitId = visit.id;
+    persistDemoState();
     window.closeSportCard?.();
     await openDriverPrintFlow();
     return null;
   }
 
-  const printType = getChairmanTemplatePrintType(visit);
+  const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
+  const certificatePrintFlowOptions = getChairmanCertificatePrintFlowOptions(printType);
+  if (numberedCertificateSeries || certificatePrintFlowOptions) {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.close();
+    }
+    window.closeSportCard?.();
+    await openDriverPrintFlow({
+      ...(certificatePrintFlowOptions || {}),
+      ...(numberedCertificateSeries
+        ? {
+            preselectedSeries: numberedCertificateSeries,
+            selectedCertificateType: printType || "",
+            legacyCertificateFlow: true,
+          }
+        : {}),
+    });
+    return null;
+  }
+
   if (!printType) {
     showToast("Не найден шаблон для печати");
     return null;
   }
 
   try {
-    const documentItem = await printDocumentForVisit(printType, client, visit);
+    const directPrintType = printType === "driver" ? "medical" : printType;
+    const documentItem = await printDocumentForVisit(directPrintType, client, visit, { targetWindow });
     window.closeSportCard?.();
-    showToast(`Документ отправлен в печать: ${documentItem?.title || "документ"}`);
+    showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
     return documentItem;
   } catch (error) {
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.close();
+    }
     console.error(error);
-    showToast(humanizeApiError(error, "Не удалось отправить шаблон в печать"));
+    showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
     return null;
   }
+}
+
+async function openPrintFlowForVisit(client, visit) {
+  if (!client || !visit) {
+    showToast("Не удалось подготовить печать");
+    return;
+  }
+
+  const formInfo = getChairmanFormInfo(visit, client);
+  if (formInfo.printMode === "driver-flow") {
+    appState.selectedClientId = client.id;
+    appState.activeVisitId = visit.id;
+    persistDemoState();
+    await openDriverPrintFlow();
+    return;
+  }
+
+  await loadDoctorExamsForClient(client, visit);
+  appState.selectedClientId = client.id;
+  appState.activeVisitId = visit.id;
+  persistDemoState();
+  openDoctorExamCard({
+    clientId: client.id,
+    visitId: visit.id,
+    doctorRoleId: "chairman",
+  });
 }
 
 async function createDemoDocument(type) {
@@ -6914,6 +9034,41 @@ async function createDemoDocument(type) {
   const visit = client ? getCurrentVisitForClient(client.id) : null;
   return createDocumentForVisit(type, client, visit);
 }
+
+async function createContractsForVisits(client, visits = []) {
+  const targetVisits = Array.isArray(visits) ? visits.filter(Boolean) : [];
+  if (!client || !targetVisits.length) return [];
+
+  const documents = [];
+  const failures = [];
+  try {
+    for (const visit of targetVisits) {
+      try {
+        appState.activeVisitId = visit.id;
+        appState.selectedEncounterId = visit.backendId || null;
+        const documentItem = await createDocumentForVisit("contract", client, visit);
+        if (!documentItem) continue;
+        documents.push(documentItem);
+        if (documentItem.downloadUrl) await downloadGeneratedDocument(documentItem);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  } finally {
+    const firstVisit = targetVisits[0];
+    appState.activeVisitId = firstVisit?.id || null;
+    appState.selectedEncounterId = firstVisit?.backendId || null;
+    persistDemoState();
+  }
+
+  if (failures.length) {
+    throw new Error(`Сформировано договоров: ${documents.length} из ${targetVisits.length}`);
+  }
+  showToast(`Договоры скачиваются: ${documents.length}`);
+  return documents;
+}
+
+window.createContractsForVisits = createContractsForVisits;
 
 function normalizeBlankSeries(series) {
   return String(series ?? "").trim();
@@ -6926,10 +9081,41 @@ const DRIVER_PRINT_VARIANTS = [
   { id: "tractor_front", label: "Лицевая трактора", errorLabel: "лицевую сторону тракторной справки" },
   { id: "tractor_back", label: "Оборот трактора", errorLabel: "оборот тракторной справки" },
 ];
+const TRACTOR_FRONT_TEMPLATE_FILE_NAME = "трактор лиц ст.xls";
+const TRACTOR_BACK_TEMPLATE_FILE_NAME = "трактор об ст.xls";
+
+function findDocumentTemplateByExactFileName(fileName) {
+  const expectedName = String(fileName || "").trim().toLowerCase();
+  return (Array.isArray(data.documentTemplates) ? data.documentTemplates : []).find(
+    (template) => String(template.file_name || "").trim().toLowerCase() === expectedName,
+  ) || null;
+}
 
 const PREENTERED_BLANK_SERIES = ["40", "4026", "ЛМК", "ГИМС"];
 const PREENTERED_BLANK_SERIES_SET = new Set(PREENTERED_BLANK_SERIES.map((item) => item.toLowerCase()));
 const CERTIFICATE_PRINT_SERIES_OPTIONS = [
+  "ЛМК",
+  "ПРОФ",
+  "4027",
+  "БС",
+  "ГТ",
+  "086",
+  "095",
+  "ГС",
+  "ЧОД",
+  "40655",
+  "4016",
+  "ПЗ",
+  "ПИМС",
+  "40290",
+  "ПУН",
+  "ЭЭГ",
+  "4023",
+  "ОСК",
+  "ФПО",
+  "4024",
+  "4025",
+  "41",
   "070У",
   "071У",
   "072У",
@@ -6938,6 +9124,7 @@ const CERTIFICATE_PRINT_SERIES_OPTIONS = [
   "095У",
   "001 ГСУ",
   "989Н",
+  "342Н",
   "ГТО",
   "БАСС",
   "СПОРТ",
@@ -6973,61 +9160,137 @@ const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["989н", "gostaina"],
   ["гостайна", "gostaina"],
   ["гос.тайна", "gostaina"],
+  ["342", "psych342"],
+  ["342н", "psych342"],
+  ["псих освид", "psych342"],
+  ["псих. освид", "psych342"],
   ["гто", "gto"],
+  ["гт", "gto"],
   ["1144", "gto"],
   ["басс", "pool"],
+  ["бс", "pool"],
   ["бассейн", "pool"],
   ["спорт", "sport"],
   ["спорт экг", "sport"],
   ["экг", "ekg"],
+  ["ээг", "ekg"],
   ["экгр", "ekg"],
   ["экгн", "ekg"],
   ["лмк", "lmk"],
   ["гимс", "gims"],
   ["4026", "chod"],
+  ["4027", "chod"],
   ["чод", "chod"],
   ["охран", "guard"],
   ["охрана", "guard"],
   ["29н", "prof"],
   ["проф", "prof"],
-  ["драг", "drug"],
   ["морская", "marine"],
   ["морск", "marine"],
   ["13082", "13082"],
   ["13098", "13098"],
 ]);
+const CERTIFICATE_PRINT_TYPE_LABELS = {
+  "070": "070у",
+  "071": "071у",
+  "072": "072 у СКК",
+  "082": "Справка 082У",
+  "086": "Справка 086У",
+  "095": "Справка 095У",
+  gsu: "ГС",
+  gostaina: "ГТ",
+  psych342: "Справка 342н",
+  gto: "Справка ГТО",
+  pool: "Справка в бассейн",
+  sport: "СПОРТ",
+  ekg: "ЭКГ",
+  lmk: "ЛМК",
+  gims: "ГИМС",
+  chod: "Справка ЧОД",
+  guard: "Справка охрана",
+  prof: "Заключение 29Н",
+  marine: "Морская справка",
+  "13082": "13082",
+  "13098": "13098",
+};
+const BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate";
+const BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE = "gims_medical_certificate";
+const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
+const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const SERVICE_SERIES_OVERRIDES = new Map([
-  ["071у", "071У"],
+  ["071у", "071у"],
+  ["070у", "070у"],
+  ["072 у скк", "072 у СКК"],
+  ["гс", "ГС"],
+  ["гт", "ГТ"],
+  ["гимс", "ГИМС"],
   ["профосмотр", "29Н"],
-  ["первичный профосмотр 29н", "29Н"],
-  ["санаторно-курортная карта", "072У"],
-  ["санаторно-курортная карта 072у", "072У"],
-  ["справка для получения путевки 070у", "070У"],
-  ["справка 001 гсу для работы на госслужбе", "001 ГСУ"],
-  ["справка формы 001 гсу", "001 ГСУ"],
-  ["справка 002 чод (для охраны)", "4026"],
+  ["первичный профосмотр 29н", "Проф"],
+  ["санаторно-курортная карта", "072 у СКК"],
+  ["санаторно-курортная карта 072у", "072 у СКК"],
+  ["справка для получения путевки 070у", "070у"],
+  ["справка 001 гсу для работы на госслужбе", "ГС"],
+  ["справка формы 001 гсу", "ГС"],
+  ["справка 002 чод (для охраны)", "002 (чод)"],
   ["справка в бассейн", "БАСС"],
   ["справка для посещения бассейна", "БАСС"],
-  ["справка выезжающих за границу 082у", "082У"],
-  ["справка для выезжающих за границу 082у", "082У"],
-  ["справка гостайна, форма 989н", "989Н"],
-  ["справка для работы с гостайной формы 989н", "989Н"],
+  ["справка выезжающих за границу 082у", "082у"],
+  ["справка для выезжающих за границу 082у", "082у"],
+  ["справка гостайна, форма 989н", "ГТ"],
+  ["справка для работы с гостайной формы 989н", "ГТ"],
+  ["справка 342н (псих. освид.)", "342н псих осв"],
   ["справка гто 1144", "ГТО"],
-  ["справка для поступления 086у", "086У"],
-  ["справка формы 086у", "086У"],
-  ["справка по форме 095у", "095У"],
-  ["справка 095/у о временной нетрудоспособности", "095У"],
+  ["справка для поступления 086у", "086у"],
+  ["справка формы 086у", "086у"],
+  ["086", "086у"],
+  ["086у", "086у"],
+  ["справка по форме 095у", "095у"],
+  ["справка 095/у о временной нетрудоспособности", "095у"],
+  ["095у", "095у"],
+  ["095", "095у"],
   ["справка для участия в соревнованиях", "СПОРТ"],
   ["справка спорт + экг", "СПОРТ"],
+  ["спорт", "СПОРТ"],
   ["электрокардиография (экг)", "ЭКГ"],
+  ["капельное введение лекарственных средств", "КАПЕЛЬНИЦА"],
+  ["капельница", "КАПЕЛЬНИЦА"],
+  ["лмк справка", "ЛМК"],
   ["морская медицинская комиссия", "МОРСКАЯ"],
-  ["drug/alcohol test № 96", "ДРАГ"],
+  ["сэмт-196", "СЭМТ-196"],
+  ["сэмт 196", "СЭМТ-196"],
+  ["сэмт-196 без флг", "СЭМТ-196"],
+  ["сэмт-196 с флг", "СЭМТ-196"],
   ["узи брюшной полости", "УЗИ ОБП"],
   ["узи молочных желез", "УЗИ МЖ"],
   ["узи предстательной железы", "УЗИ ПЖ"],
   ["экг без расшифровки", "ЭКГ"],
-  ["экг при нагрузке с расшифровкой", "ЭКГН"],
-  ["экг с расшифровкой", "ЭКГР"],
+  ["экг при нагрузке с расшифровкой", "ЭКГ-Н"],
+  ["экг с расшифровкой", "ЭКГ-Р"],
+]);
+const SERVICE_ABBREVIATION_BY_LEGACY_ID = new Map([
+  [2, "ГС"],
+  [3, "бассейн"],
+  [4, "ГТО"],
+  [5, "спорт"],
+  [7, "071у"],
+  [8, "ВУ (водительская)"],
+  [9, "002 (чод)"],
+  [10, "082у"],
+  [11, "ГТ"],
+  [12, "086у"],
+  [16, "Проф"],
+  [18, "ЛМК-Н"],
+  [19, "ЛМК-ПР"],
+  [24, "072 у СКК"],
+  [29, "ВУ (водительская)"],
+  [30, "095у"],
+  [31, "070у"],
+  [37, "гимс"],
+  [38, "Морская"],
+  [40, "342н псих осв"],
+  [42, "ЛМК справка"],
+  [43, "СЭМТ-196"],
+  [44, "СЭМТ-196"],
 ]);
 
 function getStoredDriverPrintSeries() {
@@ -7059,10 +9322,11 @@ function getDriverPrintCertificateType(series) {
   if (/^0?71у?$/.test(normalized)) return "071";
   if (/^0?72у?$/.test(normalized)) return "072";
   if (/^0?82у?$/.test(normalized)) return "082";
-  if (/^0?86у?$/.test(normalized)) return "086";
+  if (/^0?86у?(?:\s*\([мж]\))?$/.test(normalized)) return "086";
   if (/^0?95у?$/.test(normalized)) return "095";
   if (normalized.includes("гсу") || normalized.includes("001")) return "gsu";
   if (normalized.includes("гостайн") || normalized.includes("гос.тайн") || normalized.includes("989")) return "gostaina";
+  if (normalized.includes("342") || normalized.includes("псих освид") || normalized.includes("псих. освид")) return "psych342";
   if (normalized.includes("гто") || normalized.includes("1144")) return "gto";
   if (normalized.includes("басс")) return "pool";
   if (normalized.includes("спорт")) return "sport";
@@ -7072,10 +9336,34 @@ function getDriverPrintCertificateType(series) {
   if (normalized.includes("4026") || normalized.includes("чод")) return "chod";
   if (normalized.includes("охран")) return "guard";
   if (normalized.includes("29н") || normalized.includes("проф")) return "prof";
-  if (normalized.includes("драг")) return "drug";
   if (normalized.includes("морск") || normalized.includes("marine") || normalized.includes("seafar")) return "marine";
   if (normalized === "13082" || normalized === "13098") return normalized;
   return "";
+}
+
+function getBlankTypeForCertificatePrintType(type) {
+  const normalizedType = String(type || "").toLowerCase();
+  if (normalizedType === "071") return BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE;
+  if (normalizedType === "gims") return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE;
+  if (normalizedType === "guard" || normalizedType === "chod") return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE;
+  return "";
+}
+
+function resolveDriverPrintBlankType(options = {}) {
+  const candidates = [
+    options.selectedCertificateType,
+    getDriverPrintCertificateType(options.selectedSeries),
+    ...(Array.isArray(options.certificateTypes) ? options.certificateTypes : []),
+  ];
+  for (const candidate of candidates) {
+    const blankType = getBlankTypeForCertificatePrintType(candidate);
+    if (blankType) return blankType;
+  }
+  return options.template?.blank_type || BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE;
+}
+
+function getCertificatePrintTypeLabel(type) {
+  return CERTIFICATE_PRINT_TYPE_LABELS[String(type || "").toLowerCase()] || "Печать документа";
 }
 
 function isCertificatePrintSeries(series) {
@@ -7090,6 +9378,24 @@ function isNumberedCertificatePrintSeries(series) {
   return isNumberedCertificatePrintType(getDriverPrintCertificateType(series));
 }
 
+function getNumberedCertificateLookupSeriesForType(type) {
+  const normalizedType = String(type || "").toLowerCase();
+  if (normalizedType === "086") return `086${String.fromCharCode(1059)}`;
+  if (normalizedType === "095") return `095${String.fromCharCode(1059)}`;
+  return "";
+}
+
+function getNumberedCertificateDisplaySeries(series, certificateType = "", client = null) {
+  const normalizedSeries = normalizeBlankSeries(series);
+  const normalizedType = String(certificateType || getDriverPrintCertificateType(series) || "").toLowerCase();
+  const seriesType = getDriverPrintCertificateType(normalizedSeries);
+  if (normalizedType === "086" && seriesType === "086") {
+    return client ? formatCertificate086SeriesForSex({ client }) : "086у";
+  }
+  if (normalizedType === "095" && seriesType === "095") return "095у";
+  return normalizedSeries;
+}
+
 function resolveNumberedCertificateLookupSeries(selectedSeries, certificateType, seriesOptions = []) {
   const normalizedSelected = normalizeBlankSeries(selectedSeries).toLowerCase();
   const normalizedType = String(certificateType || "").toLowerCase();
@@ -7097,14 +9403,19 @@ function resolveNumberedCertificateLookupSeries(selectedSeries, certificateType,
     .map((item) => normalizeBlankSeries(item?.series || item))
     .filter(Boolean);
 
+  const selectedSeriesType = getDriverPrintCertificateType(normalizedSelected);
+  if (isNumberedCertificatePrintType(normalizedType) && selectedSeriesType === normalizedType) {
+    const marker = normalizedType === "086" ? "086" : "095";
+    const matching = options.find((series) => {
+      const normalizedSeries = series.toLowerCase();
+      return normalizedSeries.includes(marker) && normalizedSeries !== marker;
+    });
+    if (matching) return matching;
+    return getNumberedCertificateLookupSeriesForType(normalizedType);
+  }
+
   const exact = options.find((series) => series.toLowerCase() === normalizedSelected);
   if (exact) return exact;
-
-  if (isNumberedCertificatePrintType(normalizedType)) {
-    const marker = normalizedType === "086" ? "086" : "095";
-    const matching = options.find((series) => series.toLowerCase().includes(marker));
-    if (matching) return matching;
-  }
 
   return normalizeBlankSeries(selectedSeries);
 }
@@ -7113,21 +9424,18 @@ function isPreenteredBlankSeries(series) {
   return PREENTERED_BLANK_SERIES_SET.has(normalizeBlankSeries(series).toLowerCase());
 }
 
-function buildServiceSeriesAbbreviation(service) {
+function buildServiceSeriesAbbreviation(service, options = {}) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
   if (!name) return "";
-  if (
-    isDriverService(service) ||
-    isTractorService(service) ||
-    isGimsService(service) ||
-    isLmkService(service) ||
-    normalizedName.includes("лмк")
-  ) {
-    return "";
+  const legacyId = Number(service?.legacySourceId ?? service?.id);
+  if (SERVICE_ABBREVIATION_BY_LEGACY_ID.has(legacyId)) {
+    const abbreviation = SERVICE_ABBREVIATION_BY_LEGACY_ID.get(legacyId);
+    return abbreviation === "086у" ? formatCertificate086SeriesForSex(options) : abbreviation;
   }
   if (SERVICE_SERIES_OVERRIDES.has(normalizedName)) {
-    return SERVICE_SERIES_OVERRIDES.get(normalizedName);
+    const series = SERVICE_SERIES_OVERRIDES.get(normalizedName);
+    return series === "086у" ? formatCertificate086SeriesForSex(options) : series;
   }
 
   const words = name
@@ -7151,8 +9459,15 @@ function getAutoServiceSeriesOptions() {
     .filter((series) => series && !isPreenteredBlankSeries(series));
 }
 
-function getDriverPrintSeriesPickerOptions(seriesOptions = []) {
-  const ordered = [...PREENTERED_BLANK_SERIES, ...CERTIFICATE_PRINT_SERIES_OPTIONS, ...getAutoServiceSeriesOptions()];
+function getDriverPrintSeriesPickerOptions(seriesOptions = [], { includeSuggestedSeries = true } = {}) {
+  const ordered = includeSuggestedSeries
+    ? [
+        "40",
+        ...CERTIFICATE_PRINT_SERIES_OPTIONS,
+        ...PREENTERED_BLANK_SERIES.filter((series) => series !== "40"),
+        ...getAutoServiceSeriesOptions(),
+      ]
+    : [];
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
     if (series) ordered.push(series);
@@ -7262,7 +9577,8 @@ function getDriverPrintBlankParts(blank, selectedSeries) {
   const number = series && fullNumber.startsWith(series)
     ? fullNumber.slice(series.length).trim()
     : fullNumber;
-  const primaryDate = formatApiDate(blank?.issued_at || blank?.created_at || new Date().toISOString());
+  const primaryDateSource = blank?.issued_at || blank?.created_at || "";
+  const primaryDate = primaryDateSource ? formatApiDate(primaryDateSource) : "";
   return {
     series,
     number,
@@ -7271,11 +9587,21 @@ function getDriverPrintBlankParts(blank, selectedSeries) {
   };
 }
 
+function normalizeDriverPrintBlank(blank) {
+  if (!blank || typeof blank !== "object") return blank;
+  return {
+    ...blank,
+    id: blank.id ?? blank.next_form_id ?? blank.form_id ?? null,
+    full_number: blank.full_number || blank.next_full_number || "",
+    series: normalizeBlankSeries(blank.series),
+  };
+}
+
 function renderDriverPrintResultPrompt({ printedDocument, printMessage }) {
   return `
     <div class="document-preview">
       <strong>${escapeHtml(printedDocument?.title || "Водительская справка")}</strong>
-      <p>${escapeHtml(printMessage || "Документ отправлен в печать.")}</p>
+      <p>${escapeHtml(printMessage || "Документ открыт.")}</p>
       <p>После печати подтвердите результат. Если бланк испорчен, мы сразу спишем его и подберем следующий номер.</p>
       <div class="card" style="margin-top:12px;">
         <strong>Инструкция по двусторонней печати</strong>
@@ -7379,15 +9705,29 @@ async function openDriverPrintFlow(options = {}) {
 
   await syncVisitToBackend(visit, client);
 
+  const preselectedSeries = normalizeBlankSeries(options.preselectedSeries);
+  const requestedCertificateTypes = Array.isArray(options.certificateTypes)
+    ? options.certificateTypes.map((type) => String(type || "").toLowerCase()).filter(Boolean)
+    : [];
+  const compactCertificateFlow = Boolean(options.compactCertificateFlow);
+  const legacyCertificateFlow = Boolean(options.legacyCertificateFlow);
+  const preselectedCertificateType = getDriverPrintCertificateType(preselectedSeries);
+  const isOrdinaryDriverFlow = !preselectedCertificateType && !requestedCertificateTypes.length;
   const template = pickDocumentTemplate("driver", visit, client);
-  if (!template) {
+  if (!template && !preselectedCertificateType && !requestedCertificateTypes.length) {
     showToast("Не найден шаблон водительской справки");
     return;
   }
 
   const clientId = client.backendId || client.id;
   const centerId = await resolveCenterIdForVisit(visit, client);
-  const blankType = template.blank_type || "driver_medical_certificate";
+  const centerName = getCenterNameForContext(centerId, visit, client);
+  const blankType = resolveDriverPrintBlankType({
+    template,
+    selectedSeries: preselectedSeries,
+    selectedCertificateType: options.selectedCertificateType || preselectedCertificateType,
+    certificateTypes: requestedCertificateTypes,
+  });
 
   let seriesOptions = [];
   let fallbackBlank = options.preselectedBlank || null;
@@ -7400,13 +9740,25 @@ async function openDriverPrintFlow(options = {}) {
   } catch (error) {
     console.warn("Не удалось загрузить свободные серии бланков", error);
   }
+  if (isOrdinaryDriverFlow && Array.isArray(seriesOptions)) {
+    seriesOptions = seriesOptions.filter((item) => !isCertificatePrintSeries(item?.series));
+  }
 
+  const availableSeriesOptions = Array.isArray(seriesOptions) ? seriesOptions.slice() : [];
+  const storedSeries = getStoredDriverPrintSeries();
+  const isPreselectedSeriesAvailable = availableSeriesOptions.some(
+    (item) => normalizeBlankSeries(item?.series).toLowerCase() === preselectedSeries.toLowerCase(),
+  );
+  const isStoredSeriesAvailable = availableSeriesOptions.some(
+    (item) => normalizeBlankSeries(item?.series).toLowerCase() === storedSeries.toLowerCase(),
+  );
+  const defaultSeries = normalizeBlankSeries(availableSeriesOptions[0]?.series || seriesOptions[0]?.series);
   const seriesOptionMap = new Map();
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
     if (series) seriesOptionMap.set(series.toLowerCase(), item);
   });
-  getDriverPrintSeriesPickerOptions(seriesOptions).forEach((series) => {
+  getDriverPrintSeriesPickerOptions(seriesOptions, { includeSuggestedSeries: !isOrdinaryDriverFlow }).forEach((series) => {
     const normalizedKey = normalizeBlankSeries(series).toLowerCase();
     if (!seriesOptionMap.has(normalizedKey)) {
       seriesOptionMap.set(normalizedKey, {
@@ -7419,7 +9771,7 @@ async function openDriverPrintFlow(options = {}) {
   });
   seriesOptions = Array.from(seriesOptionMap.values());
 
-  if (!Array.isArray(seriesOptions) || !seriesOptions.length) {
+  if ((!Array.isArray(seriesOptions) || !seriesOptions.length) && !isOrdinaryDriverFlow) {
     try {
       const query = new URLSearchParams({
         blank_type: blankType,
@@ -7451,19 +9803,28 @@ async function openDriverPrintFlow(options = {}) {
     visit,
     clientId: Number(clientId),
     centerId: Number(centerId),
+    centerName,
     template,
     blankType,
     seriesOptions,
     selectedSeries:
-      normalizeBlankSeries(options.preselectedSeries) ||
-      getStoredDriverPrintSeries() ||
+      (preselectedSeries && (isPreselectedSeriesAvailable || !availableSeriesOptions.length) ? preselectedSeries : "") ||
+      (isStoredSeriesAvailable ? storedSeries : "") ||
+      defaultSeries ||
       normalizeBlankSeries(seriesOptions[0]?.series),
     selectedCertificateType: "",
-    currentBlank: fallbackBlank,
+    certificateTypes: requestedCertificateTypes,
+    compactCertificateFlow,
+    legacyCertificateFlow,
+    currentBlank: normalizeDriverPrintBlank(fallbackBlank),
     loading: false,
     error: "",
   };
-  flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries);
+  flowState.selectedCertificateType =
+    String(options.selectedCertificateType || "").toLowerCase() ||
+    getDriverPrintCertificateType(flowState.selectedSeries) ||
+    flowState.certificateTypes[0] ||
+    "";
 
   const seriesHints = flowState.seriesOptions
     .map((item) => normalizeBlankSeries(item.series))
@@ -7479,24 +9840,42 @@ async function openDriverPrintFlow(options = {}) {
         center_id: String(flowState.centerId),
       });
       query.set("series", flowState.selectedSeries || "");
-      flowState.currentBlank = await apiRequest(`/blanks/forms/next?${query.toString()}`);
+      flowState.currentBlank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
     } catch (error) {
       flowState.error = humanizeApiError(error, "Не удалось подобрать свободный бланк");
     }
   }
 
   const renderPrintActions = () => {
-    if (flowState.selectedCertificateType) {
+    const certificateTypes = flowState.compactCertificateFlow && flowState.selectedCertificateType
+      ? [flowState.selectedCertificateType]
+      : flowState.certificateTypes.length
+      ? flowState.certificateTypes
+      : flowState.selectedCertificateType
+        ? [flowState.selectedCertificateType]
+        : [];
+    if (certificateTypes.length === 1 && certificateTypes[0] === "071") {
+      const tractorPrintDisabled = flowState.loading || !flowState.currentBlank?.id || !flowState.template;
       return `
-        <button type="button" class="driver-print-classic__button" data-driver-print-selected-certificate="${escapeHtml(flowState.selectedCertificateType)}" ${flowState.loading || !flowState.currentBlank?.id ? "disabled" : ""}>Печать документа</button>
+        <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_front" ${tractorPrintDisabled ? "disabled" : ""}>Лицевая</button>
+        <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_back" ${tractorPrintDisabled ? "disabled" : ""}>Оборотная</button>
       `;
+    }
+    if (certificateTypes.length) {
+      return certificateTypes
+        .map(
+          (certificateType) => `
+            <button type="button" class="driver-print-classic__button" data-driver-print-selected-certificate="${escapeHtml(certificateType)}" ${flowState.loading || !flowState.currentBlank?.id ? "disabled" : ""}>${escapeHtml(getCertificatePrintTypeLabel(certificateType))}</button>
+          `,
+        )
+        .join("");
     }
 
     return `
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_front" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Печатать лицевую часть</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_back" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Печатать оборот</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_front" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Лицевая трактора</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_back" ${flowState.loading || !flowState.currentBlank ? "disabled" : ""}>Оборот трактора</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_front" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Печатать лицевую часть</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_back" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Печатать оборот</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_front" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Лицевая трактора</button>
+      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_back" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Оборот трактора</button>
     `;
   };
 
@@ -7513,7 +9892,13 @@ async function openDriverPrintFlow(options = {}) {
 
   const restartDriverPrintFlow = async () => {
     await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-    await openDriverPrintFlow({ preselectedSeries: flowState.selectedSeries });
+    await openDriverPrintFlow({
+      preselectedSeries: flowState.selectedSeries,
+      certificateTypes: flowState.certificateTypes,
+      selectedCertificateType: flowState.selectedCertificateType,
+      compactCertificateFlow: flowState.compactCertificateFlow,
+      legacyCertificateFlow: flowState.legacyCertificateFlow,
+    });
   };
 
   const handleSpoiledBlank = async (generatedDocumentId) => {
@@ -7541,6 +9926,7 @@ async function openDriverPrintFlow(options = {}) {
         await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
         actionModal.classList.add("hidden");
         showToast(`Печать подтверждена: ${printedDocument.blankNumber || printedDocument.title}`);
+        await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
       } catch (error) {
         showToast(humanizeApiError(error, "Не удалось подтвердить печать"));
       }
@@ -7573,35 +9959,52 @@ async function openDriverPrintFlow(options = {}) {
     const skipConfirmation = Boolean(options.skipConfirmation);
     const variant = DRIVER_PRINT_VARIANTS.find((item) => item.id === variantId);
     if (!variant || !flowState.currentBlank?.id) return;
+    const variantTemplate = variant.id === "tractor_front"
+      ? findDocumentTemplateByExactFileName(TRACTOR_FRONT_TEMPLATE_FILE_NAME)
+      : variant.id === "tractor_back"
+        ? findDocumentTemplateByExactFileName(TRACTOR_BACK_TEMPLATE_FILE_NAME)
+        : flowState.template;
+    if (!variantTemplate) {
+      flowState.error = variant.id === "tractor_front"
+        ? "Не найден шаблон лицевой стороны тракторной справки"
+        : variant.id === "tractor_back"
+          ? "Не найден шаблон оборотной стороны тракторной справки"
+          : "Не найден шаблон водительской справки";
+      renderFlow();
+      return;
+    }
     flowState.loading = true;
     flowState.error = "";
     renderFlow();
     try {
+      await prepareVisitDoctorExamsForDocuments(flowState.client, flowState.visit);
       const result = await apiRequest("/documents/print", {
         method: "POST",
         body: JSON.stringify({
-          template_id: flowState.template.id,
+          template_id: variantTemplate.id,
           client_id: flowState.clientId,
           encounter_id: flowState.visit.backendId ? Number(flowState.visit.backendId) : null,
           blank_form_id: Number(flowState.currentBlank.id),
           print_variant: variant.id,
         }),
       });
+      flowState.currentBlank = {
+        ...flowState.currentBlank,
+        status: "issued",
+        generated_document_id: result.generated_document_id ?? null,
+      };
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
-      const sentToPrinter = await openGeneratedDocumentForPrint(printedDocument);
+      await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-      if (!sentToPrinter) {
-        flowState.loading = false;
-        renderFlow();
-        return;
-      }
+      await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
       if (skipConfirmation) {
         try {
           await markPrintedDocument(result.generated_document_id, true);
           actionModal.classList.add("hidden");
-          showToast(`Оборот отправлен в печать: ${printedDocument.blankNumber || printedDocument.title}`);
+          showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
+          await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
         } catch (error) {
-          showToast(humanizeApiError(error, "Не удалось подтвердить печать оборота"));
+          showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
       } else if (isFrontDriverPrintVariant(variant.id)) {
         const backVariantId = variant.id === "tractor_front" ? "tractor_back" : "driver_back";
@@ -7610,15 +10013,22 @@ async function openDriverPrintFlow(options = {}) {
         await handleStandardPrintResult(result, printedDocument);
       }
     } catch (error) {
-      flowState.error = humanizeApiError(error, `Не удалось отправить в печать ${variant.errorLabel}`);
+      if (options.targetWindow && !options.targetWindow.closed) {
+        options.targetWindow.close();
+      }
+      flowState.error = humanizeApiError(error, `Не удалось открыть ${variant.errorLabel}`);
       flowState.loading = false;
       renderFlow();
     }
   };
 
-  const printSelectedCertificate = async () => {
-    if (!flowState.selectedCertificateType) return;
+  const printSelectedCertificate = async (certificateType = flowState.selectedCertificateType, options = {}) => {
+    const finalCertificateType = String(certificateType || "").toLowerCase();
+    if (!finalCertificateType) return;
     if (!flowState.currentBlank?.id) {
+      if (options.targetWindow && !options.targetWindow.closed) {
+        options.targetWindow.close();
+      }
       flowState.error = isPreenteredBlankSeries(flowState.selectedSeries)
         ? "Сначала нажмите \"Найти номер\", чтобы подобрать свободный бланк из заведенного диапазона."
         : "Сначала нажмите \"Найти номер\", чтобы присвоить следующий 7-значный номер.";
@@ -7630,9 +10040,21 @@ async function openDriverPrintFlow(options = {}) {
     renderFlow();
     try {
       const printOptions = { blankFormId: Number(flowState.currentBlank.id) };
-      const documentItem = await printDocumentForVisit(flowState.selectedCertificateType, client, visit, printOptions);
-      showToast(`Справка отправлена в печать: ${documentItem?.title || "документ"}`);
+      const documentItem = await createDocumentForVisit(finalCertificateType, client, visit, { ...printOptions, print: true });
+      flowState.currentBlank = {
+        ...flowState.currentBlank,
+        status: "issued",
+        generated_document_id: documentItem?.id ?? null,
+      };
+      await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
+      showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
+      if (shouldAutoGenerateXmlForCertificate(finalCertificateType)) {
+        await ensureXmlAfterDriverCertificate(client, visit, { blankFormId: flowState.currentBlank.id });
+      }
     } catch (error) {
+      if (options.targetWindow && !options.targetWindow.closed) {
+        options.targetWindow.close();
+      }
       console.error(error);
       flowState.error = humanizeApiError(error, "Не удалось отправить справку в печать");
     } finally {
@@ -7644,45 +10066,95 @@ async function openDriverPrintFlow(options = {}) {
   const renderFlow = () => {
     const blankParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
     const findButtonDisabled = flowState.loading;
+    const visibleSeries = flowState.legacyCertificateFlow
+      ? getNumberedCertificateDisplaySeries(flowState.selectedSeries, flowState.selectedCertificateType, client)
+      : flowState.selectedSeries;
+    const visiblePrimarySeries = flowState.legacyCertificateFlow
+      ? getNumberedCertificateDisplaySeries(blankParts.series || flowState.selectedSeries, flowState.selectedCertificateType, client)
+      : blankParts.series;
+    const visibleCertificateType = flowState.selectedCertificateType || getDriverPrintCertificateType(flowState.selectedSeries);
+    const certificatePrintDisabled = flowState.loading || !flowState.currentBlank?.id || !visibleCertificateType;
+    const canReplaceBlank =
+      isOrdinaryDriverFlow ||
+      ["gims", "071"].includes(String(visibleCertificateType || "").toLowerCase());
+    const blankManagementDisabled = flowState.loading || !flowState.currentBlank?.id;
 
     openActionModal(
       "Печать результатов:",
       `
-        <div class="driver-print-classic">
+        <div class="driver-print-classic${flowState.legacyCertificateFlow ? " driver-print-classic--legacy-certificate" : ""}">
+          ${renderPrintCenterContext(flowState.centerName)}
           <input class="driver-print-classic__fio" value="${escapeHtml(client.fullName || "Клиент")}" readonly />
 
           <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
           <div class="driver-print-classic__lookup">
-            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(flowState.selectedSeries)}" readonly />
+            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" readonly />
             <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(blankParts.number)}" readonly />
             <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
           </div>
 
-          <button type="button" class="driver-print-classic__button driver-print-classic__button--duplicate" disabled>Печать дубликата</button>
+          ${
+            canReplaceBlank
+              ? `
+                <div class="driver-print-classic__blank-actions">
+                  <button type="button" class="driver-print-classic__button" id="driverReleaseBlank" ${blankManagementDisabled ? "disabled" : ""}>Освободить номер</button>
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--spoiled" id="driverReplaceSpoiledBlank" ${blankManagementDisabled ? "disabled" : ""}>Бракованный бланк</button>
+                </div>
+              `
+              : ""
+          }
 
-          <div class="driver-print-classic__caption driver-print-classic__caption--primary">Серия, номер, дата первоначального бланка:</div>
-          <div class="driver-print-classic__primary">
-            <input class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(blankParts.series)}" readonly />
-            <input class="driver-print-classic__input" value="${escapeHtml(blankParts.fullNumber || blankParts.number)}" readonly />
-            <input class="driver-print-classic__input driver-print-classic__input--date" value="${escapeHtml(blankParts.primaryDate)}" readonly />
-          </div>
+          ${
+            flowState.compactCertificateFlow
+              ? ""
+              : '<button type="button" class="driver-print-classic__button driver-print-classic__button--duplicate" disabled>Печать дубликата</button>'
+          }
+
+          ${
+            flowState.compactCertificateFlow
+              ? ""
+              : `
+                <div class="driver-print-classic__caption driver-print-classic__caption--primary">Серия, номер, дата первоначального бланка:</div>
+                <div class="driver-print-classic__primary">
+                  <input class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visiblePrimarySeries)}" readonly />
+                  <input class="driver-print-classic__input" value="${escapeHtml(blankParts.number || blankParts.fullNumber)}" readonly />
+                  <input class="driver-print-classic__input driver-print-classic__input--date" value="${escapeHtml(blankParts.primaryDate)}" readonly />
+                </div>
+              `
+          }
 
           ${flowState.error ? `<div class="driver-print-classic__error">${escapeHtml(flowState.error)}</div>` : ""}
 
           <div class="driver-print-classic__actions driver-print-classic__actions--driver">
-            ${renderPrintActions()}
+            ${
+              flowState.legacyCertificateFlow
+                ? `
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-selected-certificate="${escapeHtml(visibleCertificateType)}" ${certificatePrintDisabled ? "disabled" : ""}>${escapeHtml(getCertificatePrintTypeLabel(visibleCertificateType))}</button>
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" disabled>Амб. Карта 25У</button>
+                  <button type="button" class="driver-print-classic__button driver-print-classic__button--wide driver-print-classic__button--right" disabled>Результат ЭКГ</button>
+                `
+                : renderPrintActions()
+            }
           </div>
-          <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="court">справка Суда</button>
-          <button type="button" class="driver-print-classic__button driver-print-classic__button--wide" data-driver-print-extra="ambulatory">Амб. Карта 25У</button>
         </div>
       `,
-      "modal--driver-print",
+      flowState.legacyCertificateFlow ? "modal--driver-print modal--legacy-certificate-print" : "modal--driver-print",
     );
 
     const seriesInput = document.getElementById("driverBlankSeries");
     const selectSeries = (value) => {
-      flowState.selectedSeries = normalizeBlankSeries(value);
-      flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries);
+      const normalizedSeries = normalizeBlankSeries(value);
+      const nextCertificateType = getDriverPrintCertificateType(normalizedSeries);
+      flowState.selectedCertificateType = nextCertificateType || (flowState.legacyCertificateFlow ? flowState.selectedCertificateType : "");
+      flowState.selectedSeries = flowState.legacyCertificateFlow
+        ? getNumberedCertificateDisplaySeries(normalizedSeries, flowState.selectedCertificateType, client)
+        : normalizedSeries;
+      flowState.blankType = resolveDriverPrintBlankType({
+        template: flowState.template,
+        selectedSeries: normalizedSeries,
+        selectedCertificateType: flowState.selectedCertificateType,
+        certificateTypes: flowState.certificateTypes,
+      });
       setStoredDriverPrintSeries(flowState.selectedSeries);
       flowState.currentBlank = null;
       flowState.error = "";
@@ -7713,27 +10185,134 @@ async function openDriverPrintFlow(options = {}) {
       setStoredDriverPrintSeries(lookupSeries || flowState.selectedSeries);
       renderFlow();
       try {
-        const query = new URLSearchParams({
-          blank_type: flowState.blankType,
-          center_id: String(flowState.centerId),
-        });
-        if (lookupSeries) {
-          query.set("series", lookupSeries);
-        } else {
-          query.set("series", "");
+        const requestedSeries = lookupSeries || flowState.selectedSeries;
+        const fetchNextBlank = async (autoCreate = false) => {
+          const query = new URLSearchParams({
+            blank_type: flowState.blankType,
+            center_id: String(flowState.centerId),
+          });
+          query.set("series", lookupSeries || "");
+          if (autoCreate) {
+            query.set("auto_create", "true");
+          }
+          return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
+        };
+        const shouldAutoCreateImmediately =
+          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
+          !isPreenteredBlankSeries(requestedSeries) &&
+          !canAutoCreateChairmanBlankSeries(requestedSeries);
+        try {
+          flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
+        } catch (error) {
+          if (isNumberedCertificatePrintType(flowState.selectedCertificateType) || !canAutoCreateChairmanBlankSeries(requestedSeries)) {
+            throw error;
+          }
+          flowState.currentBlank = await fetchNextBlank(true);
         }
-        if (!isPreenteredBlankSeries(lookupSeries || flowState.selectedSeries)) {
-          query.set("auto_create", "true");
-        }
-        flowState.currentBlank = await apiRequest(`/blanks/forms/next?${query.toString()}`);
         if (flowState.currentBlank?.series) {
-          flowState.selectedSeries = normalizeBlankSeries(flowState.currentBlank.series);
-          flowState.selectedCertificateType = getDriverPrintCertificateType(flowState.selectedSeries) || flowState.selectedCertificateType;
+          const resolvedSeries = normalizeBlankSeries(flowState.currentBlank.series);
+          flowState.selectedCertificateType = getDriverPrintCertificateType(resolvedSeries) || flowState.selectedCertificateType;
+          flowState.selectedSeries = flowState.legacyCertificateFlow
+            ? getNumberedCertificateDisplaySeries(resolvedSeries, flowState.selectedCertificateType, client)
+            : resolvedSeries;
+          flowState.blankType = resolveDriverPrintBlankType({
+            template: flowState.template,
+            selectedSeries: resolvedSeries,
+            selectedCertificateType: flowState.selectedCertificateType,
+            certificateTypes: flowState.certificateTypes,
+          });
           setStoredDriverPrintSeries(flowState.selectedSeries);
         }
       } catch (error) {
         flowState.currentBlank = null;
-        flowState.error = humanizeApiError(error, "Не удалось подобрать свободный бланк");
+        const requestedSeriesLabel = normalizeBlankSeries(lookupSeries || flowState.selectedSeries) || "выбранной серии";
+        const message = humanizeApiError(error, "Не удалось подобрать свободный бланк");
+        flowState.error = message.includes("Свободные бланки по выбранной серии не найдены")
+          ? `В «${flowState.centerName}» нет свободных бланков серии ${requestedSeriesLabel}. Добавьте диапазон в разделе «Бланки» этого медцентра.`
+          : message;
+      } finally {
+        flowState.loading = false;
+        renderFlow();
+      }
+    });
+
+    document.getElementById("driverReleaseBlank")?.addEventListener("click", async () => {
+      const currentBlank = flowState.currentBlank;
+      if (!currentBlank?.id) return;
+
+      flowState.loading = true;
+      flowState.error = "";
+      renderFlow();
+      try {
+        if (currentBlank.status !== "free") {
+          await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/release`, {
+            method: "POST",
+          });
+          await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
+        }
+        flowState.currentBlank = null;
+        showToast(`Номер ${currentBlank.full_number || ""} освобождён`);
+      } catch (error) {
+        flowState.error = humanizeApiError(error, "Не удалось освободить номер бланка");
+      } finally {
+        flowState.loading = false;
+        renderFlow();
+      }
+    });
+
+    document.getElementById("driverReplaceSpoiledBlank")?.addEventListener("click", async () => {
+      const currentBlank = flowState.currentBlank;
+      if (!currentBlank?.id) return;
+
+      flowState.loading = true;
+      flowState.error = "";
+      renderFlow();
+      try {
+        const lookupSeries = resolveNumberedCertificateLookupSeries(
+          flowState.selectedSeries,
+          flowState.selectedCertificateType,
+          flowState.seriesOptions,
+        );
+        const requestedSeries = lookupSeries || flowState.selectedSeries;
+        const autoCreate =
+          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
+          !isPreenteredBlankSeries(requestedSeries);
+
+        if (currentBlank.status === "free") {
+          await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/spoil`, {
+            method: "POST",
+            body: JSON.stringify({ reason: "Бракованный бланк при печати председателем" }),
+          });
+        } else if (currentBlank.generated_document_id) {
+          await markPrintedDocument(
+            currentBlank.generated_document_id,
+            false,
+            "Бракованный бланк при печати председателем",
+          );
+        } else {
+          throw new Error("Не найден сформированный документ для списания выданного бланка");
+        }
+
+        flowState.currentBlank = null;
+        const query = new URLSearchParams({
+          blank_type: flowState.blankType,
+          center_id: String(flowState.centerId),
+          series: lookupSeries || "",
+        });
+        if (autoCreate) query.set("auto_create", "true");
+        flowState.currentBlank = normalizeDriverPrintBlank(
+          await apiRequest(`/blanks/forms/next?${query.toString()}`),
+        );
+        await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
+        if (flowState.currentBlank?.id) {
+          const nextParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
+          showToast(`Бланк ${currentBlank.full_number || ""} списан. Подставлен следующий номер ${nextParts.fullNumber || nextParts.number}`);
+        } else {
+          flowState.error = "Бланк списан, но следующего свободного номера в этой серии нет.";
+          showToast(flowState.error);
+        }
+      } catch (error) {
+        flowState.error = humanizeApiError(error, "Не удалось заменить бракованный бланк");
       } finally {
         flowState.loading = false;
         renderFlow();
@@ -7742,13 +10321,15 @@ async function openDriverPrintFlow(options = {}) {
 
     document.querySelectorAll("[data-driver-print-variant]").forEach((button) => {
       button.addEventListener("click", async () => {
-        await printVariant(button.dataset.driverPrintVariant || "");
+        const targetWindow = openDocumentTargetWindow();
+        await printVariant(button.dataset.driverPrintVariant || "", { targetWindow });
       });
     });
 
     document.querySelectorAll("[data-driver-print-selected-certificate]").forEach((button) => {
       button.addEventListener("click", async () => {
-        await printSelectedCertificate();
+        const targetWindow = openDocumentTargetWindow();
+        await printSelectedCertificate(button.dataset.driverPrintSelectedCertificate || "", { targetWindow });
       });
     });
   };
@@ -7789,7 +10370,6 @@ function renderDocumentsPage() {
     : data.generatedDocuments;
 
   return `
-    ${renderBlanksPage()}
     ${renderWorkflowLoadState()}
     <section class="card">
       <h3>Документы по обращению</h3>
@@ -7808,6 +10388,7 @@ function renderDocumentsPage() {
           : `<p class="muted">Сначала на главной найди клиента и создай обращение. После этого здесь появится генерация документов по выбранному обращению.</p>`
       }
     </section>
+    ${renderXmlExportDaysPanel()}
     <div class="two-col chart-main-grid">
       ${renderGeneratedDocumentsTable(visibleGeneratedDocuments)}
       ${renderDocumentJournalsTable()}
@@ -7820,10 +10401,11 @@ function renderDocumentsPage() {
 }
 
 async function openDemoDocument(typeOrId, options = {}) {
-  const { autoOpenFile = false } = options;
-  const existingDocument =
-    data.documents?.find((documentItem) => String(documentItem.id) === String(typeOrId)) ||
-    data.generatedDocuments?.find((documentItem) => String(documentItem.id) === String(typeOrId));
+  const { autoOpenFile = false, forceGenerate = false } = options;
+  const existingDocument = forceGenerate
+    ? null
+    : data.documents?.find((documentItem) => String(documentItem.id) === String(typeOrId)) ||
+      data.generatedDocuments?.find((documentItem) => String(documentItem.id) === String(typeOrId));
   let documentItem = existingDocument;
 
   try {
@@ -7836,6 +10418,21 @@ async function openDemoDocument(typeOrId, options = {}) {
   if (!documentItem) {
     showToast("Сначала выбери клиента и обращение");
     return;
+  }
+
+  if (documentItem.fileDeletedAt) {
+    showToast("XML-файл уже удален из хранилища");
+    return;
+  }
+
+  if (documentItem.downloadUrl && (forceGenerate || autoOpenFile)) {
+    try {
+      await downloadGeneratedDocument(documentItem);
+      showToast(`Документ скачивается: ${documentItem.title}`);
+      return;
+    } catch (error) {
+      showToast(humanizeApiError(error, "Не удалось скачать документ"));
+    }
   }
 
   if (documentItem.downloadUrl && (autoOpenFile || isContractDocument(documentItem))) {
@@ -7857,22 +10454,31 @@ async function openDemoDocument(typeOrId, options = {}) {
         <p>${escapeHtml(documentItem.content || "Документ сформирован на сервере.")}</p>
       </div>
       <div class="client-create-actions">
-        ${documentItem.downloadUrl ? '<button type="button" class="primary-button" id="printDocumentPreview">Отправить в печать</button>' : ""}
-        ${documentItem.downloadUrl ? '<button type="button" class="ghost-button" id="openDocumentPreview">Открыть без печати</button>' : ""}
+        ${documentItem.downloadUrl ? '<button type="button" class="primary-button" id="downloadDocumentPreview">Скачать</button>' : ""}
+        ${documentItem.downloadUrl ? '<button type="button" class="ghost-button" id="printDocumentPreview">Открыть</button>' : ""}
+        ${documentItem.downloadUrl ? '<button type="button" class="ghost-button" id="openDocumentPreview">Открыть в браузере</button>' : ""}
         <button type="button" class="primary-button" id="closeDocumentPreview">ОК</button>
       </div>
     `,
   );
 
-  document.getElementById("printDocumentPreview")?.addEventListener("click", async () => {
+  document.getElementById("downloadDocumentPreview")?.addEventListener("click", async () => {
     try {
-      if (!(await openGeneratedDocumentForPrint(documentItem))) {
-        showToast("Документ сформирован, но тихая печать не запущена");
-      } else {
-        showToast("Документ отправлен в печать");
-      }
+      await downloadGeneratedDocument(documentItem);
+      showToast("Документ скачивается");
     } catch (error) {
-      showToast(humanizeApiError(error, "Не удалось отправить документ в печать"));
+      showToast(humanizeApiError(error, "Не удалось скачать документ"));
+    }
+  });
+
+  document.getElementById("printDocumentPreview")?.addEventListener("click", async () => {
+    const targetWindow = openDocumentTargetWindow();
+    try {
+      await openGeneratedDocumentDirectly(documentItem, { targetWindow });
+      showToast("Документ открыт");
+    } catch (error) {
+      showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть документ"));
+      showToast(humanizeApiError(error, "Не удалось открыть документ"));
     }
   });
 
@@ -8096,9 +10702,7 @@ function renderRecallCalendarPage() {
       <div class="calendar-page__header">
         <div>
           <h3>Календарь сроков</h3>
-          <p class="muted">Клиенты, у которых подходит срок действия услуги. Срок берется из карточки услуги.</p>
         </div>
-        <button class="primary-button" id="refreshRecallCalendar">Обновить</button>
       </div>
 
       <div class="calendar-summary">
@@ -8191,10 +10795,12 @@ function renderContent() {
   if (appState.page === "chart") return renderAmbulatoryCardPage();
   if (appState.page === "services" && window.renderServicesPage) return window.renderServicesPage();
   if (appState.page === "calendar") return renderRecallCalendarPage();
+  if (appState.page === "xml") return renderXmlPage();
   if (appState.page === "upload") return renderClientImportPage();
   if (appState.page === "doctors") return renderDoctorsPage();
   if (appState.page === "templates") return renderTemplatesPage();
-  if (appState.page === "blanks") return renderDocumentsPage();
+  if (appState.page === "blanks") return renderBlanksPage();
+  if (appState.page === "documents") return renderDocumentsPage();
   if (appState.page === "cash") return renderCashPage();
   if (appState.page === "reports") return renderReportsPage();
   if (appState.page === "employee") return renderEmployeePage();
@@ -8207,7 +10813,7 @@ function openActionModal(title, html, className = "") {
   if (!actionModalTitle || !actionModalContent || !actionModal) return;
   actionModal.className = "modal hidden";
   if (className) {
-    actionModal.classList.add(className);
+    className.trim().split(/\s+/).filter(Boolean).forEach((item) => actionModal.classList.add(item));
   }
   actionModalTitle.textContent = repairDemoText(title);
   actionModalContent.innerHTML = repairDemoText(html);
@@ -8215,11 +10821,11 @@ function openActionModal(title, html, className = "") {
 }
 
 function formatDateInput(value) {
-  const digits = String(value || "").replace(/\D/g, "").slice(0, 6);
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
   const parts = [];
   if (digits.slice(0, 2)) parts.push(digits.slice(0, 2));
   if (digits.slice(2, 4)) parts.push(digits.slice(2, 4));
-  if (digits.slice(4, 6)) parts.push(digits.slice(4, 6));
+  if (digits.slice(4, 8)) parts.push(digits.slice(4, 8));
   return parts.join(".");
 }
 
@@ -8231,6 +10837,8 @@ function attachDateMask(root) {
     });
   });
 }
+
+window.attachDateMask = attachDateMask;
 
 let activeDatePicker = null;
 let activeDatePickerInput = null;
@@ -8412,6 +11020,7 @@ window.addEventListener("scroll", () => {
 
 function getPageTitle() {
   if (appState.page === "dashboard") return "Главная";
+  if (appState.page === "documents") return "Документы по обращению";
   return navItems.find((item) => item.id === appState.page)?.label || "Главная";
 }
 
@@ -8438,18 +11047,28 @@ function focusClientSearch() {
 
 function updateDashboardStickyOffset() {
   if (appState.page !== "dashboard") {
+    document.documentElement.style.removeProperty("--dashboard-shell-sticky-top");
+    document.documentElement.style.removeProperty("--dashboard-doctors-sticky-height");
     document.documentElement.style.removeProperty("--dashboard-sticky-offset");
     return;
   }
 
   const controls = contentRoot?.querySelector(".dashboard-sticky-controls");
+  const doctors = contentRoot?.querySelector(".dashboard-doctors-sticky");
   if (!controls) {
+    document.documentElement.style.removeProperty("--dashboard-shell-sticky-top");
+    document.documentElement.style.removeProperty("--dashboard-doctors-sticky-height");
     document.documentElement.style.removeProperty("--dashboard-sticky-offset");
     return;
   }
 
-  const height = Math.ceil(controls.getBoundingClientRect().height);
-  document.documentElement.style.setProperty("--dashboard-sticky-offset", `${height}px`);
+  const shellHeader = document.querySelector(".sidebar");
+  const shellTop = shellHeader ? Math.ceil(shellHeader.getBoundingClientRect().height) : 0;
+  const doctorsHeight = doctors ? Math.ceil(doctors.getBoundingClientRect().height) : 0;
+  const controlsHeight = Math.ceil(controls.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--dashboard-shell-sticky-top", `${shellTop}px`);
+  document.documentElement.style.setProperty("--dashboard-doctors-sticky-height", `${doctorsHeight}px`);
+  document.documentElement.style.setProperty("--dashboard-sticky-offset", `${doctorsHeight + controlsHeight}px`);
 }
 
 function bindDashboardTableScrollSync() {
@@ -8548,7 +11167,7 @@ function readOperatorVisitForm(form) {
   };
 }
 
-async function saveOperatorVisitForm({ recalculate = false, close = false } = {}) {
+async function saveOperatorVisitForm({ recalculate = false, close = false, skipAutoDocuments = false } = {}) {
   const form = document.getElementById("operatorVisitForm");
   if (!form) return null;
 
@@ -8576,7 +11195,8 @@ async function saveOperatorVisitForm({ recalculate = false, close = false } = {}
   const autoDocumentConfig =
     !recalculate &&
     !close &&
-    Boolean(visit.backendId)
+    Boolean(visit.backendId) &&
+    !skipAutoDocuments
       ? getAutoGeneratedMedicalDocumentConfig(visit)
       : null;
 
@@ -8595,7 +11215,7 @@ async function saveOperatorVisitForm({ recalculate = false, close = false } = {}
             getDocumentsForVisit(visit.id).find((item) => String(item.templateId || "") === String(template.id)) || null;
         }
 
-        appState.page = "blanks";
+        appState.page = "documents";
           await loadWorkflowData({
             clientId: selectedClient?.backendId || selectedClient?.id || null,
             encounterId: visit.backendId || null,
@@ -8612,6 +11232,53 @@ async function saveOperatorVisitForm({ recalculate = false, close = false } = {}
   }
 
   return visit;
+}
+
+async function prepareContractPrintContext() {
+  const initialClient = getSelectedClient();
+  if (!initialClient) return { client: null, visit: null };
+
+  const client = await ensureFullClientLoaded(initialClient) || initialClient;
+  appState.selectedClientId = client.id;
+
+  const form = document.getElementById("operatorVisitForm");
+  const visit = form
+    ? await saveOperatorVisitForm({ skipAutoDocuments: true })
+    : await (async () => {
+        await loadEncountersForClient(client);
+        const draftVisit = getOrCreateDraftVisit(client.id);
+        if (draftVisit) {
+          await syncVisitToBackend(draftVisit, client);
+        }
+        return draftVisit;
+      })();
+
+  if (visit) {
+    appState.activeVisitId = visit.id;
+    persistDemoState();
+  }
+
+  return { client, visit };
+}
+
+async function printContractForCurrentVisit({ rerender = true } = {}) {
+  const targetWindow = openDocumentTargetWindow("Договор формируется. Не закрывайте это окно.");
+  try {
+    const { client, visit } = await prepareContractPrintContext();
+    if (!client || !visit) {
+      showDocumentTargetError(targetWindow, "Сначала выберите клиента и обращение.");
+      showToast("Сначала выбери клиента и обращение");
+      return;
+    }
+
+    const documentItem = await printDocumentForVisit("contract", client, visit, { targetWindow });
+    showToast(`Договор открыт: ${documentItem?.title || "документ"}`);
+    if (rerender) renderApp();
+  } catch (error) {
+    showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть договор"));
+    console.error(error);
+    showToast(humanizeApiError(error, "Не удалось отправить договор в печать"));
+  }
 }
 
 function renderAppKeepingOperatorVisitPosition(form) {
@@ -8659,6 +11326,11 @@ function bindContentEvents() {
       persistDemoState();
       renderApp();
     });
+  }
+
+  const cashPrintReportButton = document.getElementById("cashPrintReportButton");
+  if (cashPrintReportButton) {
+    cashPrintReportButton.addEventListener("click", printCashReport);
   }
 
   const reportDateFromInput = document.getElementById("reportDateFrom");
@@ -8713,8 +11385,10 @@ function bindContentEvents() {
       appState.clientEncounterDate = "";
       appState.clientEncounterDateFrom = document.getElementById("clientEncounterDateFromInput")?.value || "";
       appState.clientEncounterDateTo = document.getElementById("clientEncounterDateToInput")?.value || "";
+      appState.clientPeriodFilterApplied = Boolean(appState.clientEncounterDateFrom || appState.clientEncounterDateTo);
       appState.dashboardPage = 1;
       appState.selectedClientId = null;
+      appState.selectedEncounterId = null;
       appState.activeVisitId = null;
       persistDemoState();
       scheduleClientSearch(appState.clientSearch || "");
@@ -8726,9 +11400,11 @@ function bindContentEvents() {
     clearClientPeriodFilterButton.addEventListener("click", () => {
       appState.clientEncounterDate = "";
       appState.clientEncounterDateFrom = "";
-      appState.clientEncounterDateTo = getLocalDateInputValue();
+      appState.clientEncounterDateTo = "";
+      appState.clientPeriodFilterApplied = false;
       appState.dashboardPage = 1;
       appState.selectedClientId = null;
+      appState.selectedEncounterId = null;
       appState.activeVisitId = null;
       persistDemoState();
       scheduleClientSearch(appState.clientSearch || "");
@@ -8756,14 +11432,39 @@ function bindContentEvents() {
 
   const createVisitFromDashboardButton = document.getElementById("createVisitFromDashboardButton");
   if (createVisitFromDashboardButton) {
-    createVisitFromDashboardButton.addEventListener("click", () => {
-      const selectedClient = getSelectedClient();
-      if (!selectedClient) {
-        showToast("Сначала выбери клиента");
-        return;
+    createVisitFromDashboardButton.addEventListener("click", async () => {
+      createVisitFromDashboardButton.disabled = true;
+      try {
+        const encounterTarget = getNewEncounterTargetClient();
+        if (!encounterTarget) {
+          showToast("Найдите одного клиента или выберите его в таблице");
+          return;
+        }
+        const fullClient = await ensureFullClientLoaded(encounterTarget);
+        appState.selectedClientId = fullClient.id;
+        if (window.openClientModal) {
+          window.openClientModal(fullClient.id, { encounterMode: true, client: fullClient });
+        }
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось загрузить полную карточку клиента"));
+      } finally {
+        if (createVisitFromDashboardButton.isConnected) {
+          createVisitFromDashboardButton.disabled = false;
+        }
       }
-      if (window.openClientModal) {
-        window.openClientModal(selectedClient.id, { encounterMode: true });
+    });
+  }
+
+  const printSelectedClientContractButton = document.getElementById("printSelectedClientContractButton");
+  if (printSelectedClientContractButton) {
+    printSelectedClientContractButton.addEventListener("click", async () => {
+      printSelectedClientContractButton.disabled = true;
+      try {
+        await printContractForCurrentVisit();
+      } finally {
+        if (printSelectedClientContractButton.isConnected) {
+          printSelectedClientContractButton.disabled = false;
+        }
       }
     });
   }
@@ -8918,15 +11619,9 @@ function bindContentEvents() {
 
   const createVisitButton = document.getElementById("createVisitButton");
   if (createVisitButton) {
-    createVisitButton.addEventListener("click", () => {
+    createVisitButton.addEventListener("click", async () => {
       const selectedClient = getSelectedClient();
-      if (!selectedClient) {
-        showToast("Сначала выбери клиента");
-        return;
-      }
-      if (window.openClientModal) {
-        window.openClientModal(selectedClient.id, { encounterMode: true });
-      }
+      await createVisitAndOpenEditor(selectedClient);
     });
   }
 
@@ -8955,8 +11650,9 @@ function bindContentEvents() {
         const patch = readOperatorVisitForm(operatorVisitForm);
         const amountInput = operatorVisitForm.querySelector('input[name="amount"]');
         if (amountInput) amountInput.value = String(calculateVisitAmountByIds(patch.serviceIds, patch.serviceDetails));
-        await saveOperatorVisitForm({ recalculate: true });
+        const savePromise = saveOperatorVisitForm({ recalculate: true });
         renderAppKeepingOperatorVisitPosition(operatorVisitForm);
+        await savePromise;
       });
     });
 
@@ -8965,8 +11661,9 @@ function bindContentEvents() {
         const patch = readOperatorVisitForm(operatorVisitForm);
         const amountInput = operatorVisitForm.querySelector('input[name="amount"]');
         if (amountInput) amountInput.value = String(calculateVisitAmountByIds(patch.serviceIds, patch.serviceDetails));
-        await saveOperatorVisitForm({ recalculate: true });
+        const savePromise = saveOperatorVisitForm({ recalculate: true });
         renderAppKeepingOperatorVisitPosition(operatorVisitForm);
+        await savePromise;
       });
     });
   }
@@ -9002,16 +11699,27 @@ function bindContentEvents() {
     openVisitDocumentsButton.addEventListener("click", async () => {
       const visit = await saveOperatorVisitForm();
       const selectedClient = getSelectedClient();
-      appState.page = "blanks";
+      appState.page = "documents";
       await loadWorkflowData({
         clientId: selectedClient?.backendId || selectedClient?.id || null,
         encounterId: visit?.backendId || null,
       });
-      if (typeof window.loadBlanksData === "function") {
-        await window.loadBlanksData({ force: true });
-      }
       renderApp();
       showToast("Открыты документы по обращению");
+    });
+  }
+
+  const printVisitContractButton = document.getElementById("printVisitContractButton");
+  if (printVisitContractButton) {
+    printVisitContractButton.addEventListener("click", async () => {
+      printVisitContractButton.disabled = true;
+      try {
+        await printContractForCurrentVisit();
+      } finally {
+        if (printVisitContractButton.isConnected) {
+          printVisitContractButton.disabled = false;
+        }
+      }
     });
   }
 
@@ -9103,13 +11811,63 @@ function bindContentEvents() {
         openDriverPrintFlow();
         return;
       }
-      openDemoDocument(documentType);
+      openDemoDocument(documentType, { forceGenerate: true });
     });
   });
 
   contentRoot.querySelectorAll("[data-open-document-id]").forEach((button) => {
     button.addEventListener("click", () => {
       openDemoDocument(button.dataset.openDocumentId);
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-download-xml-export-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const exportDate = button.dataset.downloadXmlExportDay || "";
+      if (!exportDate) return;
+      button.disabled = true;
+      try {
+        await downloadXmlExportDayArchive(exportDate);
+        showToast("XML-архив скачивается");
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось скачать XML-архив"));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-delete-xml-export-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const exportDate = button.dataset.deleteXmlExportDay || "";
+      if (!exportDate) return;
+      if (!window.confirm(`Удалить XML-файлы за ${formatApiDate(exportDate) || exportDate}?`)) return;
+      button.disabled = true;
+      try {
+        await deleteXmlExportDay(exportDate);
+        showToast("XML-файлы за день удалены");
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось удалить XML-файлы за день"));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-delete-xml-document-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const documentItem = data.generatedDocuments?.find((item) => String(item.id) === String(button.dataset.deleteXmlDocumentId));
+      if (!documentItem) return;
+      if (!window.confirm(`Удалить XML-файл "${documentItem.fileName || documentItem.title}"?`)) return;
+      button.disabled = true;
+      try {
+        await deleteXmlGeneratedDocument(documentItem);
+        showToast("XML-файл удален");
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось удалить XML-файл"));
+      } finally {
+        button.disabled = false;
+      }
     });
   });
 
@@ -9127,33 +11885,15 @@ function bindContentEvents() {
   });
 
   contentRoot.querySelectorAll("[data-client-id]").forEach((button) => {
-    button.addEventListener("dblclick", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (clientRowClickTimer) {
-        window.clearTimeout(clientRowClickTimer);
-        clientRowClickTimer = null;
-      }
-      const nextClientId = Number(button.dataset.clientId);
-      appState.selectedClientId = nextClientId;
-      appState.activeVisitId = getCurrentVisitForClient(appState.selectedClientId)?.id || null;
-      persistDemoState();
-      let selectedClient = getSelectedClient();
-      try {
-        selectedClient = await ensureFullClientLoaded(selectedClient);
-      } catch (error) {
-        showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
-        return;
-      }
-      if (selectedClient) await openAmbulatoryCardForCurrentClient();
-    });
-
     button.addEventListener("click", async (event) => {
       event.preventDefault();
       const doctorCell = event.target.closest("[data-row-doctor-role-id]");
       const doctorRoleId = doctorCell?.dataset.rowDoctorRoleId || "";
       const nextClientId = Number(button.dataset.clientId);
+      const nextEncounterId = button.dataset.encounterId ? Number(button.dataset.encounterId) : null;
       const wasSameSelectedClient = String(appState.selectedClientId) === String(nextClientId);
+      const wasSameEncounter = String(appState.selectedEncounterId || "") === String(nextEncounterId || "");
+      const wasSameSelection = wasSameSelectedClient && wasSameEncounter;
       if (
         doctorRoleId &&
         Number(window.__suppressDoctorCellClickUntil || 0) > Date.now()
@@ -9165,7 +11905,9 @@ function bindContentEvents() {
         clientRowClickTimer = window.setTimeout(async () => {
           clientRowClickTimer = null;
           appState.selectedClientId = nextClientId;
-          appState.activeVisitId = getCurrentVisitForClient(appState.selectedClientId)?.id || null;
+          appState.selectedEncounterId = nextEncounterId;
+          const loadedVisit = activateClientEncounter(nextClientId, nextEncounterId);
+          appState.activeVisitId = loadedVisit?.id || null;
           persistDemoState();
           renderApp();
           let selectedClient = getSelectedClient();
@@ -9175,9 +11917,10 @@ function bindContentEvents() {
             showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
             return;
           }
-          renderApp();
-          if (!wasSameSelectedClient) {
-            await loadClientWorkspace(selectedClient);
+          if (!wasSameSelection || !loadedVisit) {
+            await loadClientWorkspace(selectedClient, { encounterId: nextEncounterId });
+          } else {
+            renderApp();
           }
         }, CLIENT_ROW_SINGLE_CLICK_DELAY);
         return;
@@ -9187,7 +11930,9 @@ function bindContentEvents() {
         clientRowClickTimer = null;
       }
       appState.selectedClientId = nextClientId;
-      appState.activeVisitId = getCurrentVisitForClient(appState.selectedClientId)?.id || null;
+      appState.selectedEncounterId = nextEncounterId;
+      const loadedVisit = activateClientEncounter(nextClientId, nextEncounterId);
+      appState.activeVisitId = loadedVisit?.id || null;
       persistDemoState();
       renderApp();
       let selectedClient = getSelectedClient();
@@ -9197,28 +11942,60 @@ function bindContentEvents() {
         showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
         return;
       }
-      renderApp();
-      if (!doctorRoleId || !wasSameSelectedClient) {
-        await loadClientWorkspace(selectedClient);
+      if (!wasSameSelection || !loadedVisit) {
+        await loadClientWorkspace(selectedClient, { encounterId: nextEncounterId });
+      } else {
+        renderApp();
       }
 
       if (selectedClient && doctorRoleId) {
         const activeVisit = getCurrentVisitForClient(selectedClient.id) || getOrCreateDraftVisit(selectedClient.id);
         if (doctorRoleId === "print") {
-          await openDriverPrintFlow();
+          await openPrintFlowForVisit(selectedClient, activeVisit);
           return;
         }
         await loadDoctorExamsForClient(selectedClient, activeVisit);
-        const currentExam = getDoctorExam(selectedClient.id, activeVisit.id, doctorRoleId);
-        if (currentExam?.isCompleted) {
-          openCompletedDoctorExamActions({ selectedClient, activeVisit, doctorRoleId, currentExam });
-          return;
-        }
         openDoctorExamCard({
           clientId: selectedClient.id,
           visitId: activeVisit.id,
           doctorRoleId,
         });
+      }
+    });
+
+    button.addEventListener("dblclick", async (event) => {
+      if (
+        event.target.closest("[data-row-doctor-role-id]") ||
+        event.target.closest("[data-copy-value]") ||
+        event.target.closest("a, input, select, textarea")
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (clientRowClickTimer) {
+        window.clearTimeout(clientRowClickTimer);
+        clientRowClickTimer = null;
+      }
+
+      const nextClientId = Number(button.dataset.clientId);
+      const nextEncounterId = button.dataset.encounterId ? Number(button.dataset.encounterId) : null;
+      appState.selectedClientId = nextClientId;
+      appState.selectedEncounterId = nextEncounterId;
+      appState.activeVisitId = activateClientEncounter(nextClientId, nextEncounterId)?.id || null;
+      persistDemoState();
+
+      let selectedClient = getSelectedClient();
+      try {
+        selectedClient = await ensureFullClientLoaded(selectedClient);
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось загрузить карточку клиента"));
+        return;
+      }
+
+      if (selectedClient && window.openClientModal) {
+        window.openClientModal(selectedClient.id, { client: selectedClient });
       }
     });
   });
@@ -9288,7 +12065,7 @@ function bindContentEvents() {
           showToast("Браузер заблокировал окно шаблона. Разрешите всплывающие окна для демо.");
         }
       } catch (error) {
-        showToast(humanizeApiError(error, "Не удалось открыть файловый шаблон"));
+        showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
       }
     });
   });
@@ -9300,6 +12077,21 @@ function bindContentEvents() {
       if (!templateId || !input) return;
       input.dataset.templateId = templateId;
       input.click();
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-reset-document-template]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const templateId = button.dataset.resetDocumentTemplate;
+      if (!templateId || !window.confirm("Удалить клиентскую версию и вернуть встроенный шаблон?")) return;
+      data.templateOperationStatus = "Возвращаем встроенный шаблон...";
+      renderApp();
+      try {
+        await resetDocumentTemplateFile(templateId);
+      } catch (error) {
+        data.templateOperationStatus = humanizeApiError(error, "Не удалось вернуть исходный шаблон");
+        renderApp();
+      }
     });
   });
 
@@ -9351,6 +12143,12 @@ function bindContentEvents() {
   const chairmanForm = contentRoot.querySelector('.chairman-form[data-doctor-role-id="chairman"]');
   const chairmanActions = chairmanForm?.querySelector(".chairman-actions");
   if (chairmanForm && chairmanActions && !chairmanActions.querySelector("[data-chairman-print]")) {
+    const formExam = data.doctorExams.find((item) => String(item.id) === String(chairmanForm.dataset.examId || ""));
+    const formVisit = formExam
+      ? data.visits.find((item) => String(item.id) === String(formExam.visitId))
+      : getCurrentVisitForClient(appState.selectedClientId);
+    const formPrintAction = getChairmanPrintActionForVisit(formVisit);
+    const opensPrintMenu = formPrintAction.kind === "menu";
     const createPrintButton = (label, kind) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -9359,43 +12157,326 @@ function bindContentEvents() {
       button.textContent = label;
       return button;
     };
-    const initialExamId = chairmanForm.dataset.examId;
-    const initialExam = initialExamId ? data.doctorExams.find((item) => String(item.id) === String(initialExamId)) : null;
-    const initialClient = initialExam
-      ? getClientPool().find((item) => String(item.id) === String(initialExam.clientId))
-      : getSelectedClient();
-    const initialVisit = initialExam
-      ? data.visits.find((item) => String(item.id) === String(initialExam.visitId))
-      : initialClient
-        ? getCurrentVisitForClient(initialClient.id)
-        : null;
-    const initialFormInfo = getChairmanFormInfo(initialVisit, initialClient);
-    const printButtons =
-      initialFormInfo.type === "prof"
-        ? [createPrintButton("Печать заключения", "conclusion"), createPrintButton("Печать выписки", "extract")]
-        : [createPrintButton("Печать", "conclusion")];
-    printButtons
-      .slice()
-      .reverse()
-      .forEach((button) => chairmanActions.prepend(button));
+    const printButton = createPrintButton(formPrintAction.label, formPrintAction.kind || "conclusion");
+    chairmanActions.prepend(printButton);
 
-    const handleChairmanPrint = async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const printKind = event.currentTarget?.dataset.chairmanPrint || "conclusion";
-      const actionLabel = printKind === "extract" ? "выписка" : "заключение";
-      const currentButton = event.currentTarget;
+    let chairmanPrintBlankState = {
+      blanks: new Map(),
+      findBlank: async () => null,
+    };
 
+    const openChairmanPrintMenu = () => {
+      const exam = data.doctorExams.find((item) => String(item.id) === String(chairmanForm.dataset.examId || ""));
+      const client = exam
+        ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
+        : getSelectedClient();
+      const visit = exam
+        ? data.visits.find((item) => String(item.id) === String(exam.visitId))
+        : client
+          ? getCurrentVisitForClient(client.id)
+          : formVisit;
+      const existingBlankNumber =
+        (visit ? getDocumentsForVisit(visit.id).find((item) => String(item.blankNumber || "").trim())?.blankNumber : "") ||
+        client?.referenceNumber ||
+        client?.rawApiClient?.reference_number ||
+        "";
+      const centerName = getCenterNameForContext(visit?.centerId || client?.centerId, visit, client);
+      const selectedPrintBlanks = new Map();
+      const certificatePrintGroup = CHAIRMAN_CERTIFICATE_PRINT_GROUPS.get(getChairmanFormConfigForVisit(visit).type) || null;
+      const certificateTemplateMenu = Boolean(certificatePrintGroup);
+      let selectedCertificateType = certificatePrintGroup?.currentType || "";
+      let selectedCertificateSeries = getChairmanCertificatePrintSeries(selectedCertificateType, client);
+      let selectedBlankSeries = getChairmanFormConfigForVisit(visit).type === "prof" ? "29Н" : "ЛМК";
+      const getSelectedCertificateSeries = () => selectedCertificateSeries;
+      chairmanPrintBlankState = {
+        blanks: selectedPrintBlanks,
+        findBlank: async () => null,
+        selectedSeries: certificateTemplateMenu ? selectedCertificateSeries : selectedBlankSeries,
+      };
+      const splitExistingBlankNumber = (series) => {
+        const normalizedSeries = normalizeBlankSeries(series);
+        const documentBlank = visit
+          ? getDocumentsForVisit(visit.id).find((item) => normalizeBlankSeries(item.blankNumber).toLowerCase().startsWith(normalizedSeries.toLowerCase()))?.blankNumber
+          : "";
+        const fullNumber = normalizeBlankSeries(documentBlank || (normalizedSeries === "ЛМК" ? existingBlankNumber : ""));
+        if (!fullNumber) return "";
+        return fullNumber.toLowerCase().startsWith(normalizedSeries.toLowerCase())
+          ? fullNumber.slice(normalizedSeries.length).trim()
+          : fullNumber;
+      };
+      const findLatestCertificateDocument = (certificateType) => {
+        if (!visit) return null;
+        const template = pickDocumentTemplate(certificateType, visit, client);
+        const templateName = String(template?.name || "").toLowerCase();
+        const templateFileName = String(template?.file_name || "").toLowerCase();
+        return getDocumentsForVisit(visit.id).find((item) => {
+          if (template?.id && String(item.templateId || "") === String(template.id)) return true;
+          const haystack = `${item.title || ""} ${item.fileName || ""}`.toLowerCase();
+          return (templateName && haystack.includes(templateName)) || (templateFileName && haystack.includes(templateFileName));
+        }) || null;
+      };
+      if (certificateTemplateMenu) {
+        certificatePrintGroup.items.forEach(([certificateType]) => {
+          const series = getChairmanCertificatePrintSeries(certificateType, client);
+          if (!series) return;
+          const previousDocument = findLatestCertificateDocument(certificateType);
+          if (previousDocument?.blankFormId) {
+            selectedPrintBlanks.set(series, {
+              id: previousDocument.blankFormId,
+              series,
+              full_number: previousDocument.blankNumber || "",
+              status: "issued",
+              generated_document_id: previousDocument.backendId || previousDocument.id || null,
+            });
+          }
+        });
+      }
+      openActionModal(
+        "Печать результатов:",
+        certificateTemplateMenu
+          ? `
+          <div class="driver-print-classic chairman-print-results chairman-print-results--certificates">
+            ${renderPrintCenterContext(centerName)}
+            <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
+
+            <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
+            <div class="driver-print-classic__lookup">
+              <input id="chairmanCertificateBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(getSelectedCertificateSeries())}" aria-label="Серия бланка" role="button" readonly />
+              <input id="chairmanCertificateBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(getSelectedCertificateSeries()))}" readonly />
+              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-certificate-find-blank>Найти номер</button>
+            </div>
+
+            <div class="chairman-print-results__row chairman-print-results__row--top">
+              <button type="button" class="driver-print-classic__button" data-chairman-print-current-certificate>Печать справки</button>
+              <button type="button" class="driver-print-classic__button" data-chairman-print-certificate-duplicate>Печать дубликата</button>
+            </div>
+            ${certificatePrintGroup.items.map(([type, label]) => `<button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="${escapeHtml(type)}_certificate">${escapeHtml(label)}</button>`).join("")}
+          </div>
+        `
+          : `
+          <div class="driver-print-classic chairman-print-results">
+            ${renderPrintCenterContext(centerName)}
+            <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
+
+            <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
+            <div class="driver-print-classic__lookup">
+              <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка" role="button" readonly />
+              <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
+              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
+            </div>
+
+            <div class="chairman-print-results__row chairman-print-results__row--top">
+              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_certificate">Печать справки</button>
+              <button type="button" class="driver-print-classic__button" disabled>Печать дубликата</button>
+            </div>
+            <div class="chairman-print-results__row">
+              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Присвоить ЛМК</button>
+              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
+            </div>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_conclusion">Проф. осмотр</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory_extract">Выписка из амбулаторной карты</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory">Амб. Карта 25У</button>
+            <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__wide--right" disabled>Результат ЭКГ</button>
+          </div>
+        `,
+        "modal--driver-print",
+      );
+
+      const selectCertificateType = (certificateType) => {
+        if (!certificatePrintGroup?.items.some(([type]) => type === certificateType)) return;
+        const defaultSeries = getChairmanCertificatePrintSeries(certificateType, client);
+        if (!defaultSeries) return;
+        const certificateTypeChanged = selectedCertificateType !== certificateType;
+        selectedCertificateType = certificateType;
+        if (certificateTypeChanged || !selectedCertificateSeries) {
+          selectedCertificateSeries = defaultSeries;
+        }
+        const series = getSelectedCertificateSeries();
+        chairmanPrintBlankState.selectedSeries = series;
+        const blank = selectedPrintBlanks.get(series);
+        const blankParts = blank ? getDriverPrintBlankParts(blank, series) : null;
+        const seriesInput = document.getElementById("chairmanCertificateBlankSeries");
+        const numberInput = document.getElementById("chairmanCertificateBlankNumber");
+        if (seriesInput) seriesInput.value = series;
+        if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(series);
+      };
+
+      const selectCertificateSeries = (series) => {
+        const normalizedSeries = normalizeBlankSeries(series);
+        if (!normalizedSeries) return;
+        selectedCertificateSeries = normalizedSeries;
+        chairmanPrintBlankState.selectedSeries = normalizedSeries;
+        const seriesInput = document.getElementById("chairmanCertificateBlankSeries");
+        const numberInput = document.getElementById("chairmanCertificateBlankNumber");
+        const blank = selectedPrintBlanks.get(normalizedSeries);
+        const blankParts = blank ? getDriverPrintBlankParts(blank, normalizedSeries) : null;
+        if (seriesInput) seriesInput.value = normalizedSeries;
+        if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
+      };
+
+      const selectBlankSeries = (series) => {
+        const normalizedSeries = normalizeBlankSeries(series);
+        if (!normalizedSeries) return;
+        selectedBlankSeries = normalizedSeries;
+        chairmanPrintBlankState.selectedSeries = normalizedSeries;
+        const seriesInput = document.getElementById("chairmanPrintBlankSeries");
+        const numberInput = document.getElementById("chairmanPrintBlankNumber");
+        const blank = selectedPrintBlanks.get(normalizedSeries);
+        const blankParts = blank ? getDriverPrintBlankParts(blank, normalizedSeries) : null;
+        if (seriesInput) seriesInput.value = normalizedSeries;
+        if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
+      };
+
+      const findChairmanBlank = async (series, button = null) => {
+        const normalizedSeries = normalizeBlankSeries(series);
+        const input = certificateTemplateMenu
+          ? document.getElementById("chairmanCertificateBlankNumber")
+          : document.getElementById("chairmanPrintBlankNumber");
+        if (!client || !visit) {
+          showToast("Сначала выбери клиента и обращение");
+          return null;
+        }
+
+        if (button) button.disabled = true;
+        try {
+          const centerId = await resolveCenterIdForVisit(visit, client);
+          const certificateType = getDriverPrintCertificateType(normalizedSeries);
+          const lookupSeries = isNumberedCertificatePrintType(certificateType)
+            ? getNumberedCertificateLookupSeriesForType(certificateType)
+            : normalizedSeries;
+          const query = new URLSearchParams({
+            blank_type: "driver_medical_certificate",
+            center_id: String(centerId),
+            series: lookupSeries,
+          });
+          let blank = null;
+          const shouldAutoCreateImmediately =
+            !isNumberedCertificatePrintType(certificateType) &&
+            !isPreenteredBlankSeries(normalizedSeries) &&
+            !canAutoCreateChairmanBlankSeries(normalizedSeries);
+          try {
+            if (shouldAutoCreateImmediately) query.set("auto_create", "true");
+            blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
+          } catch (error) {
+            if (isNumberedCertificatePrintType(certificateType) || !canAutoCreateChairmanBlankSeries(normalizedSeries)) {
+              throw error;
+            }
+            query.set("auto_create", "true");
+            blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
+          }
+          selectedPrintBlanks.set(normalizedSeries, blank);
+          const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
+          const resolvedBlankNumber = blankParts.number || blankParts.fullNumber || "";
+          if (input) input.value = resolvedBlankNumber;
+          showToast(resolvedBlankNumber ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
+          return blank;
+        } catch (error) {
+          selectedPrintBlanks.delete(normalizedSeries);
+          if (input && !input.value) input.value = splitExistingBlankNumber(normalizedSeries);
+          showToast(humanizeApiError(error, `Свободный номер ${normalizedSeries} не найден`));
+          return null;
+        } finally {
+          if (button) button.disabled = false;
+        }
+      };
+      chairmanPrintBlankState.findBlank = findChairmanBlank;
+
+      actionModalContent?.querySelectorAll("[data-chairman-print-find-blank]").forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          await findChairmanBlank(selectedBlankSeries, event.currentTarget);
+        });
+      });
+
+      const chairmanSeriesInput = actionModalContent?.querySelector("#chairmanPrintBlankSeries");
+      const openChairmanSeriesPicker = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openDriverPrintSeriesPicker({
+          value: selectedBlankSeries,
+          options: getDriverPrintSeriesPickerOptions([]),
+          onSelect: selectBlankSeries,
+        });
+      };
+      chairmanSeriesInput?.addEventListener("click", openChairmanSeriesPicker);
+      chairmanSeriesInput?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") openChairmanSeriesPicker(event);
+      });
+
+      const chairmanCertificateSeriesInput = actionModalContent?.querySelector("#chairmanCertificateBlankSeries");
+      const openChairmanCertificateSeriesPicker = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openDriverPrintSeriesPicker({
+          value: getSelectedCertificateSeries(),
+          options: getDriverPrintSeriesPickerOptions([]),
+          onSelect: selectCertificateSeries,
+        });
+      };
+      chairmanCertificateSeriesInput?.addEventListener("click", openChairmanCertificateSeriesPicker);
+      chairmanCertificateSeriesInput?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") openChairmanCertificateSeriesPicker(event);
+      });
+
+      actionModalContent?.querySelector("[data-chairman-certificate-find-blank]")?.addEventListener("click", async (event) => {
+        await findChairmanBlank(getSelectedCertificateSeries(), event.currentTarget);
+      });
+
+      actionModalContent?.querySelector("[data-chairman-print-current-certificate]")?.addEventListener("click", async (event) => {
+        const targetWindow = openDocumentTargetWindow("Справка формируется. Не закрывайте это окно.");
+        await runChairmanPrint(`${selectedCertificateType}_certificate`, "справку", event.currentTarget, targetWindow);
+      });
+
+      actionModalContent?.querySelector("[data-chairman-print-certificate-duplicate]")?.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const targetWindow = openDocumentTargetWindow("Открываем дубликат справки.");
+        const latestDocument = findLatestCertificateDocument(selectedCertificateType);
+        if (!latestDocument) {
+          showDocumentTargetError(targetWindow, "Для этой справки еще нет напечатанного документа.");
+          showToast("Для этой справки еще нет напечатанного документа");
+          return;
+        }
+        try {
+          await openGeneratedDocumentDirectly(latestDocument, { targetWindow });
+          showToast(`Дубликат открыт: ${latestDocument.title || getCertificatePrintTypeLabel(selectedCertificateType)}`);
+        } catch (error) {
+          showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть дубликат"));
+          showToast(humanizeApiError(error, "Не удалось открыть дубликат"));
+        }
+      });
+
+      actionModalContent?.querySelectorAll("[data-chairman-print-menu-kind]").forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const printKind = button.dataset.chairmanPrintMenuKind || "conclusion";
+          const certificateType = printKind.endsWith("_certificate") ? printKind.replace(/_certificate$/, "") : "";
+          if (certificateTemplateMenu && certificateType) {
+            selectCertificateType(certificateType);
+          }
+          const targetWindow = openDocumentTargetWindow("Документ формируется. Не закрывайте это окно.");
+          await runChairmanPrint(
+            printKind,
+            button.textContent?.trim() || "документ",
+            button,
+            targetWindow,
+          );
+        });
+      });
+    };
+
+    const runChairmanPrint = async (printKind, actionLabel, currentButton, targetWindow = null) => {
       const examId = chairmanForm.dataset.examId;
       if (!examId) {
+        showDocumentTargetError(targetWindow, "Не удалось подготовить печать из окна председателя.");
         showToast("Не удалось подготовить печать из окна председателя");
         return;
       }
 
       if (currentButton) currentButton.disabled = true;
       const values = collectChairmanModalFormValues(chairmanForm);
-      const saved = await window.saveDoctorExam?.(examId, values);
+      const saved = await window.saveDoctorExam?.(examId, values, { waitForSecondarySync: false });
       if (!saved) {
+        showDocumentTargetError(targetWindow, "Не удалось сохранить карточку врача перед печатью.");
         if (currentButton) currentButton.disabled = false;
         return;
       }
@@ -9411,13 +12492,64 @@ function bindContentEvents() {
           : null;
       const printType = getChairmanTemplatePrintType(visit, printKind);
       const formInfo = getChairmanFormInfo(visit, client);
+      if (formInfo.printMode === "driver-flow") {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
+        if (client && visit) {
+          appState.selectedClientId = client.id;
+          appState.activeVisitId = visit.id;
+          persistDemoState();
+        }
+        window.closeDoctorExamCard?.();
+        await window.openDriverPrintFlow?.();
+        return;
+      }
 
-      if (formInfo.printMode !== "driver-flow" && printType) {
+      const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
+      const isExplicitCertificateTemplate = String(printKind || "").endsWith("_certificate");
+      const certificatePrintFlowOptions = isExplicitCertificateTemplate ? null : getChairmanCertificatePrintFlowOptions(printType);
+
+      if (numberedCertificateSeries || certificatePrintFlowOptions) {
+        if (targetWindow && !targetWindow.closed) targetWindow.close();
+        window.closeDoctorExamCard?.();
+        const selectedFlowSeries = chairmanPrintBlankState.selectedSeries || numberedCertificateSeries;
+        await window.openDriverPrintFlow?.({
+          ...(certificatePrintFlowOptions || {}),
+          ...(numberedCertificateSeries
+            ? {
+                preselectedSeries: selectedFlowSeries,
+                preselectedBlank: chairmanPrintBlankState.blanks.get(selectedFlowSeries) || null,
+                selectedCertificateType: printType || "",
+                legacyCertificateFlow: true,
+              }
+            : {}),
+        });
+        return;
+      }
+
+      if (printType) {
         try {
-          const documentItem = await printDocumentForVisit(printType, client, visit);
+          const directPrintType = printType === "driver" ? "medical" : printType;
+          const printOptions = { targetWindow };
+          const certificateType = isExplicitCertificateTemplate ? printType : "";
+          const requiredBlankSeries = certificateType
+            ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
+            : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
+          if (requiredBlankSeries) {
+            let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
+            if (!selectedBlank?.id) {
+              showDocumentTargetError(targetWindow, `Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}.`);
+              showToast(`Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}`);
+              if (currentButton) currentButton.disabled = false;
+              return;
+            }
+            printOptions.blankFormId = Number(selectedBlank.id);
+          }
+          const documentItem = await printDocumentForVisit(directPrintType, client, visit, printOptions);
+          actionModal?.classList.add("hidden");
           window.closeDoctorExamCard?.();
-          showToast(`Отправлено в печать: ${actionLabel}`);
+          showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
         } catch (error) {
+          showDocumentTargetError(targetWindow, humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));
           console.error(error);
           if (currentButton) currentButton.disabled = false;
           showToast(humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));
@@ -9429,7 +12561,16 @@ function bindContentEvents() {
       await window.openDriverPrintFlow?.();
     };
 
-    printButtons.forEach((button) => button.addEventListener("click", handleChairmanPrint));
+    printButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (opensPrintMenu) {
+        openChairmanPrintMenu();
+        return;
+      }
+      const targetWindow = openDocumentTargetWindow("Документ формируется. Не закрывайте это окно.");
+      await runChairmanPrint(printButton.dataset.chairmanPrint || "conclusion", printButton.textContent?.trim() || "\u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442", printButton, targetWindow);
+    });
   }
 
   window.bindBlanksHandlers?.();
@@ -9468,6 +12609,24 @@ function renderApp() {
   _clientPoolCache = null;
   if (appState.page === "reports" && !canAccessReportsWorkspace()) {
     appState.page = appState.auth.accessToken ? "employee" : "dashboard";
+  }
+  document.body.dataset.page = appState.page;
+  const workspaceCenterName = getWorkspaceCenterName();
+  document.body.dataset.center = workspaceCenterName === "Медцентр 2" ? "center-2" : "center-1";
+
+  if (centerSelect) {
+    centerSelect.value = workspaceCenterName;
+  }
+  if (workspaceCenter) {
+    workspaceCenter.dataset.center = document.body.dataset.center;
+    workspaceCenter.title = `Текущая работа: ${workspaceCenterName}`;
+  }
+
+  const selectedWorkspaceClient = getSelectedClient();
+  if (selectedWorkspaceClient && !matchesCenter(selectedWorkspaceClient.center)) {
+    appState.selectedClientId = null;
+    appState.selectedEncounterId = null;
+    appState.activeVisitId = null;
   }
 
   if (authStatusLabel) {
@@ -9509,10 +12668,28 @@ window.addEventListener("resize", () => {
 
 if (centerSelect) {
   centerSelect.addEventListener("change", (event) => {
-    appState.centerFilter = event.target.value;
+    const nextCenter = WORKSPACE_CENTER_NAMES.includes(event.target.value)
+      ? event.target.value
+      : WORKSPACE_CENTER_NAMES[0];
+    if (nextCenter === getWorkspaceCenterName()) return;
+    appState.centerFilter = nextCenter;
     appState.dashboardPage = 1;
+    appState.selectedClientId = null;
+    appState.selectedEncounterId = null;
+    appState.activeVisitId = null;
+    appState.clientSearch = "";
+    data.blanksLoaded = false;
+    data.blanksCenterId = null;
+    data.blanksStats = [];
+    data.blanksBatches = [];
+    data.blanksForms = [];
+    actionModal?.classList.add("hidden");
     persistDemoState();
     renderApp();
+    if (appState.page === "blanks" && typeof window.loadBlanksData === "function") {
+      window.loadBlanksData({ force: true });
+    }
+    showToast(`Рабочий медцентр: ${nextCenter}`);
   });
 }
 
@@ -9569,6 +12746,7 @@ window.getOrCreateDoctorExam = getOrCreateDoctorExam;
 window.getOrCreateDraftVisit = getOrCreateDraftVisit;
 window.getCurrentVisitForClient = getCurrentVisitForClient;
 window.createVisitForClient = createVisitForClient;
+window.createVisitsForClientByServices = createVisitsForClientByServices;
 window.createVisitForClientIfNeeded = createVisitForClientIfNeeded;
 window.updateVisit = updateVisit;
 window.ensureRequiredDoctorExamsForVisit = ensureRequiredDoctorExamsForVisit;
@@ -9589,12 +12767,15 @@ window.printChairmanDocumentFromExam = printChairmanDocumentFromExam;
 window.getChairmanFormInfo = getChairmanFormInfo;
 window.openChairmanTemplateFile = openChairmanTemplateFile;
 window.API_BASE_URL = API_BASE_URL;
+window.getWorkspaceCenterName = getWorkspaceCenterName;
+window.resolveWorkspaceCenterId = resolveWorkspaceCenterId;
 window.apiRequest = apiRequest;
 window.humanizeApiError = humanizeApiError;
 window.mapApiService = mapApiService;
 window.mapApiClient = mapApiClient;
 window.upsertClientInMemory = upsertClientInMemory;
 window.showClientInDashboardResults = showClientInDashboardResults;
+window.refreshDashboardEncounterRows = () => loadClientsFromBackend(appState.clientSearch);
 window.parseRuDateToIso = parseRuDateToIso;
 window.loadDashboardDoctorStatuses = loadDashboardDoctorStatuses;
 window.loadServicesFromBackend = loadServicesFromBackend;
@@ -9606,5 +12787,8 @@ window.renderApp = renderApp;
 window.openDriverPrintFlow = openDriverPrintFlow;
 
 renderApp();
+if ((appState.page === "chart" || appState.page === "xml" || appState.page === "documents") && !data.workflowDataLoading) {
+  loadWorkflowData();
+}
 Promise.allSettled([loadClientsFromBackend(appState.clientSearch), loadServicesFromBackend(), loadDocumentTemplatesFromBackend()])
   .then(() => restoreWorkplaceSelection());

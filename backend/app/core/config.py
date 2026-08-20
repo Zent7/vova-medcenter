@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:5173"
     public_frontend_origin: str = "https://demo.med-center.online"
     generated_documents_dir: str = "storage/generated"
+    document_template_overrides_dir: str = "storage/template-overrides"
+    xml_exports_retention_days: int = 30
+    xml_exports_timezone: str = "Europe/Moscow"
     deletion_notify_email: str | None = None
     smtp_host: str | None = None
     smtp_port: int = 587

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import Integer, and_, case, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,16 +26,27 @@ from app.models.blank_form import (
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_STATUS_SPOILED,
+    BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
+    NUMBERED_BLANK_TYPES,
     BlankBatch,
     BlankForm,
     BlankType,
 )
 from app.models.client import Client
+from app.models.client_document import ClientDocument
+from app.models.document_journal import DocumentJournalEntry
 from app.models.document_template import DocumentTemplate
 from app.models.encounter import Encounter
 from app.models.generated_document import GeneratedDocument
+from app.models.medical_record import MedicalRecordEntry
 from app.models.user import User
 from app.services.audit import write_audit_log
+
+
+AUTO_NUMBER_BATCH_COMMENT = "Автонумерация по сокращению услуги"
+AUTO_NUMBER_LOCK_NAMESPACE = 1_870_341_624
 
 
 class BlankServiceError(Exception):
@@ -112,9 +123,16 @@ def parse_number_input(value: str | int | None) -> int:
 
 
 def list_blank_types(db: Session) -> list[BlankType]:
+    order_by_code = case(
+        {code: index for index, (code, _name) in enumerate(NUMBERED_BLANK_TYPES)},
+        value=BlankType.code,
+        else_=len(NUMBERED_BLANK_TYPES),
+    )
     return list(
         db.execute(
-            select(BlankType).where(BlankType.is_active.is_(True)).order_by(BlankType.id.asc())
+            select(BlankType)
+            .where(BlankType.is_active.is_(True))
+            .order_by(order_by_code, BlankType.id.asc())
         ).scalars()
     )
 
@@ -412,6 +430,22 @@ def create_auto_number_form(
     if blank_type_record is None or not blank_type_record.is_active:
         raise BlankServiceError(f"Неизвестный тип бланка: {blank_type}")
 
+    # Автоматические номера образуют одну последовательность внутри медцентра,
+    # независимо от типа справки и её серии. Строгие бланки из вручную
+    # заведённых партий в этот счётчик не входят.
+    #
+    # PostgreSQL advisory lock не позволяет двум параллельным запросам получить
+    # один и тот же следующий номер, даже если они создают разные серии.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    cast(AUTO_NUMBER_LOCK_NAMESPACE, Integer),
+                    cast(int(center_id or 0), Integer),
+                )
+            )
+        )
+
     batch = db.execute(
         select(BlankBatch)
         .where(
@@ -419,7 +453,7 @@ def create_auto_number_form(
             BlankBatch.blank_type == blank_type,
             BlankBatch.center_id.is_(center_id) if center_id is None else BlankBatch.center_id == center_id,
             BlankBatch.series == series_clean,
-            BlankBatch.comment == "Автонумерация по сокращению услуги",
+            BlankBatch.comment == AUTO_NUMBER_BATCH_COMMENT,
         )
         .order_by(BlankBatch.id.asc())
         .limit(1)
@@ -435,17 +469,18 @@ def create_auto_number_form(
             number_width=7,
             quantity=0,
             received_at=date.today(),
-            comment="Автонумерация по сокращению услуги",
+            comment=AUTO_NUMBER_BATCH_COMMENT,
             created_by_user_id=user_id,
         )
         db.add(batch)
         db.flush()
 
     max_number = db.execute(
-        select(func.max(BlankForm.number_value)).where(
-            BlankForm.blank_type == blank_type,
+        select(func.max(BlankForm.number_value))
+        .join(BlankBatch, BlankBatch.id == BlankForm.batch_id)
+        .where(
+            BlankBatch.comment == AUTO_NUMBER_BATCH_COMMENT,
             BlankForm.center_id.is_(center_id) if center_id is None else BlankForm.center_id == center_id,
-            BlankForm.series == series_clean,
         )
     ).scalar_one_or_none()
     next_number = int(max_number or 0) + 1
@@ -521,6 +556,114 @@ def spoil_form(
     return form
 
 
+def release_form(
+    db: Session,
+    *,
+    form_id: int,
+    user_id: int | None,
+) -> BlankForm:
+    """Возвращает ошибочно выданный, но не использованный номер в свободные."""
+
+    form = db.execute(
+        select(BlankForm).where(BlankForm.id == form_id).with_for_update()
+    ).scalar_one_or_none()
+    if form is None:
+        raise BlankServiceError("Бланк не найден")
+    if form.status != BLANK_STATUS_ISSUED:
+        raise BlankServiceError("Освободить можно только выданный бланк")
+
+    released_at = datetime.utcnow()
+    release_reason = "Номер освобождён: печать была запущена по ошибке"
+    previous_links = {
+        "client_id": form.client_id,
+        "encounter_id": form.encounter_id,
+        "generated_document_id": form.generated_document_id,
+        "client_document_id": form.client_document_id,
+    }
+
+    generated_query = select(GeneratedDocument).where(GeneratedDocument.blank_form_id == form.id)
+    if form.generated_document_id is not None:
+        generated_query = select(GeneratedDocument).where(
+            or_(
+                GeneratedDocument.blank_form_id == form.id,
+                GeneratedDocument.id == form.generated_document_id,
+            )
+        )
+    generated_documents = list(db.execute(generated_query).scalars())
+    generated_document_ids: list[int] = []
+    for document in generated_documents:
+        generated_document_ids.append(document.id)
+        document.blank_form_id = None
+        document.blank_number_snapshot = None
+        if document.document_number == form.full_number:
+            document.document_number = None
+        if document.cancelled_at is None:
+            document.cancelled_at = released_at
+            document.cancelled_by_user_id = user_id
+            document.cancelled_reason = release_reason
+
+    if generated_document_ids:
+        journal_entries = db.execute(
+            select(DocumentJournalEntry).where(
+                DocumentJournalEntry.generated_document_id.in_(generated_document_ids),
+                DocumentJournalEntry.deleted_at.is_(None),
+            )
+        ).scalars()
+        for entry in journal_entries:
+            entry.deleted_at = released_at
+
+    client_document_query = select(ClientDocument).where(ClientDocument.blank_form_id == form.id)
+    if form.client_document_id is not None:
+        client_document_query = select(ClientDocument).where(
+            or_(
+                ClientDocument.blank_form_id == form.id,
+                ClientDocument.id == form.client_document_id,
+            )
+        )
+    for document in db.execute(client_document_query).scalars():
+        document.blank_form_id = None
+        document.blank_number_snapshot = None
+
+    if form.encounter_id is not None:
+        conclusion = f"Выдан номерной бланк медицинского заключения №{form.full_number}"
+        entries = db.execute(
+            select(MedicalRecordEntry).where(
+                MedicalRecordEntry.encounter_id == form.encounter_id,
+                MedicalRecordEntry.doctor_role_id == "document",
+                MedicalRecordEntry.conclusion == conclusion,
+            )
+        ).scalars()
+        for entry in entries:
+            db.delete(entry)
+
+    form.status = BLANK_STATUS_FREE
+    form.client_id = None
+    form.encounter_id = None
+    form.generated_document_id = None
+    form.client_document_id = None
+    form.issued_at = None
+    form.issued_by_user_id = None
+    form.cancelled_at = None
+    form.cancelled_by_user_id = None
+    form.cancelled_reason = None
+    db.flush()
+
+    write_audit_log(
+        db,
+        entity_type="blank_form",
+        entity_id=form.id,
+        action="release",
+        user_id=user_id or 1,
+        center_id=form.center_id,
+        payload_json={
+            "blank_type": form.blank_type,
+            "full_number": form.full_number,
+            **previous_links,
+        },
+    )
+    return form
+
+
 def issue_next_blank(
     db: Session,
     *,
@@ -584,8 +727,8 @@ def issue_next_blank(
     form: BlankForm | None = db.execute(query).scalar_one_or_none()
     if form is None:
         raise NoFreeBlankError(
-            "Нет свободных бланков для медицинского заключения "
-            "водительского удостоверения. Добавьте новую партию в разделе «Бланки»."
+            f"Нет свободных бланков для типа «{blank_type_record.name}». "
+            "Добавьте новую партию в разделе «Бланки»."
         )
 
     form.status = BLANK_STATUS_ISSUED
@@ -760,7 +903,18 @@ def spoil_for_generated_document(
 
 
 
-def resolve_required_blank_type(template: DocumentTemplate) -> str | None:
+def resolve_required_blank_type(
+    template: DocumentTemplate,
+    *,
+    print_variant: str | None = None,
+) -> str | None:
+    if str(print_variant or "").strip().casefold() in {"guard", "chod"}:
+        return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE
+    if str(print_variant or "").strip().casefold() == "gims":
+        return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE
+    if str(print_variant or "").strip().casefold() in {"lmk", "lmk_title", "lmk_certificate"}:
+        return BLANK_TYPE_LMK_MEDICAL_CERTIFICATE
+
     if not template.requires_numbered_blank:
         return None
 

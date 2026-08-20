@@ -60,6 +60,8 @@ class ClientUpdate(ClientBase):
 class ClientRead(ClientBase):
     id: int
     patient_number: int
+    created_at: datetime | None = None
+    latest_encounter_created_at: datetime | None = None
     services: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
@@ -68,10 +70,13 @@ class ClientRead(ClientBase):
 class ClientSearchRead(BaseModel):
     id: int
     patient_number: int
+    created_at: datetime | None = None
+    latest_encounter_created_at: datetime | None = None
     last_name: str
     first_name: str
     middle_name: str | None = None
     birth_date: date
+    sex: str | None = None
     phone: str | None = None
     document_type: str | None = None
     document_series: str | None = None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+import calendar
+from datetime import date, datetime
 import re
 from typing import Any
 
@@ -47,6 +48,14 @@ def _text(value: Any) -> str:
 
 def _date(value: date | None) -> str:
     return value.strftime("%d.%m.%y") if value else ""
+
+
+def _add_calendar_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + months
+    target_year = value.year + month_index // 12
+    target_month = month_index % 12 + 1
+    target_day = min(value.day, calendar.monthrange(target_year, target_month)[1])
+    return date(target_year, target_month, target_day)
 
 
 def _date_parts(value: date | None) -> tuple[str, str, str, str]:
@@ -258,12 +267,39 @@ def build_document_context(
     address_parts = _split_address(address)
     services = ", ".join(name for name in (service_names or []) if name) or "Базовая услуга"
     visit_date = _date(encounter.encounter_date) if encounter else ""
+    pool_valid_until = (
+        _add_calendar_months(encounter.encounter_date, 6).strftime("%d.%m.%Y")
+        if encounter
+        else ""
+    )
     visit_date_en = _date_english(encounter.encounter_date if encounter else None)
     contract_date = visit_date or _date(date.today())
     total_amount = _text(encounter.total_amount) if encounter else ""
     notes = _text(encounter.comment) if encounter else _text(client.notes)
-    sex = _text(client.sex).upper()
-    sex_label = {"M": "муж", "MALE": "муж", "F": "жен", "FEMALE": "жен"}.get(sex, _text(client.sex))
+    sex = _text(client.sex).strip().upper()
+    sex_label = {
+        "M": "муж",
+        "MALE": "муж",
+        "М": "муж",
+        "МУЖ": "муж",
+        "МУЖСКОЙ": "муж",
+        "F": "жен",
+        "FEMALE": "жен",
+        "Ж": "жен",
+        "ЖЕН": "жен",
+        "ЖЕНСКИЙ": "жен",
+    }.get(sex, _text(client.sex))
+    sex_full_label = {"муж": "мужской", "жен": "женский"}.get(sex_label.lower(), sex_label)
+    normalized_sex = sex_label.casefold()
+    if normalized_sex in {"f", "female", "жен", "женский"}:
+        pool_admission = "Допущена"
+        pool_healthy = "здорова"
+    elif normalized_sex in {"m", "male", "муж", "мужской"}:
+        pool_admission = "Допущен"
+        pool_healthy = "здоров"
+    else:
+        pool_admission = "Допущен(а)"
+        pool_healthy = "здоров(а)"
     organization = _text(client.organization) or _first_legacy_value(client, "Организация", "organization", "CompanyName")
     work_place = _text(client.work_place) or organization or _first_legacy_value(client, "Место работы", "WorkPlace", "qdfMain.WorkPlace")
     post = _text(client.profession) or _first_legacy_value(client, "Должность", "Post", "qdfMain.Post") or "не указано"
@@ -314,7 +350,16 @@ def build_document_context(
         "BirthDateCalc_MONTH1": birth_month,
         "BirthDateCalc_DATEMONTH1": birth_month_name,
         "BirthDateCalc_YEAR1": birth_year,
+        "BirthDateCalc_DIGIT1": birth_day[:1],
+        "BirthDateCalc_DIGIT2": birth_day[1:2],
+        "BirthDateCalc_DIGIT3": birth_month[:1],
+        "BirthDateCalc_DIGIT4": birth_month[1:2],
+        "BirthDateCalc_DIGIT5": birth_year[:1],
+        "BirthDateCalc_DIGIT6": birth_year[1:2],
+        "BirthDateCalc_DIGIT7": birth_year[2:3],
+        "BirthDateCalc_DIGIT8": birth_year[3:4],
         "VisitDate": visit_date,
+        "PrintDateTime": datetime.now().strftime("%d.%m.%Y %H:%M"),
         "VisitDate_EN": visit_date_en,
         "VisitDateMarine": visit_date_en,
         "ContractDate": contract_date,
@@ -354,6 +399,17 @@ def build_document_context(
         "ApartmentNumberCalc1": address_parts["apartment"],
         "Sex": sex_label,
         "SexCalc": sex_label,
+        "SexFull": sex_full_label,
+        "Gender": sex_label,
+        "GenderCalc": sex_label,
+        "GenderFull": sex_full_label,
+        "PoolAdmission": pool_admission,
+        "PoolHealthy": pool_healthy,
+        "PoolValidUntil": pool_valid_until,
+        "Пол": sex_label,
+        "ПолCalc": sex_label,
+        "ПолПолный": sex_full_label,
+        "qdfMain.Sex": sex_label,
         "Age": age,
         "AgeCalc": age,
         "RegistrType": "постоянная",

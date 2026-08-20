@@ -1,0 +1,36 @@
+<mb:fillShipBlankRequset xmlns:mb="http://iac.spb.ru/mb#">
+  <mb:blankInfo>
+    <mb:id>40820000001</mb:id><!--серия и номер бланка-->
+    <mb:duplicate>
+      <mb:isDuplicated>true</mb:isDuplicated><!--бланк дубликат: true - "да", false - "нет"-->
+      <mb:duplicateId>40820000002</mb:duplicateId><!--серия и номер оригинала-->
+    </mb:duplicate>
+    <mb:isSpoiled>false</mb:isSpoiled><!--бланк испорчен: true - "да", false - "нет"-->
+  </mb:blankInfo>
+  <mb:clientInfo>
+    <mb:surname>Фамилия</mb:surname>
+    <mb:name>Имя</mb:name>
+    <mb:patronymic>Отчество</mb:patronymic>
+    <mb:birthday>01.01.1987</mb:birthday><!--дата рождения-->
+    <mb:snils>00000000000</mb:snils><!--СНИЛС-->
+    <mb:address>
+      <mb:type>1</mb:type><!--тип адреса: 0 - "Место пребывания", 1 - "место фактического проживания"-->
+      <mb:place>субьект</mb:place>
+      <mb:area>район</mb:area>
+      <mb:town>населенный пункт</mb:town>
+      <mb:street>улица</mb:street>
+      <mb:house>дом</mb:house>
+      <mb:building>корпус</mb:building>
+      <mb:flat>квартира</mb:flat>
+    </mb:address>
+  </mb:clientInfo>
+  <mb:conclusion>
+    <mb:medConclusion>
+      <mb:contraindicationToManagement>true</mb:contraindicationToManagement><!--медицинские противопоказания: true - "выявлено", false - "не выявлено"-->
+      <mb:restrictionOnManagement>true</mb:restrictionOnManagement><!--медицинские ограничения: true - "выявлено", false - "не выявлено"-->
+      <mb:reexaminationAfterBan>true</mb:reexaminationAfterBan><!--освидетельствование в связи с возвратом удостоверения: true - "да", false - "нет"-->
+      <mb:dateConclusion>01.01.2026</mb:dateConclusion><!--дата выдачи заключения-->
+      <mb:fioDoctor>ФИО врача выдавшего заключение</mb:fioDoctor>
+    </mb:medConclusion>
+  </mb:conclusion>
+</mb:fillShipBlankRequset>

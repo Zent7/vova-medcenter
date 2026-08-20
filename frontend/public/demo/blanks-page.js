@@ -10,6 +10,7 @@
         day: "2-digit",
         month: "2-digit",
         year: "2-digit",
+        timeZone: "Europe/Moscow",
       });
     } catch {
       return String(value);
@@ -25,6 +26,7 @@
         year: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: "Europe/Moscow",
       });
     } catch {
       return String(value);
@@ -54,7 +56,19 @@
     const force = options.force === true;
     const data = window.data;
     if (!data || data.blanksLoading) return;
-    if (data.blanksLoaded && !force) return;
+
+    let centerId = null;
+    try {
+      centerId = await window.resolveWorkspaceCenterId?.();
+    } catch (error) {
+      data.blanksError = window.humanizeApiError
+        ? window.humanizeApiError(error, "Не удалось определить текущий медцентр")
+        : String(error?.message || error || "Не удалось определить текущий медцентр");
+      if (window.appState?.page === "blanks") window.renderApp?.();
+      return;
+    }
+
+    if (data.blanksLoaded && Number(data.blanksCenterId) === Number(centerId) && !force) return;
 
     data.blanksLoading = true;
     data.blanksError = "";
@@ -63,11 +77,12 @@
     }
 
     try {
+      const centerQuery = new URLSearchParams({ center_id: String(centerId) }).toString();
       const [types, stats, batches, forms] = await Promise.all([
         window.apiRequest("/blanks/types"),
-        window.apiRequest("/blanks/stats"),
-        window.apiRequest("/blanks/batches"),
-        window.apiRequest("/blanks/forms?limit=1000"),
+        window.apiRequest(`/blanks/stats?${centerQuery}`),
+        window.apiRequest(`/blanks/batches?${centerQuery}`),
+        window.apiRequest(`/blanks/forms?limit=1000&${centerQuery}`),
       ]);
 
       data.blanksTypes = Array.isArray(types) ? types : [];
@@ -75,6 +90,7 @@
       data.blanksBatches = Array.isArray(batches) ? batches : [];
       data.blanksForms = Array.isArray(forms) ? forms : [];
       data.blanksLoaded = true;
+      data.blanksCenterId = Number(centerId);
 
       const activeBatchIds = new Set(data.blanksBatches.map((item) => String(item.id)));
       if (!activeBatchIds.has(String(window.appState?.blanksFilterBatchId || ""))) {
@@ -123,18 +139,15 @@
     const appState = window.appState || {};
     const batches = Array.isArray(data.blanksBatches) ? data.blanksBatches : [];
     const typeOptions = Array.isArray(data.blanksTypes) ? data.blanksTypes : [];
+    const centerName = window.getWorkspaceCenterName?.() || appState.centerFilter || "Медцентр";
 
     return `
-      <div class="blanks-section-head">
-        <button type="button" class="ghost-button" data-blanks-toggle-form>
-          ${appState.blanksFormOpen ? "Скрыть форму" : "Добавить партию"}
-        </button>
-      </div>
       ${
         appState.blanksFormOpen
           ? `
             <form class="card blanks-batch-form" id="blanksBatchForm">
-              <h3>Новая партия</h3>
+              <h3>Добавить диапазон номеров — ${esc(centerName)}</h3>
+              <p class="muted">Диапазон будет принадлежать только выбранному медцентру. Укажите серию и первый с последним номером.</p>
               <div class="visit-form__grid">
                 <label class="field">
                   <span>Тип бланка</span>
@@ -169,7 +182,8 @@
                   : ""
               }
               <div class="visit-form__actions">
-                <button type="submit" class="primary-button">${data.blanksFormSaving ? "Сохранение..." : "Сохранить партию"}</button>
+                <button type="button" class="ghost-button" data-blanks-close-form>Отмена</button>
+                <button type="submit" class="primary-button">${data.blanksFormSaving ? "Добавление..." : "Добавить номера"}</button>
               </div>
             </form>
           `
@@ -257,7 +271,13 @@
 
     return `
       <article class="card">
-        <h3>Номера бланков</h3>
+        <div class="blanks-page__header">
+          <div>
+            <h3>Номера бланков</h3>
+            <p class="muted">Чтобы вернуть ошибочно занятый номер, откройте выданные бланки.</p>
+          </div>
+          <button type="button" class="primary-button" data-blanks-show-issued>Освободить выданный номер</button>
+        </div>
         <div class="blanks-filters">
           <label class="field">
             <span>Статус</span>
@@ -323,6 +343,8 @@
                               ${
                                 item.status === "free"
                                   ? `<button type="button" class="ghost-button" data-blank-spoil="${item.id}">Испорчен</button>`
+                                  : item.status === "issued"
+                                    ? `<button type="button" class="ghost-button" data-blank-release="${item.id}" data-blank-number="${esc(item.full_number)}">Освободить номер</button>`
                                   : ""
                               }
                             </td>
@@ -350,15 +372,22 @@
   function renderBlanksPage() {
     const data = window.data || {};
     const appState = window.appState || {};
+    const centerName = window.getWorkspaceCenterName?.() || appState.centerFilter || "Медцентр";
 
     return `
       <section class="card">
         <div class="blanks-page__header">
           <div>
-            <h3>Учёт номерных бланков</h3>
-            <p class="muted">Партии, статусы и выдача бланков для документов с номерным учётом.</p>
+            <h3>Бланки</h3>
+            <p class="blanks-page__center">${esc(centerName)}</p>
+            <p class="muted">Показаны только диапазоны и номера выбранного медцентра.</p>
           </div>
-          <button type="button" class="ghost-button" data-blanks-refresh>Обновить</button>
+          <div class="blanks-page__actions">
+            <button type="button" class="primary-button" data-blanks-add-numbers ${appState.blanksFormOpen ? "disabled" : ""}>
+              ${appState.blanksFormOpen ? "Форма открыта" : "Добавить номера"}
+            </button>
+            <button type="button" class="ghost-button" data-blanks-refresh>Обновить</button>
+          </div>
         </div>
         <div class="tabs">
           <button type="button" class="tabs__item ${appState.blanksTab === "overview" ? "tabs__item--active" : ""}" data-blanks-tab="overview">Обзор</button>
@@ -386,8 +415,27 @@
       loadBlanksData({ force: true });
     });
 
-    document.querySelector("[data-blanks-toggle-form]")?.addEventListener("click", () => {
-      window.appState.blanksFormOpen = !window.appState.blanksFormOpen;
+    document.querySelector("[data-blanks-add-numbers]")?.addEventListener("click", () => {
+      window.appState.blanksTab = "batches";
+      window.appState.blanksFormOpen = true;
+      window.data.blanksFormError = "";
+      window.persistDemoState?.();
+      window.renderApp?.();
+      window.requestAnimationFrame(() => {
+        document.querySelector("#blanksBatchForm select, #blanksBatchForm input")?.focus();
+      });
+    });
+
+    document.querySelector("[data-blanks-show-issued]")?.addEventListener("click", () => {
+      window.appState.blanksFilterStatus = "issued";
+      window.appState.blanksSearch = "";
+      window.persistDemoState?.();
+      window.renderApp?.();
+      window.showToast?.("Выберите нужный номер и нажмите «Освободить номер» в его строке");
+    });
+
+    document.querySelector("[data-blanks-close-form]")?.addEventListener("click", () => {
+      window.appState.blanksFormOpen = false;
       window.data.blanksFormError = "";
       window.persistDemoState?.();
       window.renderApp?.();
@@ -421,11 +469,12 @@
       window.renderApp?.();
 
       try {
+        const centerId = await window.resolveWorkspaceCenterId?.();
         await window.apiRequest("/blanks/batches", {
           method: "POST",
           body: JSON.stringify({
             blank_type: formData.get("blank_type"),
-            center_id: 1,
+            center_id: Number(centerId),
             series: String(formData.get("series") || "").trim() || null,
             number_from: String(formData.get("number_from") || "").trim(),
             number_to: String(formData.get("number_to") || "").trim(),
@@ -469,6 +518,34 @@
             window.humanizeApiError
               ? window.humanizeApiError(error, "Не удалось изменить статус бланка")
               : String(error?.message || error || "Не удалось изменить статус бланка"),
+          );
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-blank-release]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const formId = button.dataset.blankRelease;
+        const blankNumber = button.dataset.blankNumber || "";
+        if (!formId) return;
+        const confirmed = window.confirm(
+          `Освободить номер ${blankNumber}?\n\nИспользуйте это действие, только если документ не был напечатан. Номер снова будет доступен следующему пациенту.`,
+        );
+        if (!confirmed) return;
+
+        button.disabled = true;
+        try {
+          await window.apiRequest(`/blanks/forms/${encodeURIComponent(formId)}/release`, {
+            method: "POST",
+          });
+          window.showToast?.(`Номер ${blankNumber} освобождён`);
+          await loadBlanksData({ force: true });
+        } catch (error) {
+          button.disabled = false;
+          window.showToast?.(
+            window.humanizeApiError
+              ? window.humanizeApiError(error, "Не удалось освободить номер")
+              : String(error?.message || error || "Не удалось освободить номер"),
           );
         }
       });

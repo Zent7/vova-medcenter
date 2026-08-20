@@ -3,11 +3,13 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.client import Client
 from app.models.doctor_exam import DoctorExam
 from app.models.encounter import Encounter
 from app.models.medical_record import MedicalRecord, MedicalRecordEntry
 from app.models.service import DoctorRole, ServiceDoctorRole
 from app.models.template_phrase import TemplatePhrase
+from app.services.doctor_rules import should_include_doctor_role_for_client_sex
 
 
 NO_COMPLAINTS_TEXT = "в момент осмотра жалоб нет"
@@ -162,6 +164,12 @@ def _ensure_medical_record_entry(
 
 
 def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, service_id: int) -> None:
+    client_sex = db.scalar(select(Client.sex).where(Client.id == encounter.client_id))
+    suppressed_role_ids = {
+        str(role_id or "").strip()
+        for role_id in (encounter.suppressed_doctor_role_ids or [])
+        if str(role_id or "").strip()
+    }
     roles = db.execute(
         select(DoctorRole)
         .join(ServiceDoctorRole, ServiceDoctorRole.doctor_role_id == DoctorRole.id)
@@ -172,11 +180,14 @@ def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, se
         )
         .order_by(DoctorRole.sort_order.asc(), DoctorRole.name.asc())
     ).scalars().all()
+    roles = [role for role in roles if role.code not in suppressed_role_ids]
     if not roles:
         return
 
     record = _ensure_medical_record(db, encounter)
     for role in roles:
+        if not should_include_doctor_role_for_client_sex(role.code, client_sex):
+            continue
         phrase_text = _default_phrase_for_role(db, role, service_id)
         exam = _ensure_completed_exam(db, encounter, role, phrase_text)
         _ensure_medical_record_entry(db, encounter, record, exam, role, phrase_text)

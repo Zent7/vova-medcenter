@@ -160,19 +160,40 @@ def latest_services_by_client_ids(db: Session, client_ids: list[int]) -> dict[in
     }
 
 
+def latest_encounter_created_at_by_client_ids(db: Session, client_ids: list[int]) -> dict[int, datetime]:
+    if not client_ids:
+        return {}
+
+    rows = db.execute(
+        select(Encounter.client_id, Encounter.created_at)
+        .where(Encounter.deleted_at.is_(None), Encounter.client_id.in_(client_ids))
+        .order_by(Encounter.client_id.asc(), Encounter.created_at.desc(), Encounter.id.desc())
+    ).all()
+
+    result: dict[int, datetime] = {}
+    for client_id, created_at in rows:
+        result.setdefault(client_id, created_at)
+    return result
+
+
 def serialize_client(db: Session, client: Client) -> ClientRead:
     services = latest_services_by_client_ids(db, [client.id]).get(client.id, [])
+    latest_encounter_created_at = latest_encounter_created_at_by_client_ids(db, [client.id]).get(client.id)
     payload = ClientRead.model_validate(client).model_dump()
     payload["services"] = services
+    payload["latest_encounter_created_at"] = latest_encounter_created_at
     return ClientRead.model_validate(payload)
 
 
 def serialize_clients(db: Session, clients: list[Client]) -> list[ClientRead]:
-    services_by_client = latest_services_by_client_ids(db, [client.id for client in clients])
+    client_ids = [client.id for client in clients]
+    services_by_client = latest_services_by_client_ids(db, client_ids)
+    latest_encounter_created_at_by_client = latest_encounter_created_at_by_client_ids(db, client_ids)
     result: list[ClientRead] = []
     for client in clients:
         payload = ClientRead.model_validate(client).model_dump()
         payload["services"] = services_by_client.get(client.id, [])
+        payload["latest_encounter_created_at"] = latest_encounter_created_at_by_client.get(client.id)
         result.append(ClientRead.model_validate(payload))
     return result
 
@@ -234,10 +255,12 @@ CLIENT_SEARCH_FIELDS = (
 CLIENT_SEARCH_COLUMNS = (
     Client.id,
     Client.patient_number,
+    Client.created_at,
     Client.last_name,
     Client.first_name,
     Client.middle_name,
     Client.birth_date,
+    Client.sex,
     Client.phone,
     Client.document_type,
     Client.document_series,
@@ -276,7 +299,9 @@ def client_search_text_expr():
 
 
 def client_search_conditions(value: str):
-    tokens = [token.lower() for token in value.split() if token]
+    # Keep the caller's casing here. PostgreSQL ILIKE remains case-insensitive,
+    # while SQLite's lower() does not fold Cyrillic during local diagnostics.
+    tokens = [token for token in value.split() if token]
     conditions = []
     if tokens:
         search_text = client_search_text_expr()
@@ -359,6 +384,7 @@ def search_clients(
     encounter_date_from: date | None = Query(default=None),
     encounter_date_to: date | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[ClientSearchRead]:
     value = search.strip() if search else ""
@@ -368,8 +394,18 @@ def search_clients(
         encounter_date,
         encounter_date_from,
         encounter_date_to,
-    ).limit(limit)
-    return [ClientSearchRead.model_validate(row) for row in db.execute(query).mappings().all()]
+    ).offset(offset).limit(limit)
+    rows = db.execute(query).mappings().all()
+    client_ids = [row["id"] for row in rows]
+    services_by_client = latest_services_by_client_ids(db, client_ids)
+    latest_encounter_created_at_by_client = latest_encounter_created_at_by_client_ids(db, client_ids)
+    result: list[ClientSearchRead] = []
+    for row in rows:
+        payload = dict(row)
+        payload["services"] = services_by_client.get(row["id"], [])
+        payload["latest_encounter_created_at"] = latest_encounter_created_at_by_client.get(row["id"])
+        result.append(ClientSearchRead.model_validate(payload))
+    return result
 
 
 @router.get("", response_model=list[ClientRead])
@@ -379,6 +415,7 @@ def list_clients(
     encounter_date_from: date | None = Query(default=None),
     encounter_date_to: date | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[ClientRead]:
     value = search.strip() if search else ""
@@ -388,7 +425,7 @@ def list_clients(
         encounter_date,
         encounter_date_from,
         encounter_date_to,
-    ).limit(limit)
+    ).offset(offset).limit(limit)
     clients = db.execute(query).scalars().all()
     return serialize_clients(db, clients)
 

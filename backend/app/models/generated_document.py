@@ -21,6 +21,8 @@ class GeneratedDocument(Base):
     file_path: Mapped[str] = mapped_column(String(500))
     generated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    file_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    file_delete_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     cancelled_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
