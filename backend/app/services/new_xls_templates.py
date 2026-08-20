@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+
+import xlrd
 
 
 Cell = tuple[int, int]
@@ -300,6 +303,62 @@ def new_xls_placeholder(spec: NewXlsTemplateSpec, coordinate: Cell) -> str:
     identity = "".join(chr(0xFE00 + int(digit, 16)) for digit in f"{cell_index:04X}")
     marker = f"{PLACEHOLDER_START}{identity}{PLACEHOLDER_END}"
     return marker + PLACEHOLDER_FILL * (PLACEHOLDER_LENGTH - len(marker))
+
+
+def new_xls_marker(spec: NewXlsTemplateSpec, coordinate: Cell) -> str:
+    return new_xls_placeholder(spec, coordinate)[:6]
+
+
+def validate_editable_xls_template(path: Path, spec: NewXlsTemplateSpec) -> None:
+    """Reject an edited XLS unless every movable field is still unambiguous."""
+    try:
+        book = xlrd.open_workbook(file_contents=path.read_bytes(), formatting_info=True)
+    except Exception as exc:
+        raise ValueError(f"Не удалось прочитать XLS: {exc}") from exc
+
+    sheet_names = book.sheet_names()
+    if sheet_names != [spec.sheet_name]:
+        if spec.sheet_name not in sheet_names:
+            raise ValueError(f"Обязательный печатный лист «{spec.sheet_name}» не найден или переименован")
+        raise ValueError(
+            f"Шаблон должен содержать только печатный лист «{spec.sheet_name}». "
+            "Служебные листы загружать нельзя"
+        )
+
+    sheet = book.sheet_by_name(spec.sheet_name)
+    locations: dict[str, list[Cell]] = {
+        new_xls_marker(spec, coordinate): [] for coordinate in spec.dynamic_cells
+    }
+    for row_index in range(sheet.nrows):
+        for col_index in range(sheet.ncols):
+            value = sheet.cell_value(row_index, col_index)
+            if not isinstance(value, str):
+                continue
+            for marker in locations:
+                if marker in value:
+                    locations[marker].append((row_index, col_index))
+
+    for coordinate in spec.dynamic_cells:
+        marker = new_xls_marker(spec, coordinate)
+        marker_locations = locations[marker]
+        if not marker_locations:
+            raise ValueError(
+                f"Удалён скрытый маркер поля {spec.dynamic_cells.index(coordinate) + 1}. "
+                "Верните исходный шаблон и повторите правку"
+            )
+        if len(marker_locations) != 1:
+            raise ValueError(
+                f"Скрытый маркер поля {spec.dynamic_cells.index(coordinate) + 1} продублирован"
+            )
+        row_index, col_index = marker_locations[0]
+        for row_low, row_high, col_low, col_high in sheet.merged_cells:
+            if row_low <= row_index < row_high and col_low <= col_index < col_high:
+                if (row_index, col_index) != (row_low, col_low):
+                    raise ValueError(
+                        f"Маркер поля {spec.dynamic_cells.index(coordinate) + 1} находится не в основной "
+                        "ячейке объединённого диапазона"
+                    )
+                break
 
 
 def strip_new_xls_placeholder_padding(value: object) -> str:

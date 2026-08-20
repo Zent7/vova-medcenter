@@ -2948,6 +2948,15 @@ async function replaceDocumentTemplateFile(templateId, file) {
   renderApp();
 }
 
+async function resetDocumentTemplateFile(templateId) {
+  const template = await apiRequest(`/documents/templates/${encodeURIComponent(templateId)}/reset`, {
+    method: "POST",
+  });
+  data.documentTemplates = (data.documentTemplates || []).map((item) => (String(item.id) === String(template.id) ? template : item));
+  data.templateOperationStatus = `Для шаблона "${template.name || template.file_name}" восстановлена встроенная версия.`;
+  renderApp();
+}
+
 function getSelectedBackendClientId() {
   const client = getSelectedClient();
   return client?.backendId || client?.id || null;
@@ -7166,7 +7175,7 @@ function renderTemplatesPage() {
   return `
     <section class="card">
       <div class="template-page-head">
-        <p class="muted">${canManageTemplates ? "Файловые шаблоны можно посмотреть, заменить новым файлом и перечитать из папки." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} Для Excel-правок используйте .xlsx; .xls оставлен для старых шаблонов. Желтые ячейки с подписью “авто” заполняются системой.</p>
+        <p class="muted">${canManageTemplates ? "Файловые шаблоны можно скачать, отредактировать в Excel и загрузить обратно." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} У шаблонов с отметкой «Свободный макет» разрешено переносить поля и блоки, вставлять строки и столбцы, менять оформление, изображения и область печати. Скрытые маркеры удалять нельзя.</p>
         ${canManageTemplates ? '<button class="primary-button" type="button" data-refresh-document-templates>Перечитать папку</button>' : ""}
       </div>
       ${data.templateOperationStatus ? `<div class="template-status">${escapeHtml(data.templateOperationStatus)}</div>` : ""}
@@ -7181,12 +7190,13 @@ function renderTemplatesPage() {
                         <strong>${escapeHtml(template.name || template.file_name || `Шаблон ${template.id}`)}</strong>
                         <span>${escapeHtml(template.file_name || "")}</span>
                       </div>
-                      <small>${escapeHtml(template.template_type || "")}${template.requires_numbered_blank ? " · номерной бланк" : ""}</small>
+                      <small>${escapeHtml(template.template_type || "")}${template.requires_numbered_blank ? " · номерной бланк" : ""}${template.supports_layout_editing ? " · Свободный макет" : ""}${template.has_override ? " · клиентская версия" : ""}</small>
                       ${
                         canManageTemplates
                           ? `<div class="document-template-card__actions">
                               <button class="ghost-button" type="button" data-download-document-template="${escapeHtml(template.id)}">Скачать</button>
                               <button class="ghost-button" type="button" data-replace-document-template="${escapeHtml(template.id)}">Обновить шаблон</button>
+                              ${template.has_override ? `<button class="ghost-button" type="button" data-reset-document-template="${escapeHtml(template.id)}">Вернуть исходный</button>` : ""}
                             </div>`
                           : ""
                       }
@@ -12100,6 +12110,21 @@ function bindContentEvents() {
       if (!templateId || !input) return;
       input.dataset.templateId = templateId;
       input.click();
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-reset-document-template]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const templateId = button.dataset.resetDocumentTemplate;
+      if (!templateId || !window.confirm("Удалить клиентскую версию и вернуть встроенный шаблон?")) return;
+      data.templateOperationStatus = "Возвращаем встроенный шаблон...";
+      renderApp();
+      try {
+        await resetDocumentTemplateFile(templateId);
+      } catch (error) {
+        data.templateOperationStatus = humanizeApiError(error, "Не удалось вернуть исходный шаблон");
+        renderApp();
+      }
     });
   });
 
