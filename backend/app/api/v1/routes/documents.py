@@ -27,7 +27,20 @@ from app.schemas.document_generation import (
 from app.schemas.document_template import DocumentTemplateRead
 from app.services.blank_forms import BlankServiceError, NoFreeBlankError, spoil_for_generated_document
 from app.services.document_generator import generate_document
-from app.services.template_catalog import SUPPORTED_TEMPLATE_EXTENSIONS, get_templates_root, sync_document_template_catalog
+from app.services.new_xls_templates import (
+    LEGACY_XLS_TEMPLATE_BY_FILE,
+    NEW_XLS_TEMPLATE_BY_FILE,
+    validate_editable_xls_template,
+    validate_legacy_editable_xls_template,
+)
+from app.services.template_catalog import (
+    SUPPORTED_TEMPLATE_EXTENSIONS,
+    get_template_override_path,
+    get_templates_root,
+    sync_document_template_catalog,
+    template_has_override,
+    template_supports_layout_editing,
+)
 
 router = APIRouter()
 
@@ -112,6 +125,10 @@ def require_template_file_access(current_user: User = Depends(get_current_user))
 
 def _resolve_template_file(template: DocumentTemplate) -> Path | None:
     candidates: list[Path] = []
+    try:
+        candidates.append(get_template_override_path(template.file_name))
+    except ValueError:
+        pass
     if template.file_path:
         candidates.append(Path(template.file_path))
 
@@ -132,10 +149,19 @@ def _resolve_template_file(template: DocumentTemplate) -> Path | None:
     return None
 
 
+def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
+    return DocumentTemplateRead.model_validate(template).model_copy(
+        update={
+            "supports_layout_editing": template_supports_layout_editing(template.file_name),
+            "has_override": template_has_override(template.file_name),
+        }
+    )
+
+
 @router.get("/templates", response_model=list[DocumentTemplateRead])
 def list_document_templates(db: Session = Depends(get_db)) -> list[DocumentTemplateRead]:
     templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
-    return [DocumentTemplateRead.model_validate(item) for item in templates]
+    return [_template_response(item) for item in templates]
 
 
 @router.post("/templates/refresh", response_model=list[DocumentTemplateRead])
@@ -146,7 +172,7 @@ def refresh_document_templates(
     sync_document_template_catalog(db)
     db.commit()
     templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
-    return [DocumentTemplateRead.model_validate(item) for item in templates]
+    return [_template_response(item) for item in templates]
 
 
 @router.get("/templates/{template_id}/file")
@@ -183,27 +209,40 @@ def replace_document_template(
     if template is None or not template.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    target_path = _resolve_template_file(template) or Path(template.file_path).resolve()
+    current_path = _resolve_template_file(template) or Path(template.file_path).resolve()
     source_suffix = Path(file.filename or "").suffix.lower()
-    target_suffix = target_path.suffix.lower()
-    is_excel_upgrade = target_suffix == ".xls" and source_suffix == ".xlsx"
+    target_suffix = current_path.suffix.lower()
+    editable_spec = NEW_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
+    legacy_editable_spec = LEGACY_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
     if source_suffix not in SUPPORTED_TEMPLATE_EXTENSIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только .docx, .xml, .xls и .xlsx")
-    if source_suffix != target_suffix and not is_excel_upgrade:
+    if (editable_spec is not None or legacy_editable_spec is not None) and source_suffix != ".xls":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Свободно редактируемый шаблон должен оставаться в бинарном формате .xls",
+        )
+    if source_suffix != target_suffix:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Тип файла должен остаться {target_suffix}. Создайте новый шаблон отдельным файлом, если нужен другой тип.",
         )
 
-    if is_excel_upgrade:
-        target_path = target_path.with_suffix(source_suffix)
-        target_suffix = source_suffix
-
+    target_path = get_template_override_path(template.file_name)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target_path.with_name(f"{target_path.name}.uploading")
     try:
         with temp_path.open("wb") as target_file:
             shutil.copyfileobj(file.file, target_file)
+        if editable_spec is not None:
+            try:
+                validate_editable_xls_template(temp_path, editable_spec)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if legacy_editable_spec is not None:
+            try:
+                validate_legacy_editable_xls_template(temp_path, legacy_editable_spec)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         temp_path.replace(target_path)
     except OSError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Не удалось заменить шаблон: {exc}") from exc
@@ -219,7 +258,37 @@ def replace_document_template(
     template.is_active = True
     db.commit()
     db.refresh(template)
-    return DocumentTemplateRead.model_validate(template)
+    return _template_response(template)
+
+
+@router.post("/templates/{template_id}/reset", response_model=DocumentTemplateRead)
+def reset_document_template(
+    template_id: int,
+    _: User = Depends(require_template_file_access),
+    db: Session = Depends(get_db),
+) -> DocumentTemplateRead:
+    template = db.get(DocumentTemplate, template_id)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
+
+    override_path = get_template_override_path(template.file_name)
+    bundled_path = (get_templates_root() / template.file_name).resolve()
+    if not bundled_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Встроенный шаблон не найден")
+    try:
+        override_path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не удалось удалить клиентскую версию: {exc}",
+        ) from exc
+
+    template.file_path = str(bundled_path)
+    template.template_type = bundled_path.suffix.lower().lstrip(".")
+    template.output_format = template.template_type
+    db.commit()
+    db.refresh(template)
+    return _template_response(template)
 
 
 @router.post("/generate", response_model=DocumentGenerateResponse)
