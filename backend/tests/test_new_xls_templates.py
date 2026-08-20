@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 import tempfile
 import unittest
 
+from fastapi import HTTPException, UploadFile
 import xlrd
 from xlutils.copy import copy as copy_xls_workbook
 
@@ -19,14 +21,21 @@ from app.services.document_generator import (  # noqa: E402
 )
 from app.services.new_xls_templates import (  # noqa: E402
     NEW_XLS_TEMPLATE_SPECS,
+    new_xls_placeholder,
     strip_new_xls_placeholder_padding,
+    validate_editable_xls_template,
 )
+from app.core.config import settings  # noqa: E402
+from app.api.v1.routes.documents import replace_document_template, reset_document_template  # noqa: E402
+from app.models.document_template import DocumentTemplate  # noqa: E402
 from app.services.seed import SERVICE_CATALOG  # noqa: E402
 from app.services.template_catalog import (  # noqa: E402
     ACTIVE_TEMPLATE_FILE_NAMES,
     FOLDER_TEMPLATE_SOURCE_NAMES,
     TEMPLATE_DISPLAY_NAMES,
     load_template_catalog,
+    template_has_override,
+    template_supports_layout_editing,
 )
 
 
@@ -201,6 +210,18 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 ).casefold()
                 for legacy_value in legacy_values:
                     self.assertNotIn(legacy_value.casefold(), all_text)
+
+    def test_legacy_workbooks_contain_only_the_printable_sheets(self):
+        expected_sheets = {
+            "ВУ.xls": ["Водительская Лицевая", "Водительская Оборотная"],
+            "АМБ_карты_профосмотр_шаблон.xls": ["Амб"],
+            "Выписка из Амб карты (профа).xls": ["ПЗ2"],
+            "Справка_342н_псих_освид.xls": ["Проф2"],
+        }
+        for file_name, sheet_names in expected_sheets.items():
+            with self.subTest(template=file_name):
+                book = xlrd.open_workbook(str(TEMPLATES_DIR / file_name), formatting_info=True)
+                self.assertEqual(book.sheet_names(), sheet_names)
 
     def test_all_templates_fill_program_values(self):
         expected_cells = {
@@ -398,6 +419,134 @@ class NewXlsTemplatesTests(unittest.TestCase):
                     [sheet.name for sheet in target_book._Workbook__worksheets],
                     [spec.sheet_name],
                 )
+
+    def test_field_marker_can_move_in_any_direction_and_out_of_order(self):
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
+        source_coordinate = spec.dynamic_cells[0]
+        destination = (42, 8)
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            edited_path = Path(temporary_dir) / spec.file_name
+            output_path = Path(temporary_dir) / "generated.xls"
+            source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+            edited_book = copy_xls_workbook(source_book)
+            edited_sheet = edited_book.get_sheet(0)
+            edited_sheet.write(*source_coordinate, "")
+            edited_sheet.write(*destination, new_xls_placeholder(spec, source_coordinate))
+            edited_book.save(str(edited_path))
+
+            validate_editable_xls_template(edited_path, spec)
+            _generate_runtime_xls(
+                edited_path,
+                output_path,
+                self.context,
+                self.client,
+                self.encounter,
+                {"exams": self.exams},
+                print_variant=spec.print_variant,
+            )
+            generated_sheet = xlrd.open_workbook(str(output_path)).sheet_by_index(0)
+            self.assertEqual(
+                strip_new_xls_placeholder_padding(generated_sheet.cell_value(*destination)),
+                "7654321",
+            )
+            self.assertEqual(generated_sheet.cell_value(*source_coordinate), "")
+
+    def test_validation_rejects_missing_and_duplicate_markers(self):
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
+        coordinate = spec.dynamic_cells[0]
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            temporary_path = Path(temporary_dir)
+            source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+
+            missing_path = temporary_path / "missing.xls"
+            missing_book = copy_xls_workbook(source_book)
+            missing_book.get_sheet(0).write(*coordinate, "")
+            missing_book.save(str(missing_path))
+            with self.assertRaisesRegex(ValueError, "Удалён скрытый маркер"):
+                validate_editable_xls_template(missing_path, spec)
+
+            duplicate_path = temporary_path / "duplicate.xls"
+            duplicate_book = copy_xls_workbook(source_book)
+            duplicate_book.get_sheet(0).write(42, 8, new_xls_placeholder(spec, coordinate))
+            duplicate_book.save(str(duplicate_path))
+            with self.assertRaisesRegex(ValueError, "продублирован"):
+                validate_editable_xls_template(duplicate_path, spec)
+
+    def test_catalog_prefers_persistent_override_and_reports_capabilities(self):
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
+        original_override_dir = settings.document_template_overrides_dir
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            try:
+                settings.document_template_overrides_dir = temporary_dir
+                override_path = Path(temporary_dir) / spec.file_name
+                override_path.write_bytes((TEMPLATES_DIR / spec.file_name).read_bytes())
+                catalog_item = next(item for item in load_template_catalog() if item["file_name"] == spec.file_name)
+                self.assertEqual(Path(catalog_item["file_path"]), override_path)
+                self.assertTrue(template_has_override(spec.file_name))
+                self.assertTrue(template_supports_layout_editing(spec.file_name))
+                self.assertFalse(template_supports_layout_editing("082у_шаблон.docx"))
+            finally:
+                settings.document_template_overrides_dir = original_override_dir
+
+    def test_invalid_upload_is_atomic_and_reset_restores_builtin(self):
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
+        template = DocumentTemplate(
+            id=701,
+            code="gims-editable-test",
+            name="ГИМС",
+            file_name=spec.file_name,
+            file_path=str(TEMPLATES_DIR / spec.file_name),
+            description=None,
+            template_type="xls",
+            output_format="xls",
+            requires_numbered_blank=True,
+            blank_type="gims_medical_certificate",
+            is_active=True,
+        )
+
+        class FakeDb:
+            def get(self, model, object_id):
+                return template if model is DocumentTemplate and object_id == template.id else None
+
+            def commit(self):
+                return None
+
+            def refresh(self, item):
+                return None
+
+        original_override_dir = settings.document_template_overrides_dir
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            try:
+                settings.document_template_overrides_dir = temporary_dir
+                source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+                invalid_book = copy_xls_workbook(source_book)
+                invalid_book.get_sheet(0).write(*spec.dynamic_cells[0], "")
+                invalid_path = Path(temporary_dir) / "invalid-source.xls"
+                invalid_book.save(str(invalid_path))
+
+                invalid_upload = UploadFile(filename=spec.file_name, file=BytesIO(invalid_path.read_bytes()))
+                with self.assertRaises(HTTPException) as raised:
+                    replace_document_template(template.id, invalid_upload, None, FakeDb())
+                self.assertEqual(raised.exception.status_code, 400)
+                override_path = Path(temporary_dir) / spec.file_name
+                self.assertFalse(override_path.exists())
+                self.assertEqual(template.file_path, str(TEMPLATES_DIR / spec.file_name))
+
+                valid_upload = UploadFile(
+                    filename=spec.file_name,
+                    file=BytesIO((TEMPLATES_DIR / spec.file_name).read_bytes()),
+                )
+                response = replace_document_template(template.id, valid_upload, None, FakeDb())
+                self.assertTrue(override_path.is_file())
+                self.assertTrue(response.supports_layout_editing)
+                self.assertTrue(response.has_override)
+
+                reset_response = reset_document_template(template.id, None, FakeDb())
+                self.assertFalse(override_path.exists())
+                self.assertFalse(reset_response.has_override)
+                self.assertEqual(Path(template.file_path), TEMPLATES_DIR / spec.file_name)
+            finally:
+                settings.document_template_overrides_dir = original_override_dir
 
 
 if __name__ == "__main__":

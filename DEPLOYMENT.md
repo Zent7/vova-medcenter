@@ -35,6 +35,7 @@ Recommended production environment variables:
 DATABASE_URL=postgresql+psycopg://USER:PASSWORD@127.0.0.1:5432/medcenters
 FRONTEND_ORIGIN=https://your-domain.ru
 GENERATED_DOCUMENTS_DIR=/var/lib/medcenters/generated
+DOCUMENT_TEMPLATE_OVERRIDES_DIR=/var/lib/medcenters/template-overrides
 DELETION_NOTIFY_EMAIL=admin@your-domain.ru
 SMTP_HOST=smtp.your-provider.ru
 SMTP_PORT=587
@@ -79,3 +80,4 @@ For the local Windows production-like setup:
 - review the operational runbook in `docs/Резервное_копирование.md`.
 
 The runtime documents path must point to `GENERATED_DOCUMENTS_DIR` instead of repo-only templates. The default local value is `storage/generated`.
+Client-edited templates must be kept outside the application image in `DOCUMENT_TEMPLATE_OVERRIDES_DIR` (default `storage/template-overrides`) and included in backups.
