@@ -12608,7 +12608,7 @@ function bindContentEvents() {
             ? getChairmanBlankSeriesForPrintKind(printKind)
             : certificateType
               ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
-              : selectedBlankSeries || getChairmanBlankSeriesForPrintKind(printKind);
+              : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (autoNumberedDocument) {

@@ -64,3 +64,15 @@ test("only the LMK book requires a pre-entered LMK blank", () => {
   );
   assert.match(appSource, /findLatestCertificateDocument\("lmk_title"\)/);
 });
+
+test("LMK printing reads the selected blank series from shared state", () => {
+  const printSource = sourceBetween(
+    "const runChairmanPrint = async",
+    "printButton.addEventListener",
+  );
+  assert.match(
+    printSource,
+    /chairmanPrintBlankState\.selectedSeries \|\| getChairmanBlankSeriesForPrintKind\(printKind\)/,
+  );
+  assert.doesNotMatch(printSource, /\bselectedBlankSeries\b/);
+});
