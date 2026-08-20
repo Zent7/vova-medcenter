@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     public_frontend_origin: str = "https://demo.med-center.online"
     build_revision: str = "development"
     generated_documents_dir: str = "storage/generated"
+    document_template_overrides_dir: str = "storage/template-overrides"
     xml_exports_retention_days: int = 30
     xml_exports_timezone: str = "Europe/Moscow"
     deletion_notify_email: str | None = None
