@@ -1,6 +1,9 @@
 from pathlib import Path
 import re
 
+from app.core.config import settings
+from app.services.new_xls_templates import LEGACY_XLS_TEMPLATE_BY_FILE, NEW_XLS_TEMPLATE_BY_FILE
+
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
 ACTIVE_XML_TEMPLATE_NAMES = {
@@ -101,6 +104,31 @@ def get_templates_root() -> Path:
     return Path(__file__).resolve().parents[3] / "assets" / "templates" / "Templates"
 
 
+def get_template_overrides_root() -> Path:
+    return Path(settings.document_template_overrides_dir).resolve()
+
+
+def get_template_override_path(file_name: str) -> Path:
+    safe_name = Path(file_name).name
+    if safe_name != file_name:
+        raise ValueError("Недопустимое имя файла шаблона")
+    return get_template_overrides_root() / safe_name
+
+
+def template_has_override(file_name: str) -> bool:
+    return get_template_override_path(file_name).is_file()
+
+
+def resolve_catalog_template_path(file_name: str) -> Path:
+    override_path = get_template_override_path(file_name)
+    return override_path if override_path.is_file() else get_templates_root() / file_name
+
+
+def template_supports_layout_editing(file_name: str) -> bool:
+    normalized = file_name.casefold()
+    return normalized in NEW_XLS_TEMPLATE_BY_FILE or normalized in LEGACY_XLS_TEMPLATE_BY_FILE
+
+
 def slugify_template_name(value: str) -> str:
     slug = value.strip().lower()
     slug = re.sub(r"[^\w]+", "-", slug, flags=re.UNICODE)
@@ -140,7 +168,7 @@ def load_template_catalog() -> list[dict[str, str]]:
                 "code": f"{slugify_template_name(path.stem)}-{index}",
                 "name": TEMPLATE_DISPLAY_NAMES.get(path.name, path.stem),
                 "file_name": path.name,
-                "file_path": str(path),
+                "file_path": str(resolve_catalog_template_path(path.name)),
                 "description": description,
                 "template_type": path.suffix.lower().lstrip("."),
                 "preferred_xlsx_available": path.suffix.lower() == ".xls" and path.stem in xlsx_stems,

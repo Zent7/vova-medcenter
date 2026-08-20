@@ -14,5 +14,7 @@ class DocumentTemplateRead(BaseModel):
     requires_numbered_blank: bool
     blank_type: str | None
     is_active: bool
+    supports_layout_editing: bool = False
+    has_override: bool = False
 
     model_config = {"from_attributes": True}
