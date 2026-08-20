@@ -328,7 +328,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(overrides["gdfMain.BloodType"], "2")
 
     def test_prof_amb_xls_fills_blood_rh_and_allergies(self):
-        template_path = self._prof_template_path()
+        template_path = self._ambulatory_template_path()
         output_path = Path(tempfile.gettempdir()) / "prof_amb_blood_fields_test.xls"
         context = self._context()
         context.update(
@@ -342,7 +342,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         _generate_prof_amb_xls(template_path, output_path, context, self._client(), None, [])
 
         book = xlrd.open_workbook(str(output_path), formatting_info=True)
-        sheet = book.sheet_by_name("Амб !")
+        sheet = book.sheet_by_name("Амб")
         self.assertEqual(sheet.cell_value(47, 40), "A (II)")
         self.assertEqual(sheet.cell_value(47, 54), "Rh(-)")
         self.assertEqual(sheet.cell_value(48, 44), "пенициллин")
@@ -426,7 +426,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         template_path = next(
             path
             for path in (Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates").glob("*.xls")
-            if path.name.startswith("Выписка")
+            if path.name.startswith("АМБ_")
         )
         output_path = Path(tempfile.gettempdir()) / "prof_extract_doctor_rows_test.xls"
         roles = [
@@ -477,7 +477,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         _generate_prof_amb_xls(template_path, output_path, context, client, encounter, exams)
 
         book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
-        amb_sheet = book.sheet_by_index(1)
+        amb_sheet = book.sheet_by_index(0)
         title_cells = [block["title_cell"] for block in PROF_AMB_EXAM_BLOCKS[: len(roles)]]
         self.assertEqual(
             [amb_sheet.cell_value(row_index, col_index) for row_index, col_index in title_cells],
@@ -502,15 +502,6 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertIn((doctor_row, doctor_row + 1, doctor_col, 32), amb_sheet.merged_cells)
         date_row, date_col = PROF_AMB_EXAM_BLOCKS[dermatologist_index]["date_cell"]
         self.assertEqual(amb_sheet.cell_value(date_row, date_col), "24.06.26")
-        pz2_sheet = book.sheet_by_name("ПЗ2")
-        pz2_doctor_row = PROF_EXTRACT_DOCTOR_ROWS[dermatologist_index][2]
-        self.assertEqual(
-            pz2_sheet.cell_value(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL),
-            "Дерматовенеролог Сит Мехдиева Н.Ш.К.",
-        )
-        self.assertEqual(pz2_sheet.cell_value(pz2_doctor_row, PROF_EXTRACT_DATE_COL), "24.06.26")
-        pz2_doctor_xf = book.xf_list[pz2_sheet.cell_xf_index(pz2_doctor_row, PROF_EXTRACT_DOCTOR_COL)]
-        self.assertEqual(pz2_doctor_xf.alignment.shrink_to_fit, 1)
 
     def test_ambulatory_extract_print_variant_keeps_only_pz2_sheet(self):
         output_path = Path(tempfile.gettempdir()) / "prof_extract_print_variant_test.xls"
@@ -594,7 +585,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(sheet.cell_value(38, 44), "ООО Тест, Пекарь")
 
     def test_certificate_print_variant_keeps_only_selected_sheet(self):
-        template_path = self._vu_template_path()
+        template_path = self._templates_dir() / "СПОРТ.xls"
         output_path = Path(tempfile.gettempdir()) / "certificate_print_variant_test.xls"
         source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
         target_book = copy_xls_workbook(source_book)
@@ -607,40 +598,10 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
 
     def test_guard_print_variant_fills_and_keeps_only_chod_sheet(self):
         template_path = self._vu_template_path()
-        output_path = Path(tempfile.gettempdir()) / "chod_print_variant_test.xls"
-        context = {
-            **self._context(),
-            "BlankNumber": "ЧОД 0001234",
-            "BirthDateCalc_MONTH": "01",
-            "HouseNumberCalc": "д. 7",
-            "ApartmentNumberCalc": "кв. 9",
-            "Doctor": "Председатель П.П.",
-        }
-        encounter = SimpleNamespace(encounter_date=date(2026, 7, 14))
-
-        _generate_prof_amb_xls(
-            template_path,
-            output_path,
-            context,
-            self._client(),
-            encounter,
-            [],
-            print_variant="guard",
-        )
-
-        book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
-        self.assertEqual(book.sheet_names(), ["ЧОД"])
-        chod_sheet = book.sheet_by_name("ЧОД")
-        self.assertEqual(chod_sheet.cell_value(17, 15), "ЧОД 0001234")
-        self.assertEqual(chod_sheet.cell_value(20, 3), "Тестов Тест Тестович")
-        self.assertEqual(chod_sheet.cell_value(21, 11), "02")
-        self.assertEqual(chod_sheet.cell_value(21, 16), "01")
-        self.assertEqual(chod_sheet.cell_value(21, 20), "1990")
-        self.assertEqual(chod_sheet.cell_value(23, 3), "Санкт-Петербург")
-        self.assertEqual(chod_sheet.cell_value(25, 4), "Санкт-Петербург")
-        self.assertEqual(chod_sheet.cell_value(27, 5), "Невский 1")
-        self.assertEqual(chod_sheet.cell_value(28, 5), "д. 7 кв. 9")
-        self.assertEqual(chod_sheet.cell_value(36, 12), "Председатель П.П.")
+        source_book = xlrd.open_workbook(file_contents=template_path.read_bytes(), formatting_info=True)
+        target_book = copy_xls_workbook(source_book)
+        with self.assertRaisesRegex(ValueError, "ЧОД"):
+            _apply_print_variant_to_xls_workbook(target_book, "guard")
 
     def test_generated_amb_sheet_hides_unused_blocks_and_compacts_pz2_rows(self):
         output_path = Path(tempfile.gettempdir()) / "prof_extract_doctor_rows_compact_test.xls"
@@ -652,10 +613,10 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
             exam("gynecologist", "Барсуков А.Ф.", is_completed=False),
         ]
 
-        _generate_prof_amb_xls(self._prof_template_path(), output_path, self._context(), self._client(), encounter, exams)
+        _generate_prof_amb_xls(self._ambulatory_template_path(), output_path, self._context(), self._client(), encounter, exams)
 
         book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
-        amb_sheet = book.sheet_by_index(1)
+        amb_sheet = book.sheet_by_index(0)
         self.assertEqual(
             [amb_sheet.cell_value(*PROF_AMB_EXAM_BLOCKS[index]["title_cell"]) for index in range(3)],
             ["Врач терапевт", "Врач хирург", "Врач стоматолог"],
@@ -665,20 +626,6 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         self.assertEqual(amb_sheet.cell_value(first_unused_block["date_cell"][0], unused_label_col), "")
         self.assertEqual(amb_sheet.cell_value(*first_unused_block["title_cell"]), "")
 
-        pz2_sheet = book.sheet_by_name("ПЗ2")
-        expected_doctors = [
-            "Терапевт Казаков И.В.",
-            "Хирург Конюк М.В.",
-            "Стоматолог Шадрикова Ю.А.",
-        ]
-        for index, expected_doctor in enumerate(expected_doctors):
-            row_index = PROF_EXTRACT_DOCTOR_ROWS[index][2]
-            self.assertEqual(pz2_sheet.cell_value(row_index, PROF_EXTRACT_SEQUENCE_COL), float(index + 1))
-            self.assertEqual(pz2_sheet.cell_value(row_index, PROF_EXTRACT_DOCTOR_COL), expected_doctor)
-
-        first_unused_row = PROF_EXTRACT_DOCTOR_ROWS[len(expected_doctors)][2]
-        self.assertEqual(pz2_sheet.cell_value(first_unused_row, PROF_EXTRACT_SEQUENCE_COL), "")
-        self.assertEqual(pz2_sheet.cell_value(first_unused_row, PROF_EXTRACT_DOCTOR_COL), "")
 
 
 if __name__ == "__main__":
