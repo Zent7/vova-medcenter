@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 
 from app.core.config import settings
-from app.services.new_xls_templates import NEW_XLS_TEMPLATE_BY_FILE
+from app.services.new_xls_templates import LEGACY_XLS_TEMPLATE_BY_FILE, NEW_XLS_TEMPLATE_BY_FILE
 
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
@@ -125,7 +125,8 @@ def resolve_catalog_template_path(file_name: str) -> Path:
 
 
 def template_supports_layout_editing(file_name: str) -> bool:
-    return file_name.casefold() in NEW_XLS_TEMPLATE_BY_FILE
+    normalized = file_name.casefold()
+    return normalized in NEW_XLS_TEMPLATE_BY_FILE or normalized in LEGACY_XLS_TEMPLATE_BY_FILE
 
 
 def slugify_template_name(value: str) -> str:

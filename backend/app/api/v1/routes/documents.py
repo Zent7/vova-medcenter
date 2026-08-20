@@ -27,7 +27,12 @@ from app.schemas.document_generation import (
 from app.schemas.document_template import DocumentTemplateRead
 from app.services.blank_forms import BlankServiceError, NoFreeBlankError, spoil_for_generated_document
 from app.services.document_generator import generate_document
-from app.services.new_xls_templates import NEW_XLS_TEMPLATE_BY_FILE, validate_editable_xls_template
+from app.services.new_xls_templates import (
+    LEGACY_XLS_TEMPLATE_BY_FILE,
+    NEW_XLS_TEMPLATE_BY_FILE,
+    validate_editable_xls_template,
+    validate_legacy_editable_xls_template,
+)
 from app.services.template_catalog import (
     SUPPORTED_TEMPLATE_EXTENSIONS,
     get_template_override_path,
@@ -208,9 +213,10 @@ def replace_document_template(
     source_suffix = Path(file.filename or "").suffix.lower()
     target_suffix = current_path.suffix.lower()
     editable_spec = NEW_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
+    legacy_editable_spec = LEGACY_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
     if source_suffix not in SUPPORTED_TEMPLATE_EXTENSIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Поддерживаются только .docx, .xml, .xls и .xlsx")
-    if editable_spec is not None and source_suffix != ".xls":
+    if (editable_spec is not None or legacy_editable_spec is not None) and source_suffix != ".xls":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Свободно редактируемый шаблон должен оставаться в бинарном формате .xls",
@@ -230,6 +236,11 @@ def replace_document_template(
         if editable_spec is not None:
             try:
                 validate_editable_xls_template(temp_path, editable_spec)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if legacy_editable_spec is not None:
+            try:
+                validate_legacy_editable_xls_template(temp_path, legacy_editable_spec)
             except ValueError as exc:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         temp_path.replace(target_path)

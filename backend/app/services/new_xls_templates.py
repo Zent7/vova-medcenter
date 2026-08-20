@@ -31,6 +31,20 @@ class NewXlsTemplateSpec:
     vertical_page_break_column: int | None = None
 
 
+@dataclass(frozen=True)
+class LegacyXlsField:
+    field_id: str
+    sheet_name: str
+    source_cell: Cell
+
+
+@dataclass(frozen=True)
+class LegacyXlsTemplateSpec:
+    file_name: str
+    sheet_names: tuple[str, ...]
+    fields: tuple[LegacyXlsField, ...]
+
+
 # Coordinates are zero-based. Every cell below contains data that belongs to a
 # patient, encounter, numbered blank, examination, or signing doctor. Static
 # organization details and the prescribed form text intentionally remain intact.
@@ -298,6 +312,127 @@ NEW_XLS_TEMPLATE_BY_SHEET = {spec.sheet_name: spec for spec in NEW_XLS_TEMPLATE_
 NEW_XLS_TEMPLATE_BY_FILE = {spec.file_name.casefold(): spec for spec in NEW_XLS_TEMPLATE_SPECS}
 
 
+def _legacy_fields(sheet_name: str, items: tuple[tuple[str, Cell], ...]) -> tuple[LegacyXlsField, ...]:
+    return tuple(LegacyXlsField(field_id, sheet_name, cell) for field_id, cell in items)
+
+
+_DRIVER_FRONT_FIELDS = _legacy_fields(
+    "Водительская Лицевая",
+    (
+        ("patient_name_left", (15, 2)), ("patient_name_right", (15, 28)),
+        ("birth_day_left", (16, 8)), ("birth_month_left", (16, 15)), ("birth_year_left", (16, 22)),
+        ("birth_day_right", (16, 35)), ("birth_month_right", (16, 41)), ("birth_year_right", (16, 48)),
+        ("subject_left", (18, 9)), ("subject_right", (18, 36)),
+        ("district_left", (19, 4)), ("district_right", (19, 31)),
+        ("city_left", (20, 4)), ("city_right", (20, 30)),
+        ("street_left", (21, 2)), ("house_left", (21, 18)),
+        ("street_right", (21, 30)), ("house_right", (21, 45)),
+        ("building_left", (22, 3)), ("apartment_left", (22, 12)),
+        ("building_right", (22, 31)), ("apartment_right", (22, 38)),
+        ("issue_day_left", (23, 15)), ("issue_month_left", (23, 19)), ("issue_year_left", (23, 23)),
+        ("issue_day_right", (23, 41)), ("issue_month_right", (23, 45)), ("issue_year_right", (23, 49)),
+        ("therapist_left", (28, 12)), ("therapist_right", (28, 39)),
+        ("ophthalmologist_left", (30, 12)), ("ophthalmologist_right", (30, 39)),
+        ("neurologist_left", (35, 12)), ("neurologist_right", (35, 39)),
+        ("otolaryngologist_left", (37, 12)), ("otolaryngologist_right", (37, 39)),
+        ("instrumental_left", (39, 12)), ("instrumental_right", (39, 39)),
+        ("laboratory_left", (41, 12)), ("laboratory_right", (41, 39)),
+    ),
+)
+
+_DRIVER_CATEGORY_KEYS = ("a", "b", "c", "d", "be", "ce", "de", "tm", "tb", "m", "a1", "b1", "c1", "d1", "c1e", "d1e")
+_DRIVER_CATEGORY_LEFT = tuple((10, col) for col in range(2, 34, 2))
+_DRIVER_CATEGORY_RIGHT = tuple((10, col) for col in range(35, 67, 2))
+_DRIVER_BACK_FIELDS = tuple(
+    LegacyXlsField(f"category_{side}_{key}", "Водительская Оборотная", cell)
+    for side, cells in (("left", _DRIVER_CATEGORY_LEFT), ("right", _DRIVER_CATEGORY_RIGHT))
+    for key, cell in zip(_DRIVER_CATEGORY_KEYS, cells)
+) + _legacy_fields(
+    "Водительская Оборотная",
+    tuple(
+        (f"restriction_{row}_{col}", (row, col))
+        for row in (14, 17, 20, 25, 27, 29, 31, 33)
+        for col in (29, 62)
+    ) + (("chairman_left", (36, 8)), ("chairman_right", (36, 41))),
+)
+
+_AMB_HEADER_FIELDS = _legacy_fields(
+    "Амб",
+    (
+        ("blank_number", (15, 54)), ("visit_date", (16, 47)), ("patient_name", (17, 43)),
+        ("sex", (18, 35)), ("birth_date", (18, 48)), ("subject", (19, 54)),
+        ("district", (20, 35)), ("city", (20, 49)), ("locality", (21, 40)),
+        ("street", (22, 35)), ("phone", (22, 56)), ("residence_type", (23, 48)),
+        ("oms_series", (24, 35)), ("oms_number", (24, 46)), ("snils", (24, 55)),
+        ("document_type", (26, 48)), ("document_series", (26, 56)), ("document_number", (26, 59)),
+        ("workplace", (38, 44)), ("blood_group", (47, 40)), ("rh_factor", (47, 54)),
+        ("allergies", (48, 44)),
+    ),
+)
+
+_AMB_BLOCK_CELLS = (
+    ((1, 23), (2, 10), (3, 10), (4, 13), (6, 1), (9, 1), (14, 11)),
+    ((15, 23), (16, 10), (17, 10), (18, 13), (20, 1), (23, 1), (28, 11)),
+    ((51, 24), (52, 10), (53, 10), (54, 13), (56, 1), (59, 1), (64, 11)),
+    ((51, 55), (52, 41), (53, 41), (54, 44), (56, 32), (59, 32), (64, 42)),
+    ((66, 24), (67, 10), (68, 10), (69, 13), (71, 1), (74, 1), (79, 11)),
+    ((66, 55), (67, 41), (68, 41), (69, 42), (71, 32), (74, 32), (79, 42)),
+    ((81, 24), (82, 10), (83, 10), (84, 13), (86, 1), (89, 1), (94, 11)),
+    ((81, 55), (82, 41), (83, 41), (84, 44), (86, 32), (89, 32), (94, 42)),
+    ((96, 24), (97, 10), (98, 10), (99, 13), (101, 1), (104, 1), (109, 11)),
+    ((96, 55), (97, 41), (98, 41), (99, 44), (101, 32), (104, 32), (109, 42)),
+)
+_AMB_BLOCK_KEYS = ("date", "title", "complaints", "anamnesis", "objective", "diagnosis", "doctor")
+_AMB_BLOCK_FIELDS = tuple(
+    LegacyXlsField(f"exam_{slot}_{key}", "Амб", cell)
+    for slot, cells in enumerate(_AMB_BLOCK_CELLS, start=1)
+    for key, cell in zip(_AMB_BLOCK_KEYS, cells)
+)
+
+_PZ2_HEADER_FIELDS = _legacy_fields(
+    "ПЗ2",
+    (
+        ("blank_preliminary", (10, 39)), ("date_preliminary", (10, 42)),
+        ("blank_periodic", (17, 31)), ("date_periodic", (17, 42)), ("issue_date", (18, 14)),
+        ("last_name", (20, 8)), ("first_name", (21, 4)), ("patronymic", (21, 23)),
+        ("sex", (22, 6)), ("birth_date", (22, 24)), ("address", (28, 1)), ("phone", (31, 30)),
+        ("company", (35, 11)), ("company_repeat", (38, 26)), ("department", (41, 17)),
+        ("position", (44, 2)), ("harmfulness", (49, 1)), ("position_repeat", (71, 42)),
+        ("harmfulness_repeat", (74, 42)), ("signer", (78, 73)),
+    ),
+)
+_PZ2_DOCTOR_ROWS = (32, 34, 37, 39, 41, 43, 45, 48, 50, 52)
+_PZ2_DOCTOR_FIELDS = tuple(
+    LegacyXlsField(f"doctor_{slot}_{key}", "ПЗ2", (row, col))
+    for slot, row in enumerate(_PZ2_DOCTOR_ROWS, start=1)
+    for key, col in (("sequence", 42), ("name", 44), ("date", 54), ("conclusion", 63))
+)
+
+_PROF2_FIELDS = _legacy_fields(
+    "Проф2",
+    (
+        ("reference_date", (4, 29)), ("patient_name", (8, 6)), ("birth_and_sex", (10, 1)),
+        ("address", (11, 1)), ("company", (14, 10)), ("examination_date", (21, 17)),
+        ("position", (28, 1)), ("harmfulness", (30, 1)), ("signature_date", (39, 2)),
+    ),
+)
+
+LEGACY_XLS_TEMPLATE_SPECS: tuple[LegacyXlsTemplateSpec, ...] = (
+    LegacyXlsTemplateSpec("ВУ.xls", ("Водительская Лицевая", "Водительская Оборотная"), _DRIVER_FRONT_FIELDS + _DRIVER_BACK_FIELDS),
+    LegacyXlsTemplateSpec("АМБ_карты_профосмотр_шаблон.xls", ("Амб",), _AMB_HEADER_FIELDS + _AMB_BLOCK_FIELDS),
+    LegacyXlsTemplateSpec("Выписка из Амб карты (профа).xls", ("ПЗ2",), _PZ2_HEADER_FIELDS + _PZ2_DOCTOR_FIELDS),
+    LegacyXlsTemplateSpec("Справка_342н_псих_освид.xls", ("Проф2",), _PROF2_FIELDS),
+)
+LEGACY_XLS_TEMPLATE_BY_FILE = {spec.file_name.casefold(): spec for spec in LEGACY_XLS_TEMPLATE_SPECS}
+
+
+def legacy_xls_placeholder(spec: LegacyXlsTemplateSpec, field: LegacyXlsField) -> str:
+    field_index = spec.fields.index(field) + 1
+    identity = "".join(chr(0xFE00 + int(digit, 16)) for digit in f"{field_index:04X}")
+    marker = f"{PLACEHOLDER_START}{identity}{PLACEHOLDER_END}"
+    return marker + PLACEHOLDER_FILL * (PLACEHOLDER_LENGTH - len(marker))
+
+
 def new_xls_placeholder(spec: NewXlsTemplateSpec, coordinate: Cell) -> str:
     cell_index = spec.dynamic_cells.index(coordinate) + 1
     identity = "".join(chr(0xFE00 + int(digit, 16)) for digit in f"{cell_index:04X}")
@@ -359,6 +494,57 @@ def validate_editable_xls_template(path: Path, spec: NewXlsTemplateSpec) -> None
                         "ячейке объединённого диапазона"
                     )
                 break
+
+
+def legacy_xls_marker_locations(
+    book,
+    spec: LegacyXlsTemplateSpec,
+) -> dict[str, tuple[str, int, int]]:
+    locations: dict[str, list[tuple[str, int, int]]] = {
+        legacy_xls_placeholder(spec, field)[:6]: [] for field in spec.fields
+    }
+    for sheet in book.sheets():
+        for row_index in range(sheet.nrows):
+            for col_index in range(sheet.ncols):
+                value = sheet.cell_value(row_index, col_index)
+                if not isinstance(value, str):
+                    continue
+                for marker in locations:
+                    if marker in value:
+                        locations[marker].append((sheet.name, row_index, col_index))
+
+    result: dict[str, tuple[str, int, int]] = {}
+    for field in spec.fields:
+        marker = legacy_xls_placeholder(spec, field)[:6]
+        marker_locations = locations[marker]
+        if not marker_locations:
+            raise ValueError(f"Удалён скрытый маркер поля «{field.field_id}»")
+        if len(marker_locations) != 1:
+            raise ValueError(f"Скрытый маркер поля «{field.field_id}» продублирован")
+        sheet_name, row_index, col_index = marker_locations[0]
+        sheet = book.sheet_by_name(sheet_name)
+        for row_low, row_high, col_low, col_high in sheet.merged_cells:
+            if row_low <= row_index < row_high and col_low <= col_index < col_high:
+                if (row_index, col_index) != (row_low, col_low):
+                    raise ValueError(
+                        f"Маркер поля «{field.field_id}» находится не в основной ячейке объединённого диапазона"
+                    )
+                break
+        result[field.field_id] = (sheet_name, row_index, col_index)
+    return result
+
+
+def validate_legacy_editable_xls_template(path: Path, spec: LegacyXlsTemplateSpec) -> None:
+    try:
+        book = xlrd.open_workbook(file_contents=path.read_bytes(), formatting_info=True)
+    except Exception as exc:
+        raise ValueError(f"Не удалось прочитать XLS: {exc}") from exc
+    if tuple(book.sheet_names()) != spec.sheet_names:
+        raise ValueError(
+            "Набор или порядок обязательных печатных листов изменён: "
+            + ", ".join(spec.sheet_names)
+        )
+    legacy_xls_marker_locations(book, spec)
 
 
 def strip_new_xls_placeholder_padding(value: object) -> str:
