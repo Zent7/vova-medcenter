@@ -226,14 +226,14 @@
               }
               <div class="visit-form__actions">
                 <button type="button" class="ghost-button" data-blanks-close-form>Отмена</button>
-                <button type="submit" class="primary-button">${data.blanksFormSaving ? "Добавление..." : "Добавить номера"}</button>
+                <button type="submit" class="primary-button">${data.blanksFormSaving ? "Добавление..." : "Добавить"}</button>
               </div>
             </form>
           `
           : ""
       }
       <article class="card">
-        <h3>Партии бланков</h3>
+        <h3>Поступившие бланки</h3>
         ${
           batches.length
             ? `
@@ -533,12 +533,13 @@
           <div>
             <h3>Бланки</h3>
             <p class="blanks-page__center">${esc(centerName)}</p>
-            <p class="muted">Показаны только диапазоны и номера выбранного медцентра.</p>
+            <p class="muted">Добавляйте серии и диапазоны для выбранного медцентра. Выдача и статус ведутся по каждому номеру отдельно.</p>
           </div>
           <div class="blanks-page__actions">
             <button type="button" class="primary-button" data-blanks-add-numbers ${appState.blanksFormOpen ? "disabled" : ""}>
-              ${appState.blanksFormOpen ? "Форма открыта" : "Добавить номера"}
+              ${appState.blanksFormOpen ? "Форма открыта" : "Добавить"}
             </button>
+            <button type="button" class="ghost-button" data-blanks-show-info>Инфо о бланках</button>
             <button type="button" class="ghost-button" data-blanks-refresh>Обновить</button>
           </div>
         </div>
@@ -567,6 +568,13 @@
 
     document.querySelector("[data-blanks-refresh]")?.addEventListener("click", () => {
       loadBlanksData({ force: true });
+    });
+
+    document.querySelector("[data-blanks-show-info]")?.addEventListener("click", () => {
+      window.appState.blanksTab = "overview";
+      window.appState.blanksFormOpen = false;
+      window.persistDemoState?.();
+      window.renderApp?.();
     });
 
     document.querySelector("[data-blanks-add-numbers]")?.addEventListener("click", () => {

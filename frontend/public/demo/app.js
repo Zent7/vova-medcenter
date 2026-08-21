@@ -7281,35 +7281,41 @@ function renderTemplatesPage() {
   return `
     <section class="card">
       <div class="template-page-head">
-        <p class="muted">${canManageTemplates ? "Файловые шаблоны можно скачать, отредактировать в Excel и загрузить обратно." : "Файлы шаблонов скрыты от операторов. Для изменения шаблонов войдите как председатель или администратор."} У шаблонов с отметкой «Свободный макет» разрешено переносить поля и блоки, вставлять строки и столбцы, менять оформление, изображения и область печати. Скрытые маркеры удалять нельзя.</p>
-        ${canManageTemplates ? '<button class="primary-button" type="button" data-refresh-document-templates>Перечитать папку</button>' : ""}
+        <p class="muted">${canManageTemplates ? "Скачивайте актуальный файл или заменяйте его новым файлом того же типа." : "Файлы доступны для скачивания. Изменять их могут председатель и администратор."} У шаблонов с отметкой «Свободный макет» разрешено переносить поля и блоки, вставлять строки и столбцы, менять оформление, изображения и область печати. Скрытые маркеры удалять нельзя.</p>
+        ${canManageTemplates ? '<button class="primary-button" type="button" data-refresh-document-templates>Обновить список</button>' : ""}
       </div>
       ${data.templateOperationStatus ? `<div class="template-status">${escapeHtml(data.templateOperationStatus)}</div>` : ""}
-      <div class="document-template-grid">
+      <div class="data-table">
         ${
           documentTemplates.length
-            ? documentTemplates
-                .map(
-                  (template) => `
-                    <article class="document-template-card">
-                      <div>
-                        <strong>${escapeHtml(template.name || template.file_name || `Шаблон ${template.id}`)}</strong>
-                        <span>${escapeHtml(template.file_name || "")}</span>
-                      </div>
-                      <small>${escapeHtml(template.template_type || "")}${template.requires_numbered_blank ? " · номерной бланк" : ""}${template.supports_layout_editing ? " · Свободный макет" : ""}${template.has_override ? " · клиентская версия" : ""}</small>
-                      ${
-                        canManageTemplates
-                          ? `<div class="document-template-card__actions">
-                              <button class="ghost-button" type="button" data-download-document-template="${escapeHtml(template.id)}">Скачать</button>
-                              <button class="ghost-button" type="button" data-replace-document-template="${escapeHtml(template.id)}">Обновить шаблон</button>
-                              ${template.has_override ? `<button class="ghost-button" type="button" data-reset-document-template="${escapeHtml(template.id)}">Вернуть исходный</button>` : ""}
-                            </div>`
-                          : ""
-                      }
-                    </article>
-                  `,
-                )
-                .join("")
+            ? `<table>
+                <thead>
+                  <tr>
+                    <th>Шаблон</th>
+                    <th>Файл</th>
+                    <th>Тип</th>
+                    <th>Бланк</th>
+                    <th></th>
+                    ${canManageTemplates ? "<th></th>" : ""}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${documentTemplates
+                    .map(
+                      (template) => `
+                        <tr>
+                          <td>${escapeHtml(template.name || template.file_name || `Шаблон ${template.id}`)}</td>
+                          <td>${escapeHtml(template.file_name || "—")}</td>
+                          <td>${escapeHtml((template.template_type || "—").toUpperCase())}${template.supports_layout_editing ? " · Свободный макет" : ""}${template.has_override ? " · клиентская версия" : ""}</td>
+                          <td>${template.requires_numbered_blank ? "Номерной" : "Обычный"}</td>
+                          <td><button class="ghost-button" type="button" data-download-document-template="${escapeHtml(template.id)}">Скачать</button></td>
+                          ${canManageTemplates ? `<td><button class="ghost-button" type="button" data-replace-document-template="${escapeHtml(template.id)}">Обновить</button>${template.has_override ? `<button class="ghost-button" type="button" data-reset-document-template="${escapeHtml(template.id)}">Вернуть исходный</button>` : ""}</td>` : ""}
+                        </tr>
+                      `,
+                    )
+                    .join("")}
+                </tbody>
+              </table>`
             : `<div class="empty-state">Файловые шаблоны еще не загружены с backend.</div>`
         }
       </div>
