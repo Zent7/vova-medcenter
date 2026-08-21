@@ -12242,6 +12242,11 @@ function bindContentEvents() {
       const templateId = button.dataset.replaceDocumentTemplate;
       const input = document.getElementById("documentTemplateUploadInput");
       if (!templateId || !input) return;
+      const template = data.documentTemplates.find((item) => String(item.id) === String(templateId));
+      const templateName = template?.name || template?.file_name || "этот шаблон";
+      if (!window.confirm(`Заменить файл «${templateName}»?\n\nДокументы, которые уже сформированы, не изменятся.`)) {
+        return;
+      }
       input.dataset.templateId = templateId;
       input.click();
     });
