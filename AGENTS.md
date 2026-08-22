@@ -60,18 +60,31 @@ For any backend, database, seed-data, API, or migration-related change, verify m
 
 ## Git Delivery Workflow
 
+`main` in `Zent7/vova-medcenter` (remote `origin`) is the default branch and the single integration point — `git remote show origin` reports `HEAD branch: main`. Work is delivered by pushing to `main`, not by long-lived branches. Feature branches are deleted once integrated, so a `codex/*` branch still present locally is finished history: never start new work on top of one, and never assume its copy of this file is current.
+
 Before changing files, check the branch state:
 ```bash
 git fetch origin
 git status --short --branch
 git branch --show-current
+git rev-list --left-right --count origin/main...HEAD   # commits only on main / only here
 ```
 
-If the working tree is dirty, preserve the user's changes and do not overwrite them. If the current branch is behind or has diverged from its upstream/target branch, update or report that before making edits.
+A non-zero left-hand count means the checkout is behind `main`. Rebase onto `origin/main` or move to a fresh worktree before editing: a change prepared on stale history is reviewed against the wrong code and can silently revert newer work.
 
 Repository-owner preference: after implementation and proportionate verification, commit and push application changes directly to `origin/main`. Do not create a routine PR in `Zent7/vova-medcenter` unless the user explicitly requests one, direct publication is unsafe, or permissions/protection prevent a direct push.
 
-When the current checkout is dirty or not based on current `origin/main`, use a clean isolated worktree for integration. Preserve the original working tree and report any local changes that remain outside `main`.
+When the current checkout is dirty or not based on current `origin/main`, use a clean isolated worktree for integration:
+```bash
+git worktree add <dir> --detach origin/main
+# apply or cherry-pick the change there, commit, then
+git push origin HEAD:main
+git worktree remove <dir>
+```
+
+Preserve the original working tree and report any local changes that remain outside `main`. If the working tree is dirty, preserve the user's changes and do not overwrite them. To commit only what a task touched while unrelated changes stay staged or modified, pass explicit paths: `git add <paths>` followed by `git commit -- <paths>`.
+
+Every push to `main` triggers the `Publish application images` workflow, which rebuilds both images and opens a downstream homelab delivery. Documentation- and tooling-only changes trigger it too, so state that side effect before pushing and let the user decide whether the deployment should happen now.
 
 After pushing `main`:
 
@@ -80,7 +93,7 @@ After pushing `main`:
 - Treat a failed or cancelled run as incomplete delivery and report the failing job and step.
 - Delete obsolete remote feature branches after their commits are integrated or archived with a recovery tag.
 
-If a PR is explicitly required, check mergeability, conflicts, and status checks before handoff.
+If a PR is explicitly required, check mergeability, conflicts, and status checks before handoff. The `gh` CLI is not installed on every machine used with this repository — check `gh --version` first, and without it push the branch and hand off the PR-creation URL that `git push` prints.
 
 ## GitHub Actions
 
@@ -93,6 +106,20 @@ The active workflow is `.github/workflows/publish-images.yml` (`Publish applicat
 - Concurrency is scoped by Git ref and cancels stale in-progress runs, preventing an older push from overtaking a newer one.
 
 Action majors currently used and intentionally tracked: `actions/checkout@v7`, `docker/setup-buildx-action@v4`, `docker/login-action@v4`, `docker/build-push-action@v7`, and `imjasonh/setup-crane@v0.7`. Review their official releases before changing majors.
+
+## Code Review
+
+`.claude/agents/codex-review.md` defines a `codex-review` subagent that runs an independent review with the OpenAI Codex CLI and re-verifies every finding against the actual files before reporting it. `.claude/scripts/codex-review.sh` is the runner:
+
+```bash
+bash .claude/scripts/codex-review.sh --out <dir> --uncommitted    # working tree
+bash .claude/scripts/codex-review.sh --out <dir> --base main      # checkout vs main
+bash .claude/scripts/codex-review.sh --out <dir> --commit <sha>   # a single commit
+```
+
+It resolves the newest installed `codex` binary — the desktop app keeps several builds under `%LOCALAPPDATA%\OpenAI\Codex\bin\`, and the older launcher there rejects the model configured in `~/.codex/config.toml` — and writes `review.md`, `events.jsonl` and `codex.log` into `<dir>`. A review takes several minutes, so run it in the background. `codex_models_manager` warnings in `codex.log` are noise, not review failures.
+
+Findings come back as `- [Pn] <title> — <absolute path>:<lines>`, P0 highest. Treat them as claims to check rather than conclusions: Codex line numbers drift when code moved in the diff, it flags the deliberate conventions documented in this file, and a review of a stale checkout reports problems that `main` already fixed.
 
 ## Backend Architecture
 
