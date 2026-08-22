@@ -39,7 +39,7 @@ from app.models.encounter import Encounter
 from app.models.encounter_service import EncounterService
 from app.models.generated_document import GeneratedDocument
 from app.models.medical_record import MedicalRecord, MedicalRecordEntry
-from app.models.service import Service
+from app.models.service import DoctorRole, Service
 from app.schemas.document_generation import DocumentGenerateResponse
 from app.services.audit import write_audit_log
 from app.services.blank_forms import (
@@ -89,6 +89,7 @@ CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
         "спорт.xls",
     }
 )
+CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES = frozenset({"082у_шаблон.docx"})
 
 ET.register_namespace("soapenv", SOAP_NS)
 ET.register_namespace("mb", MIAC_NS)
@@ -306,6 +307,30 @@ def _replace_text_tokens(xml_text: str, context: dict[str, str]) -> str:
         for pattern in patterns:
             xml_text = re.sub(pattern, value, xml_text)
     return xml_text
+
+
+def _replace_chairman_082_static_country(
+    template_path: Path,
+    xml_text: str,
+    context: dict[str, str],
+) -> str:
+    if template_path.name.casefold() not in CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES:
+        return xml_text
+    country = escape_xml_text(str(context.get("Country", "") or "").strip())
+    return xml_text.replace(">Болгария<", f">{country}<")
+
+
+def _replace_chairman_082_static_doctor(
+    template_path: Path,
+    xml_text: str,
+    context: dict[str, str],
+) -> str:
+    if template_path.name.casefold() not in CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES:
+        return xml_text
+    doctor_name = escape_xml_text(str(context.get("Doctor", "") or "").strip())
+    if not doctor_name:
+        return xml_text
+    return re.sub(r"Сибирцев\s+В\.А\.?", doctor_name, xml_text)
 
 
 def _append_bookmark_value(tree: ET.ElementTree, context: dict[str, str]) -> ET.ElementTree:
@@ -551,6 +576,8 @@ def _generate_docx(
                     xml_text = file_bytes.decode("utf-8")
                     namespace_declarations = _document_namespace_declarations(xml_text)
                     xml_text = _replace_text_tokens(xml_text, context)
+                    xml_text = _replace_chairman_082_static_country(template_path, xml_text, context)
+                    xml_text = _replace_chairman_082_static_doctor(template_path, xml_text, context)
                     xml_text = _replace_prof_29n_static_doctor_names(xml_text, context)
                     if cleanup_xml:
                         xml_text = _cleanup_contract_xml(xml_text)
@@ -3063,6 +3090,42 @@ def _fill_new_gims_xls_sheet(
     _write_xls_pairs(target_sheet, source_sheet, values)
 
 
+def _fill_new_lmk_xls_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+) -> None:
+    first_middle = " ".join(
+        part
+        for part in [context.get("FirstName", ""), context.get("MiddleName", "")]
+        if part
+    )
+    address_line = context.get("AddressCalc", "")
+    city = context.get("CityCalc", "").strip()
+    if city and address_line:
+        city_match = re.search(
+            rf"(?:^|,)\s*(?:г(?:ород)?\.?\s*)?{re.escape(city)}\s*,?\s*",
+            address_line,
+            flags=re.IGNORECASE,
+        )
+        if city_match and address_line[city_match.end() :].strip():
+            address_line = address_line[city_match.end() :].strip()
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            ((10, 5), context.get("LastName") or getattr(client, "last_name", "") or ""),
+            ((12, 5), context.get("FirstMiddleCalc") or first_middle),
+            ((15, 5), _new_xls_date_text(client.birth_date)),
+            ((17, 5), context.get("CityCalc", "")),
+            ((21, 1), address_line),
+            ((25, 4), context.get("Post") or context.get("PositionApplied", "")),
+            ((28, 0), context.get("CompanyName") or context.get("WorkPlace", "")),
+        ],
+    )
+
+
 def _fill_new_xls_sheets(
     source_book,
     target_book,
@@ -3092,6 +3155,8 @@ def _fill_new_xls_sheets(
             _fill_new_tractor_back_xls_sheet(source_sheet, target_sheet, context, exams_by_role)
         elif sheet_name == "Суда":
             _fill_new_gims_xls_sheet(source_sheet, target_sheet, context, encounter, exams_by_role)
+        elif sheet_name == " ЛМК!":
+            _fill_new_lmk_xls_sheet(source_sheet, target_sheet, context, client)
 
 
 def _fill_amb_opo_xls_sheet(
@@ -3508,6 +3573,7 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
         "gsu": ("ГС",),
         "gostaina": ("ГТ",),
         "gims": ("Суда",),
+        "lmk": (" ЛМК!",),
         "guard": ("ЧОД",),
         "chod": ("ЧОД",),
         "ekg": ("ЭЭГ",),
@@ -4367,6 +4433,37 @@ def _chairman_certificate_date_context_overrides(
     return _chairman_exam_date_context_overrides(exams)
 
 
+def _chairman_082_context_overrides(
+    template: DocumentTemplate,
+    exams: list[DoctorExam],
+    blank_form: BlankForm | None,
+) -> dict[str, str]:
+    candidates = [getattr(template, "file_name", None), getattr(template, "file_path", None)]
+    file_names = {
+        Path(str(candidate)).name.casefold()
+        for candidate in candidates
+        if str(candidate or "").strip()
+    }
+    if not file_names.intersection(CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES):
+        return {}
+
+    chairman = _exam_map(exams).get("chairman")
+    fields = (chairman.fields_json or {}) if chairman is not None else {}
+    overrides = {
+        "Country": _first_field_value(fields, "country", "destinationCountry", "destination_country"),
+    }
+    if blank_form is not None:
+        full_number = str(blank_form.full_number or "").strip()
+        series = str(blank_form.series or "").strip()
+        if series and full_number.casefold().startswith(series.casefold()):
+            sequence_number = full_number[len(series) :].strip()
+        else:
+            sequence_number = str(blank_form.number_value or "").strip()
+        overrides["ReferenceNumber"] = sequence_number
+        overrides["SeriesNumberCalc"] = sequence_number
+    return overrides
+
+
 def _sport_context_overrides(exams: list[DoctorExam]) -> dict[str, str]:
     empty_overrides = {
         "SportDiagnosis": "",
@@ -4605,6 +4702,21 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         .scalars()
         .all()
     )
+    role_names = {
+        role.code: str(role.full_name or "").strip()
+        for role in db.execute(
+            select(DoctorRole).where(DoctorRole.full_name.is_not(None))
+        ).scalars()
+        if str(role.full_name or "").strip()
+    }
+    for exam in exams:
+        current_name = role_names.get(str(exam.doctor_role_id or "").strip())
+        if current_name:
+            # Generated files must always use the current server-side directory.
+            # The role update endpoint also refreshes stored exams; this assignment
+            # protects generation invoked while older data is still being migrated.
+            exam.doctor_name = current_name
+    chairman_name = role_names.get("chairman", "")
     diagnosis = ""
     mkb10 = ""
     medical_record = db.execute(
@@ -4622,6 +4734,8 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
             "DistinguishingMark": "",
         }
     )
+    if chairman_name:
+        context_overrides["MainDoctorCalc"] = chairman_name
     for exam in exams:
         fields = exam.fields_json or {}
         diagnosis = diagnosis or _first_field_value(
@@ -4756,6 +4870,16 @@ def _append_blank_entry_to_medical_record(
             conclusion=conclusion,
         )
     )
+
+
+def _blank_reference_number(blank_form: BlankForm) -> str:
+    """Return the printable number body shown separately from the blank series."""
+
+    full_number = str(blank_form.full_number or "").strip()
+    series = str(blank_form.series or "").strip()
+    if series and full_number.startswith(series):
+        return full_number[len(series) :].strip()
+    return full_number
 
 
 def generate_document(
@@ -4946,10 +5070,14 @@ def generate_document(
         )
         context.update(_chairman_certificate_date_context_overrides(template, document_exams))
         if blank_form is not None:
+            reference_number = _blank_reference_number(blank_form)
+            context["ReferenceNumber"] = reference_number
+            context["SeriesNumberCalc"] = reference_number
             context["BlankNumber"] = blank_form.full_number
             context["BlankSeries"] = blank_form.series or ""
             context["BlankFullNumber"] = blank_form.full_number
             context["DocumentNumber"] = blank_form.full_number
+        context.update(_chairman_082_context_overrides(template, document_exams, blank_form))
         if is_side_print:
             context["ReferenceNumber"] = ""
             context["SeriesNumberCalc"] = ""

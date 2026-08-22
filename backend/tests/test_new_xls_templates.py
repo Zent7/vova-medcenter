@@ -72,6 +72,10 @@ class NewXlsTemplatesTests(unittest.TestCase):
         self.encounter = SimpleNamespace(encounter_date=date(2026, 7, 30))
         self.context = {
             "ClientCalc": "Проверкин Алексей Сергеевич",
+            "LastName": "Проверкин",
+            "FirstName": "Алексей",
+            "MiddleName": "Сергеевич",
+            "FirstMiddleCalc": "Алексей Сергеевич",
             "BirthDateCalc_DAY": "12",
             "BirthDateCalc_DATEMONTH": "апреля",
             "BirthDateCalc_YEAR": "1988",
@@ -98,6 +102,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
             "MKB10": "M21.4",
             "Conclusion": "Допущен",
             "Doctor": "Контекстный Врач",
+            "CompanyName": "ООО Тест",
+            "Post": "Инженер",
             "PoolValidUntil": "30.01.2027",
             "SportEkg": "",
             "SportEkgConclusion": "",
@@ -451,6 +457,15 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 (36, 9): "Председатель Тестов",
                 (36, 31): "Председатель Тестов",
             },
+            " ЛМК!": {
+                (10, 5): "Проверкин",
+                (12, 5): "Алексей Сергеевич",
+                (15, 5): "12.04.1988",
+                (17, 5): "Санкт-Петербург",
+                (21, 1): "Невский проспект, д. 10, корп. 2, кв. 15",
+                (25, 4): "Инженер",
+                (28, 0): "ООО Тест",
+            },
         }
 
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -522,6 +537,23 @@ class NewXlsTemplatesTests(unittest.TestCase):
         target_book = copy_xls_workbook(source_book)
         with self.assertRaisesRegex(ValueError, "ГТО"):
             _apply_print_variant_to_xls_workbook(target_book, "gto")
+
+    def test_lmk_print_variant_keeps_the_medical_book_sheet(self):
+        target_book = SimpleNamespace(
+            _Workbook__worksheets=[
+                SimpleNamespace(name="Справка"),
+                SimpleNamespace(name=" ЛМК!"),
+            ],
+            _Workbook__worksheet_idx_from_name={},
+            _Workbook__active_sheet=0,
+        )
+
+        _apply_print_variant_to_xls_workbook(target_book, "lmk")
+
+        self.assertEqual(
+            [sheet.name for sheet in target_book._Workbook__worksheets],
+            [" ЛМК!"],
+        )
 
     def test_new_print_variants_keep_the_expected_single_sheet(self):
         for spec in NEW_XLS_TEMPLATE_SPECS:

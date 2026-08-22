@@ -6,6 +6,7 @@ from app.services.new_xls_templates import LEGACY_XLS_TEMPLATE_BY_FILE, NEW_XLS_
 
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
+NUMBERED_LMK_TEMPLATE_FILE_NAMES = {"ЛМК.xls"}
 ACTIVE_XML_TEMPLATE_NAMES = {
     "Водительская(новая).xml",
     "Чод_новый.xml",
@@ -24,8 +25,8 @@ TEMPLATE_DISPLAY_NAMES = {
     "ГИМС (судна).xls": "ГИМС",
     "ГТ.xls": "ГТ",
     "Заключение29Н_шаблон.docx": "Проф",
+    "ЛМК.xls": "ЛМК",
     "ЛМК_справка_шаблон.docx": "ЛМК справка",
-    "ЛМК_шаблон_2.docx": "ЛМК",
     "Охрана_шаблон.docx": "002 (чод)",
     "ПрофосмотрВыписка_шаблон.docx": "Проф",
     "Псих. осв.docx": "342н псих осв",
@@ -46,7 +47,8 @@ FOLDER_TEMPLATE_SOURCE_NAMES = {
     "АМБ_карты_профосмотр_шаблон.xls": "ПРОФОСМОТР.xls",
     "ВУ.xls": "086 муж.xls; водительская лицевая.xls; водительская обратн ст.xls; ЛМК.xls",
     "Выписка из Амб карты (профа).xls": "Выписка из Амб карты (профа).xls",
-    "ЛМК_справка_шаблон.docx": "лмк спр.docx",
+    "ЛМК.xls": "ЛМК.xls",
+    "ЛМК_справка_шаблон.docx": "лмк спр (3).docx",
     "Охрана_шаблон.docx": "ОХРАНА ВОРД.docx",
     "Псих. осв.docx": "Псих.docx",
     "Справка_342н_псих_освид.xls": "псих освид.xls",
@@ -74,8 +76,8 @@ ACTIVE_TEMPLATE_FILE_NAMES = frozenset(
         "ГТО1144_шаблон.docx",
         "Договор_шаблон_2.docx",
         "Заключение29Н_шаблон.docx",
+        "ЛМК.xls",
         "ЛМК_справка_шаблон.docx",
-        "ЛМК_шаблон_2.docx",
         "Охрана_шаблон.docx",
         "ПрофосмотрВыписка_шаблон.docx",
         "Псих. осв.docx",
@@ -268,7 +270,7 @@ def sync_document_template_catalog(db) -> int:
         if "гимс" in haystack or "gims" in haystack:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE
-        elif "лмк" in haystack or "lmk" in haystack:
+        elif item["file_name"] in NUMBERED_LMK_TEMPLATE_FILE_NAMES:
             template.requires_numbered_blank = True
             template.blank_type = BLANK_TYPE_LMK_MEDICAL_CERTIFICATE
         elif "охран" in haystack or "guard" in haystack or "чод" in haystack or "002" in haystack:

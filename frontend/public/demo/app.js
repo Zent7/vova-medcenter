@@ -155,6 +155,7 @@ const data = {
   importSuccess: "",
   clientOverrides: {},
   doctorDirectory: {},
+  doctorDirectoryLoaded: false,
   servicesDirty: false,
   staffUsers: [],
   staffRoles: [],
@@ -176,6 +177,7 @@ let clientSearchTimer = null;
 let clientSearchRequestId = 0;
 let clientSearchAbortController = null;
 let clientRowClickTimer = null;
+const doctorDirectorySavePromises = new Map();
 const DASHBOARD_PAGE_SIZE = 50;
 const DASHBOARD_CLIENT_LOAD_LIMIT = 100;
 const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
@@ -2420,14 +2422,14 @@ function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressed
     : requiredDoctors.has(roleCode)
       ? 1
       : 0;
+  if (suppressedDoctors.has(roleCode)) {
+    return { value: "", title: "", state: "empty" };
+  }
   if (completedDoctors.has(roleCode)) {
     return { value: "✓", title: "Врач пройден в текущем обращении", state: "done" };
   }
   if (existingDoctors.has(roleCode)) {
     return { value: "✓", title: "Карточка врача добавлена в текущем обращении", state: "existing" };
-  }
-  if (suppressedDoctors.has(roleCode)) {
-    return { value: "", title: "", state: "empty" };
   }
   if (requiredCount > 0) {
     const requiredTitle = requiredCount > 1
@@ -2473,6 +2475,7 @@ function mapApiDoctorRole(role) {
     id: role.id,
     code: role.code,
     name: role.name,
+    fullName: role.full_name || "",
     sortOrder: role.sort_order || role.id,
     isActive: role.is_active !== false,
   };
@@ -2877,6 +2880,12 @@ async function loadServicesFromBackend() {
     ]);
     serviceGroups = Array.isArray(categories) ? categories.map(mapApiServiceCategory) : [];
     doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole).filter((role) => !isExcludedDoctorRole(role)) : [];
+    data.doctorDirectory = Object.fromEntries(
+      doctorRoles
+        .filter((role) => String(role.code || "").trim() && String(role.fullName || "").trim())
+        .map((role) => [role.code, String(role.fullName).trim()]),
+    );
+    data.doctorDirectoryLoaded = true;
     data.serverServices = Array.isArray(services) ? services.map(mapApiService).filter((service) => !isHiddenService(service)) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
@@ -3385,10 +3394,47 @@ function setDoctorFullName(doctorRoleId, value) {
   }
 }
 
-function getDoctorDisplayName(doctorRoleId, client = null) {
-  const clientDoctorName = getClientDoctorFullName(client, doctorRoleId);
-  if (clientDoctorName) return clientDoctorName;
+async function saveDoctorFullName(doctorRoleId, value) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!roleId) return null;
+  const previousValue = getDoctorFullName(roleId);
+  setDoctorFullName(roleId, value);
+  persistDemoState();
 
+  try {
+    const savedRole = await apiRequest(`/doctor-roles/${encodeURIComponent(roleId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ full_name: getDoctorFullName(roleId) || null }),
+    });
+    setDoctorFullName(roleId, savedRole.full_name || "");
+    const role = doctorRoles.find((item) => String(item.code) === roleId);
+    if (role) role.fullName = savedRole.full_name || "";
+    persistDemoState();
+    return savedRole;
+  } catch (error) {
+    setDoctorFullName(roleId, previousValue);
+    persistDemoState();
+    throw error;
+  }
+}
+
+function queueDoctorFullNameSave(doctorRoleId, value) {
+  const roleId = String(doctorRoleId || "").trim();
+  const savePromise = saveDoctorFullName(roleId, value);
+  doctorDirectorySavePromises.set(roleId, savePromise);
+  savePromise.finally(() => {
+    if (doctorDirectorySavePromises.get(roleId) === savePromise) {
+      doctorDirectorySavePromises.delete(roleId);
+    }
+  });
+  return savePromise;
+}
+
+async function waitForDoctorDirectorySaves() {
+  await Promise.all(Array.from(doctorDirectorySavePromises.values()));
+}
+
+function getDoctorDisplayName(doctorRoleId) {
   const fullName = getDoctorFullName(doctorRoleId);
   if (fullName) return fullName;
   const template = getDoctorTemplate(doctorRoleId);
@@ -3408,12 +3454,12 @@ function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") 
       .filter(Boolean)
       .map((value) => String(value).trim().toLowerCase()),
   );
+  const directoryName = getDoctorFullName(roleId);
+  if (directoryName) return directoryName;
+
   if (normalizedFallback && !genericNames.has(normalizedFallback.toLowerCase())) {
     return normalizedFallback;
   }
-
-  const directoryName = getDoctorFullName(roleId);
-  if (directoryName) return directoryName;
 
   const clientDoctorName = getClientDoctorFullName(client, roleId);
   if (clientDoctorName) return clientDoctorName;
@@ -3852,12 +3898,11 @@ function updateVisit(visitId, patch = {}) {
   return visit;
 }
 
-async function syncVisitToBackend(visit, client, options = {}) {
+async function syncVisitToBackend(visit, client) {
   if (!visit || !client) return null;
   if (visit.__backendSyncPromise) return visit.__backendSyncPromise;
   const clientId = client.backendId || client.id;
   if (!clientId) return null;
-  const { syncRequiredDoctorExams = true } = options;
 
   visit.__backendSyncPromise = (async () => {
     visit.__backendSyncing = true;
@@ -3909,9 +3954,7 @@ async function syncVisitToBackend(visit, client, options = {}) {
         visit.__backendServicesSaved = true;
       }
 
-      if (syncRequiredDoctorExams) {
-        await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
-      }
+      await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: true });
       persistDemoState();
       return visit;
     } catch (error) {
@@ -4409,14 +4452,9 @@ async function ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend 
 
 async function prepareVisitDoctorExamsForDocuments(client, visit) {
   if (!client || !visit) return [];
-  await syncVisitToBackend(visit, client, { syncRequiredDoctorExams: false });
-  const suppressedRoles = getSuppressedDoctorRoleCodesForVisit(visit);
-  const exams = (Array.isArray(data.doctorExams) ? data.doctorExams : []).filter(
-    (exam) =>
-      String(exam.clientId) === String(client.id) &&
-      String(exam.visitId) === String(visit.id) &&
-      !suppressedRoles.has(String(exam.doctorRoleId || "").trim()),
-  );
+  await waitForDoctorDirectorySaves();
+  await syncVisitToBackend(visit, client);
+  const exams = await ensureRequiredDoctorExamsForVisit(client, visit, { syncToBackend: false });
   const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
   if (chairmanExam && !chairmanExam.isCompleted && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
     const nextFields = applyDriverSelectionsToChairmanFields(chairmanExam.fields || {}, getDriverDetailFromVisit(visit), visit);
@@ -6976,6 +7014,7 @@ function renderDoctorsPage() {
                     placeholder="Введите ФИО врача"
                     data-doctor-name-input="${escapeHtml(id)}"
                   />
+                  <small class="muted" data-doctor-name-status="${escapeHtml(id)}"></small>
                 </label>
                 <span>${template ? `Форма: ${escapeHtml(template.name)}` : "Форма пока не найдена"}</span>
                 ${
@@ -7240,7 +7279,7 @@ function renderTemplatesPage() {
                       ${
                         canManageTemplates
                           ? `<div class="document-template-card__actions">
-                              <button class="ghost-button" type="button" data-open-document-template="${escapeHtml(template.id)}">Посмотреть</button>
+                              <button class="ghost-button" type="button" data-download-document-template="${escapeHtml(template.id)}">Скачать</button>
                               <button class="ghost-button" type="button" data-replace-document-template="${escapeHtml(template.id)}">Обновить шаблон</button>
                               ${template.has_override ? `<button class="ghost-button" type="button" data-reset-document-template="${escapeHtml(template.id)}">Вернуть исходный</button>` : ""}
                             </div>`
@@ -8639,7 +8678,9 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (normalizedType === "sport") return findNewXls(["спорт"]);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
-  if (normalizedType === "lmk_title") return findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], []);
+  if (normalizedType === "lmk_title") {
+    return findNewXls(["лмк"]) || findDocxSafely(["лмк_шаблон_2", "лмк шаблон 2"], ["лмк"], ["справка"]);
+  }
   if (normalizedType === "lmk") return findDocxSafely(["лмк_справка_шаблон", "лмк справка шаблон"], ["лмк"], ["_2"]);
   if (normalizedType === "gims") {
     return (
@@ -8742,7 +8783,7 @@ function getChairmanPrintActionForVisit(visit) {
 
 const CHAIRMAN_PRINT_BLANK_SERIES = new Map([
   ["lmk_title", "ЛМК"],
-  ["lmk_certificate", "ЛМК"],
+  ["lmk_certificate", "29Н"],
   ["prof_conclusion", "29Н"],
   ["prof_ambulatory_extract", "29Н"],
   ["prof_ambulatory", "29Н"],
@@ -8757,6 +8798,7 @@ const CHAIRMAN_CERTIFICATE_PRINT_SERIES = new Map([
   ["gsu", "ГС"],
   ["072", "072у"],
   ["070", "070у"],
+  ["082", "082у"],
   ["095", "095у"],
   ["semt196", "СЭМТ-196"],
 ]);
@@ -8769,6 +8811,7 @@ const CHAIRMAN_CERTIFICATE_PRINT_GROUPS = new Map([
   ["gsu", { currentType: "gsu", items: [["gostaina", "ГТ"], ["gsu", "ГС"]] }],
   ["certificate072", { currentType: "072", items: [["072", "072 у СКК"], ["070", "070у"]] }],
   ["certificate070", { currentType: "070", items: [["072", "072 у СКК"], ["070", "070у"]] }],
+  ["certificate082", { currentType: "082", items: [["082", "Справка 082у"]] }],
   ["certificate095", { currentType: "095", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
   ["certificate086", { currentType: "086", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
   ["semt196", { currentType: "semt196", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
@@ -8783,7 +8826,18 @@ function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
 
-const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["ЛМК", "29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "095У", "СЭМТ-196"]);
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "095У", "СЭМТ-196"]);
+
+const CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS = new Set([
+  "lmk_certificate",
+  "prof_conclusion",
+  "prof_ambulatory_extract",
+  "prof_ambulatory",
+]);
+
+function isChairmanAutoNumberedPrintKind(printKind) {
+  return CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS.has(String(printKind || "").toLowerCase());
+}
 
 function canAutoCreateChairmanBlankSeries(series) {
   return CHAIRMAN_AUTO_CREATE_BLANK_SERIES.has(normalizeBlankSeries(series).toUpperCase());
@@ -8819,6 +8873,7 @@ const XLS_PRINT_VARIANTS_BY_DOCUMENT_TYPE = new Map([
   ["gsu", "gsu"],
   ["gostaina", "gostaina"],
   ["gims", "gims"],
+  ["lmk_title", "lmk"],
   ["guard", "guard"],
   ["chod", "chod"],
   ["ekg", "ekg"],
@@ -8914,6 +8969,7 @@ function hasGeneratedTemplateForVisit(visit, template) {
 
 async function createDocumentForVisit(type, client, visit, options = {}) {
   if (!client || !visit) return null;
+  await waitForDoctorDirectorySaves();
   if (!data.documentTemplatesLoaded) {
     await loadDocumentTemplatesFromBackend();
   }
@@ -9179,28 +9235,6 @@ function findDocumentTemplateByExactFileName(fileName) {
 const PREENTERED_BLANK_SERIES = ["40", "4026", "ЛМК", "ГИМС"];
 const PREENTERED_BLANK_SERIES_SET = new Set(PREENTERED_BLANK_SERIES.map((item) => item.toLowerCase()));
 const CERTIFICATE_PRINT_SERIES_OPTIONS = [
-  "ЛМК",
-  "ПРОФ",
-  "4027",
-  "БС",
-  "ГТ",
-  "086",
-  "095",
-  "ГС",
-  "ЧОД",
-  "40655",
-  "4016",
-  "ПЗ",
-  "ПИМС",
-  "40290",
-  "ПУН",
-  "ЭЭГ",
-  "4023",
-  "ОСК",
-  "ФПО",
-  "4024",
-  "4025",
-  "41",
   "070У",
   "071У",
   "072У",
@@ -9225,6 +9259,7 @@ const CERTIFICATE_PRINT_SERIES_OPTIONS = [
   "13082",
   "13098",
 ];
+const CERTIFICATE_PRINT_SERIES_OPTION_SET = new Set(CERTIFICATE_PRINT_SERIES_OPTIONS.map((item) => item.toLowerCase()));
 const CERTIFICATE_PRINT_SERIES_TO_TYPE = new Map([
   ["070", "070"],
   ["070у", "070"],
@@ -9302,6 +9337,8 @@ const BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE = "driver_medical_certificate";
 const BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE = "gims_medical_certificate";
 const BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE = "tractor_medical_certificate";
 const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
+const BLANK_TYPE_LMK_MEDICAL_CERTIFICATE = "lmk_medical_certificate";
+
 const SERVICE_SERIES_OVERRIDES = new Map([
   ["071у", "071у"],
   ["070у", "070у"],
@@ -9431,6 +9468,7 @@ function getBlankTypeForCertificatePrintType(type) {
   if (normalizedType === "071") return BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE;
   if (normalizedType === "gims") return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE;
   if (normalizedType === "guard" || normalizedType === "chod") return BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE;
+  if (normalizedType === "lmk") return BLANK_TYPE_LMK_MEDICAL_CERTIFICATE;
   return "";
 }
 
@@ -9545,17 +9583,12 @@ function getAutoServiceSeriesOptions() {
 }
 
 function getDriverPrintSeriesPickerOptions(seriesOptions = [], { includeSuggestedSeries = true } = {}) {
-  const ordered = includeSuggestedSeries
-    ? [
-        "40",
-        ...CERTIFICATE_PRINT_SERIES_OPTIONS,
-        ...PREENTERED_BLANK_SERIES.filter((series) => series !== "40"),
-        ...getAutoServiceSeriesOptions(),
-      ]
-    : [];
+  const ordered = includeSuggestedSeries ? [...CERTIFICATE_PRINT_SERIES_OPTIONS] : [];
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
-    if (series) ordered.push(series);
+    if (!series) return;
+    if (includeSuggestedSeries && !CERTIFICATE_PRINT_SERIES_OPTION_SET.has(series.toLowerCase())) return;
+    ordered.push(series);
   });
 
   return ordered.filter((series, index, list) => list.findIndex((item) => item.toLowerCase() === series.toLowerCase()) === index);
@@ -12168,16 +12201,17 @@ function bindContentEvents() {
     }
   });
 
-  contentRoot.querySelectorAll("[data-open-document-template]").forEach((button) => {
+  contentRoot.querySelectorAll("[data-download-document-template]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const templateId = button.dataset.openDocumentTemplate;
+      const templateId = button.dataset.downloadDocumentTemplate;
       if (!templateId) return;
       try {
-        if (!(await openAuthorizedFileUrl(buildTemplateFileUrl(templateId)))) {
-          showToast("Браузер заблокировал окно шаблона. Разрешите всплывающие окна для демо.");
-        }
+        const template = (data.documentTemplates || []).find((item) => String(item.id) === String(templateId));
+        const fileName = template?.file_name || template?.name || `template-${templateId}`;
+        await downloadAuthorizedFileUrl(buildTemplateFileUrl(templateId), fileName);
+        showToast(`Шаблон скачивается: ${fileName}`);
       } catch (error) {
-        showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
+        showToast(humanizeApiError(error, "Не удалось скачать шаблон"));
       }
     });
   });
@@ -12225,9 +12259,22 @@ function bindContentEvents() {
   });
 
   contentRoot.querySelectorAll("[data-doctor-name-input]").forEach((input) => {
-    input.addEventListener("input", (event) => {
-      setDoctorFullName(input.dataset.doctorNameInput, event.target.value);
-      persistDemoState();
+    input.addEventListener("change", async (event) => {
+      const roleId = input.dataset.doctorNameInput;
+      const status = contentRoot.querySelector(`[data-doctor-name-status="${CSS.escape(roleId)}"]`);
+      input.disabled = true;
+      if (status) status.textContent = "Сохраняем...";
+      try {
+        await queueDoctorFullNameSave(roleId, event.target.value);
+        if (status) status.textContent = "Сохранено на сервере";
+        showToast("ФИО врача сохранено и будет применено к новым документам");
+      } catch (error) {
+        event.target.value = getDoctorFullName(roleId);
+        if (status) status.textContent = "Не сохранено";
+        showToast(humanizeApiError(error, "Не удалось сохранить ФИО врача"));
+      } finally {
+        input.disabled = false;
+      }
     });
   });
 
@@ -12288,7 +12335,6 @@ function bindContentEvents() {
           ? getCurrentVisitForClient(client.id)
           : formVisit;
       const existingBlankNumber =
-        (visit ? getDocumentsForVisit(visit.id).find((item) => String(item.blankNumber || "").trim())?.blankNumber : "") ||
         client?.referenceNumber ||
         client?.rawApiClient?.reference_number ||
         "";
@@ -12298,7 +12344,7 @@ function bindContentEvents() {
       const certificateTemplateMenu = Boolean(certificatePrintGroup);
       let selectedCertificateType = certificatePrintGroup?.currentType || "";
       let selectedCertificateSeries = getChairmanCertificatePrintSeries(selectedCertificateType, client);
-      let selectedBlankSeries = getChairmanFormConfigForVisit(visit).type === "prof" ? "29Н" : "ЛМК";
+      let selectedBlankSeries = "ЛМК";
       const getSelectedCertificateSeries = () => selectedCertificateSeries;
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
@@ -12342,6 +12388,17 @@ function bindContentEvents() {
             });
           }
         });
+      } else {
+        const previousBookDocument = findLatestCertificateDocument("lmk_title");
+        if (previousBookDocument?.blankFormId) {
+          selectedPrintBlanks.set(selectedBlankSeries, {
+            id: previousBookDocument.blankFormId,
+            series: selectedBlankSeries,
+            full_number: previousBookDocument.blankNumber || "",
+            status: "issued",
+            generated_document_id: previousBookDocument.backendId || previousBookDocument.id || null,
+          });
+        }
       }
       openActionModal(
         "Печать результатов:",
@@ -12366,24 +12423,30 @@ function bindContentEvents() {
           </div>
         `
           : `
-          <div class="driver-print-classic chairman-print-results">
+          <div class="driver-print-classic chairman-print-results chairman-print-results--lmk">
             ${renderPrintCenterContext(centerName)}
             <input class="driver-print-classic__fio" value="${escapeHtml(client?.fullName || "Клиент")}" readonly />
 
-            <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
-            <div class="driver-print-classic__lookup">
-              <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка" role="button" readonly />
-              <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
-              <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
+            <div class="chairman-print-results__section">
+              <div class="driver-print-classic__caption">Типографский бланк ЛМК:</div>
+              <div class="driver-print-classic__lookup">
+                <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка ЛМК" role="button" readonly />
+                <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
+                <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
+              </div>
+              <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__book" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
             </div>
 
+            <div class="chairman-print-results__section chairman-print-results__section--automatic">
+              <div class="driver-print-classic__caption">Документы профосмотра — номер присваивается автоматически:</div>
+              <div class="driver-print-classic__lookup chairman-print-results__auto-lookup">
+                <input class="driver-print-classic__input driver-print-classic__input--series" value="29Н" aria-label="Серия документов профосмотра" readonly />
+                <input class="driver-print-classic__input chairman-print-results__auto-number" value="При печати" aria-label="Автоматический номер документа" readonly />
+              </div>
+            </div>
             <div class="chairman-print-results__row chairman-print-results__row--top">
               <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_certificate">Печать справки</button>
               <button type="button" class="driver-print-classic__button" disabled>Печать дубликата</button>
-            </div>
-            <div class="chairman-print-results__row">
-              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Присвоить ЛМК</button>
-              <button type="button" class="driver-print-classic__button" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
             </div>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_conclusion">Проф. осмотр</button>
             <button type="button" class="driver-print-classic__button chairman-print-results__wide" data-chairman-print-menu-kind="prof_ambulatory_extract">Выписка из амбулаторной карты</button>
@@ -12439,11 +12502,13 @@ function bindContentEvents() {
         if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
       };
 
-      const findChairmanBlank = async (series, button = null) => {
+      const findChairmanBlank = async (series, button = null, options = {}) => {
         const normalizedSeries = normalizeBlankSeries(series);
-        const input = certificateTemplateMenu
-          ? document.getElementById("chairmanCertificateBlankNumber")
-          : document.getElementById("chairmanPrintBlankNumber");
+        const input = options.updateInput === false
+          ? null
+          : certificateTemplateMenu
+            ? document.getElementById("chairmanCertificateBlankNumber")
+            : document.getElementById("chairmanPrintBlankNumber");
         if (!client || !visit) {
           showToast("Сначала выбери клиента и обращение");
           return null;
@@ -12457,7 +12522,10 @@ function bindContentEvents() {
             ? getNumberedCertificateLookupSeriesForType(certificateType)
             : normalizedSeries;
           const query = new URLSearchParams({
-            blank_type: "driver_medical_certificate",
+            blank_type: resolveDriverPrintBlankType({
+              selectedSeries: normalizedSeries,
+              selectedCertificateType: certificateType,
+            }),
             center_id: String(centerId),
             series: lookupSeries,
           });
@@ -12480,12 +12548,16 @@ function bindContentEvents() {
           const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
           const resolvedBlankNumber = blankParts.number || blankParts.fullNumber || "";
           if (input) input.value = resolvedBlankNumber;
-          showToast(resolvedBlankNumber ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
+          if (!options.silent) {
+            showToast(resolvedBlankNumber ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
+          }
           return blank;
         } catch (error) {
           selectedPrintBlanks.delete(normalizedSeries);
           if (input && !input.value) input.value = splitExistingBlankNumber(normalizedSeries);
-          showToast(humanizeApiError(error, `Свободный номер ${normalizedSeries} не найден`));
+          if (!options.silent) {
+            showToast(humanizeApiError(error, `Свободный номер ${normalizedSeries} не найден`));
+          }
           return null;
         } finally {
           if (button) button.disabled = false;
@@ -12643,23 +12715,50 @@ function bindContentEvents() {
           const directPrintType = printType === "driver" ? "medical" : printType;
           const printOptions = { targetWindow };
           const certificateType = isExplicitCertificateTemplate ? printType : "";
-          const requiredBlankSeries = certificateType
-            ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
-            : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
+          const autoNumberedDocument = isChairmanAutoNumberedPrintKind(printKind);
+          const requiredBlankSeries = autoNumberedDocument
+            ? getChairmanBlankSeriesForPrintKind(printKind)
+            : certificateType
+              ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
+              : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
+            if (autoNumberedDocument) {
+              const previousDocument = findLatestCertificateDocument(directPrintType);
+              if (previousDocument?.blankFormId) {
+                selectedBlank = {
+                  id: previousDocument.blankFormId,
+                  series: requiredBlankSeries,
+                  full_number: previousDocument.blankNumber || "",
+                  status: "issued",
+                  generated_document_id: previousDocument.backendId || previousDocument.id || null,
+                };
+              } else if (!selectedBlank?.id) {
+                selectedBlank = await findChairmanBlank(requiredBlankSeries, null, {
+                  updateInput: false,
+                  silent: true,
+                });
+              }
+            }
             if (!selectedBlank?.id) {
-              showDocumentTargetError(targetWindow, `Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}.`);
-              showToast(`Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}`);
+              const message = autoNumberedDocument
+                ? `Не удалось присвоить автоматический номер серии ${requiredBlankSeries}.`
+                : `Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}.`;
+              showDocumentTargetError(targetWindow, message);
+              showToast(message);
               if (currentButton) currentButton.disabled = false;
               return;
             }
             printOptions.blankFormId = Number(selectedBlank.id);
           }
           const documentItem = await printDocumentForVisit(directPrintType, client, visit, printOptions);
+          if (autoNumberedDocument) {
+            chairmanPrintBlankState.blanks.delete(requiredBlankSeries);
+          }
           actionModal?.classList.add("hidden");
           window.closeDoctorExamCard?.();
-          showToast(`Документ открыт: ${documentItem?.title || actionLabel}`);
+          const assignedNumber = String(documentItem?.blankNumber || "").trim();
+          showToast(`Документ открыт: ${documentItem?.title || actionLabel}${assignedNumber ? `. Номер: ${assignedNumber}` : ""}`);
         } catch (error) {
           showDocumentTargetError(targetWindow, humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));
           console.error(error);
@@ -12755,19 +12854,31 @@ function renderApp() {
 
   renderNav();
 
-  if (contentRoot) {
+  const focusedDoctorForm = contentRoot?.querySelector("[data-doctor-exam-form]");
+  const preserveFocusedDoctorForm = Boolean(
+    appState.doctorExamModal?.isOpen &&
+    focusedDoctorForm &&
+    document.activeElement &&
+    focusedDoctorForm.contains(document.activeElement),
+  );
+  let contentWasRendered = false;
+
+  if (contentRoot && !preserveFocusedDoctorForm) {
     contentRoot.innerHTML = repairDemoText(`
       ${renderContent()}
       ${window.renderDoctorExamModal ? window.renderDoctorExamModal() : ""}
       ${window.renderServiceCardModals ? window.renderServiceCardModals() : ""}
     `);
+    contentWasRendered = true;
   }
 
-  applyColumnResizeState();
-  bindMedicalRecordPanelResize();
-  bindContentEvents();
-  bindDashboardTableScrollSync();
-  window.requestAnimationFrame(updateDashboardStickyOffset);
+  if (contentWasRendered) {
+    applyColumnResizeState();
+    bindMedicalRecordPanelResize();
+    bindContentEvents();
+    bindDashboardTableScrollSync();
+    window.requestAnimationFrame(updateDashboardStickyOffset);
+  }
 
   if (appState.page === "dashboard" && !appState.restoreInputId) {
     window.setTimeout(focusClientSearch, 0);

@@ -305,6 +305,23 @@ NEW_XLS_TEMPLATE_SPECS: tuple[NewXlsTemplateSpec, ...] = (
             (36, 31),
         ),
     ),
+    NewXlsTemplateSpec(
+        file_name="ЛМК.xls",
+        sheet_name=" ЛМК!",
+        print_variant="lmk",
+        print_pages_tall=1,
+        print_area="$A$1:$X$30",
+        print_zoom=100,
+        dynamic_cells=(
+            (10, 5),
+            (12, 5),
+            (15, 5),
+            (17, 5),
+            (21, 1),
+            (25, 4),
+            (28, 0),
+        ),
+    ),
 )
 
 

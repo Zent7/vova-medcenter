@@ -61,6 +61,10 @@ ENCOUNTER_PROFILE_COLUMNS = {
     "suppressed_doctor_role_ids": "JSON",
 }
 
+DOCTOR_ROLE_COLUMNS = {
+    "full_name": "VARCHAR(255)",
+}
+
 SPORT_CONCLUSION_PHRASES = [
     "Допущен к участию в соревнованиях",
     "Допущен к участию в соревнованиях по спорту \"Трофи-Рейд-Квадроциклы\".",
@@ -204,6 +208,19 @@ def ensure_encounter_profile_columns() -> None:
         for column_name, column_type in ENCOUNTER_PROFILE_COLUMNS.items():
             if column_name not in columns:
                 add_column_if_missing(connection, dialect, "encounters", column_name, column_type)
+
+
+def ensure_doctor_role_columns() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("doctor_roles"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("doctor_roles")}
+    dialect = engine.dialect.name
+    with engine.begin() as connection:
+        for column_name, column_type in DOCTOR_ROLE_COLUMNS.items():
+            if column_name not in columns:
+                add_column_if_missing(connection, dialect, "doctor_roles", column_name, column_type)
 
 
 def ensure_blank_form_tables() -> None:
@@ -466,6 +483,7 @@ def init_db() -> None:
     ensure_legacy_import_columns()
     ensure_client_profile_columns()
     ensure_encounter_profile_columns()
+    ensure_doctor_role_columns()
     ensure_blank_form_tables()
     ensure_document_template_blank_columns()
     seed_blank_types()

@@ -26,6 +26,7 @@ from app.models.blank_form import (
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_STATUS_SPOILED,
+    BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
     BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
     BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
     BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
@@ -67,6 +68,20 @@ class BlankRangeInvalidError(BlankServiceError):
 
 class BlankIssuanceContextError(BlankServiceError):
     """Недостаточно контекста для выдачи номерного бланка."""
+
+
+def resolve_blank_type_for_series(blank_type: str, series: str | None) -> str:
+    """Correct legacy generic requests for specialized LMK and GIMS series."""
+
+    if str(blank_type or "").strip() != BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE:
+        return blank_type
+
+    normalized_series = str(series or "").strip().casefold()
+    if normalized_series.startswith(("лмк", "lmk")):
+        return BLANK_TYPE_LMK_MEDICAL_CERTIFICATE
+    if normalized_series.startswith(("гимс", "gims")):
+        return BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE
+    return blank_type
 
 
 @dataclass
@@ -410,6 +425,31 @@ def get_next_free_form(
     if series is not None:
         query = query.where(BlankForm.series == (series_clean or None))
     return db.execute(query).scalar_one_or_none()
+
+
+def get_form_by_printed_number(
+    db: Session,
+    *,
+    blank_type: str,
+    center_id: int | None,
+    series: str,
+    number_input: str | int,
+) -> BlankForm | None:
+    """Находит конкретный типографский бланк без выбора следующего номера."""
+
+    series_clean = (series or "").strip()
+    if not series_clean:
+        raise BlankRangeInvalidError("Укажите серию бланка")
+
+    number_value = parse_number_input(number_input)
+    query = select(BlankForm).where(
+        BlankForm.blank_type == blank_type,
+        BlankForm.series == series_clean,
+        BlankForm.number_value == number_value,
+    )
+    if center_id is not None:
+        query = query.where(BlankForm.center_id == center_id)
+    return db.execute(query.order_by(BlankForm.id.asc()).limit(1)).scalar_one_or_none()
 
 
 def create_auto_number_form(

@@ -52,6 +52,49 @@
     return String(value ?? "").trim().toLowerCase();
   }
 
+  function getBatchRangeLabel(item) {
+    const series = String(item?.series || "");
+    const width = Number(item?.number_width) || 6;
+    const numberFrom = String(item?.number_from ?? "").padStart(width, "0");
+    const numberTo = String(item?.number_to ?? "").padStart(width, "0");
+    return `${series}${numberFrom}–${series}${numberTo}`;
+  }
+
+  function renderBatchFilterOptions(batches, selectedBatchId) {
+    const typeOrder = (window.data?.blanksTypes || []).map((item) => item.code);
+    const groupedBatches = new Map();
+
+    batches.forEach((item) => {
+      const type = item.blank_type || "other";
+      if (!groupedBatches.has(type)) groupedBatches.set(type, []);
+      groupedBatches.get(type).push(item);
+    });
+
+    const orderedTypes = [
+      ...typeOrder.filter((type) => groupedBatches.has(type)),
+      ...Array.from(groupedBatches.keys()).filter((type) => !typeOrder.includes(type)),
+    ];
+
+    return orderedTypes
+      .map(
+        (type) => `
+          <optgroup label="${esc(type === "other" ? "Другие" : getTypeName(type))}">
+            ${groupedBatches
+              .get(type)
+              .map(
+                (item) => `
+                  <option value="${esc(item.id)}" ${String(selectedBatchId) === String(item.id) ? "selected" : ""}>
+                    ${esc(getBatchRangeLabel(item))}
+                  </option>
+                `,
+              )
+              .join("")}
+          </optgroup>
+        `,
+      )
+      .join("");
+  }
+
   async function loadBlanksData(options = {}) {
     const force = options.force === true;
     const data = window.data;
@@ -263,6 +306,123 @@
     });
   }
 
+  function getIssuedHistoryGroups() {
+    const forms = Array.isArray(window.data?.blanksForms) ? window.data.blanksForms : [];
+    const types = Array.isArray(window.data?.blanksTypes) ? window.data.blanksTypes : [];
+    const search = normalizeText(window.appState?.blanksHistorySearch || "");
+    const issuedForms = forms
+      .filter((item) => item.status === "issued")
+      .filter((item) => !search || normalizeText(item.full_number).includes(search))
+      .sort((left, right) => {
+        const leftTime = new Date(left.issued_at || 0).getTime();
+        const rightTime = new Date(right.issued_at || 0).getTime();
+        return rightTime - leftTime || Number(right.id || 0) - Number(left.id || 0);
+      });
+
+    const typeCodes = new Set(types.map((item) => item.code));
+    const groups = types.map((item) => ({
+      code: item.code,
+      name: item.name,
+      items: issuedForms.filter((form) => form.blank_type === item.code),
+    }));
+
+    issuedForms.forEach((form) => {
+      if (typeCodes.has(form.blank_type)) return;
+      typeCodes.add(form.blank_type);
+      groups.push({
+        code: form.blank_type,
+        name: getTypeName(form.blank_type),
+        items: issuedForms.filter((item) => item.blank_type === form.blank_type),
+      });
+    });
+
+    return groups;
+  }
+
+  function renderHistoryTab() {
+    const appState = window.appState || {};
+    const groups = getIssuedHistoryGroups();
+    const visibleCount = groups.reduce((total, group) => total + group.items.length, 0);
+    const hasSearch = Boolean(normalizeText(appState.blanksHistorySearch || ""));
+    const visibleGroups = hasSearch ? groups.filter((group) => group.items.length) : groups;
+
+    return `
+      <article class="card blanks-history">
+        <div class="blanks-page__header">
+          <div>
+            <h3>История выданных документов</h3>
+            <p class="muted">Все выданные номерные бланки сгруппированы по услугам.</p>
+          </div>
+          <span class="blanks-history__total">Найдено: ${visibleCount}</span>
+        </div>
+        <label class="field blanks-history__search">
+          <span>Поиск по номеру</span>
+          <input
+            type="search"
+            data-blanks-history-search
+            value="${esc(appState.blanksHistorySearch || "")}"
+            placeholder="Введите номер бланка"
+            autocomplete="off"
+          />
+        </label>
+        <div class="blanks-history__groups">
+          ${
+            visibleGroups.length
+              ? visibleGroups
+                  .map(
+                    (group) => `
+                <section class="blanks-history-group" data-blank-history-group="${esc(group.code)}">
+                  <div class="blanks-history-group__header">
+                    <h4>${esc(group.name)}</h4>
+                    <span>${group.items.length}</span>
+                  </div>
+                  ${
+                    group.items.length
+                      ? `
+                        <div class="data-table">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Номер</th>
+                                <th>Пациент</th>
+                                <th>Документ</th>
+                                <th>Дата выдачи</th>
+                                <th>Кто выдал</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${group.items
+                                .map(
+                                  (item) => `
+                                    <tr>
+                                      <td><strong>${esc(item.full_number)}</strong></td>
+                                      <td>${esc(item.client_full_name || "—")}</td>
+                                      <td>${esc(item.document_label || "—")}</td>
+                                      <td>${esc(formatDateTime(item.issued_at))}</td>
+                                      <td>${esc(item.issued_by_name || "—")}</td>
+                                    </tr>
+                                  `,
+                                )
+                                .join("")}
+                            </tbody>
+                          </table>
+                        </div>
+                      `
+                      : `<p class="muted blanks-history-group__empty">${
+                          hasSearch ? "Документы с таким номером не найдены." : "Выданных документов пока нет."
+                        }</p>`
+                  }
+                </section>
+              `,
+                  )
+                  .join("")
+              : '<p class="muted blanks-history__empty">Документ с таким номером не найден.</p>'
+          }
+        </div>
+      </article>
+    `;
+  }
+
   function renderFormsTab() {
     const data = window.data || {};
     const appState = window.appState || {};
@@ -292,16 +452,8 @@
           <label class="field">
             <span>Партия</span>
             <select data-blanks-filter-batch>
-              <option value="all">Все партии</option>
-              ${batches
-                .map(
-                  (item) => `
-                    <option value="${item.id}" ${String(appState.blanksFilterBatchId) === String(item.id) ? "selected" : ""}>
-                      ${esc(item.series || "")}${String(item.number_from).padStart(item.number_width || 6, "0")}–${esc(item.series || "")}${String(item.number_to).padStart(item.number_width || 6, "0")}
-                    </option>
-                  `,
-                )
-                .join("")}
+              <option value="all" ${appState.blanksFilterBatchId === "all" ? "selected" : ""}>Все партии</option>
+              ${renderBatchFilterOptions(batches, appState.blanksFilterBatchId)}
             </select>
           </label>
           <label class="field blanks-filters__search">
@@ -366,6 +518,7 @@
     const tab = window.appState?.blanksTab || "overview";
     if (tab === "batches") return renderBatchesTab();
     if (tab === "forms") return renderFormsTab();
+    if (tab === "history") return renderHistoryTab();
     return renderOverviewTab();
   }
 
@@ -391,6 +544,7 @@
         </div>
         <div class="tabs">
           <button type="button" class="tabs__item ${appState.blanksTab === "overview" ? "tabs__item--active" : ""}" data-blanks-tab="overview">Обзор</button>
+          <button type="button" class="tabs__item ${appState.blanksTab === "history" ? "tabs__item--active" : ""}" data-blanks-tab="history">История выдачи</button>
           <button type="button" class="tabs__item ${appState.blanksTab === "batches" ? "tabs__item--active" : ""}" data-blanks-tab="batches">Партии</button>
           <button type="button" class="tabs__item ${appState.blanksTab === "forms" ? "tabs__item--active" : ""}" data-blanks-tab="forms">Номера бланков</button>
         </div>
@@ -457,6 +611,16 @@
       window.appState.blanksSearch = event.target.value || "";
       window.persistDemoState?.();
       window.renderApp?.();
+    });
+
+    document.querySelector("[data-blanks-history-search]")?.addEventListener("input", (event) => {
+      window.appState.blanksHistorySearch = event.target.value || "";
+      window.renderApp?.();
+      const searchInput = document.querySelector("[data-blanks-history-search]");
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+      }
     });
 
     document.getElementById("blanksBatchForm")?.addEventListener("submit", async (event) => {
