@@ -73,56 +73,11 @@
     });
     const status = window.appState?.blanksFilterStatus || "all";
     const blankType = window.appState?.blanksFilterType || "all";
-    const batchId = window.appState?.blanksFilterBatchId || "all";
     const search = String(window.appState?.blanksSearch || "").trim();
     if (status !== "all") params.set("status", status);
     if (blankType !== "all") params.set("blank_type", blankType);
-    if (batchId !== "all") params.set("batch_id", batchId);
     if (search) params.set("search", search);
     return params.toString();
-  }
-
-  function getBatchRangeLabel(item) {
-    const series = String(item?.series || "");
-    const width = Number(item?.number_width) || 6;
-    const numberFrom = String(item?.number_from ?? "").padStart(width, "0");
-    const numberTo = String(item?.number_to ?? "").padStart(width, "0");
-    return `${series}${numberFrom}–${series}${numberTo}`;
-  }
-
-  function renderBatchFilterOptions(batches, selectedBatchId) {
-    const typeOrder = (window.data?.blanksTypes || []).map((item) => item.code);
-    const groupedBatches = new Map();
-
-    batches.forEach((item) => {
-      const type = item.blank_type || "other";
-      if (!groupedBatches.has(type)) groupedBatches.set(type, []);
-      groupedBatches.get(type).push(item);
-    });
-
-    const orderedTypes = [
-      ...typeOrder.filter((type) => groupedBatches.has(type)),
-      ...Array.from(groupedBatches.keys()).filter((type) => !typeOrder.includes(type)),
-    ];
-
-    return orderedTypes
-      .map(
-        (type) => `
-          <optgroup label="${esc(type === "other" ? "Другие" : getTypeName(type))}">
-            ${groupedBatches
-              .get(type)
-              .map(
-                (item) => `
-                  <option value="${esc(item.id)}" ${String(selectedBatchId) === String(item.id) ? "selected" : ""}>
-                    ${esc(getBatchRangeLabel(item))}
-                  </option>
-                `,
-              )
-              .join("")}
-          </optgroup>
-        `,
-      )
-      .join("");
   }
 
   async function loadBlanksData(options = {}) {
@@ -176,10 +131,6 @@
       data.blanksLoaded = true;
       data.blanksCenterId = Number(centerId);
 
-      const activeBatchIds = new Set(data.blanksBatches.map((item) => String(item.id)));
-      if (!activeBatchIds.has(String(window.appState?.blanksFilterBatchId || ""))) {
-        window.appState.blanksFilterBatchId = "all";
-      }
       const totalPages = Math.max(1, Math.ceil(data.blanksFormsTotal / BLANKS_FORMS_PAGE_SIZE));
       if (getFormsPage() > totalPages) {
         window.appState.blanksFormsPage = totalPages;
@@ -457,7 +408,6 @@
     const appState = window.appState || {};
     const forms = Array.isArray(data.blanksForms) ? data.blanksForms : [];
     const typeOptions = Array.isArray(data.blanksTypes) ? data.blanksTypes : [];
-    const batches = Array.isArray(data.blanksBatches) ? data.blanksBatches : [];
     const total = Number(data.blanksFormsTotal || 0);
     const limit = Number(data.blanksFormsLimit || BLANKS_FORMS_PAGE_SIZE);
     const currentPage = getFormsPage();
@@ -492,13 +442,6 @@
               ${typeOptions
                 .map((item) => `<option value="${esc(item.code)}" ${appState.blanksFilterType === item.code ? "selected" : ""}>${esc(item.name)}</option>`)
                 .join("")}
-            </select>
-          </label>
-          <label class="field">
-            <span>Партия</span>
-            <select data-blanks-filter-batch>
-              <option value="all" ${appState.blanksFilterBatchId === "all" ? "selected" : ""}>Все партии</option>
-              ${renderBatchFilterOptions(batches, appState.blanksFilterBatchId)}
             </select>
           </label>
           <label class="field blanks-filters__search">
@@ -682,13 +625,6 @@
 
     document.querySelector("[data-blanks-filter-type]")?.addEventListener("change", (event) => {
       window.appState.blanksFilterType = event.target.value || "all";
-      resetFormsPage();
-      window.persistDemoState?.();
-      loadBlanksData({ force: true });
-    });
-
-    document.querySelector("[data-blanks-filter-batch]")?.addEventListener("change", (event) => {
-      window.appState.blanksFilterBatchId = event.target.value || "all";
       resetFormsPage();
       window.persistDemoState?.();
       loadBlanksData({ force: true });
