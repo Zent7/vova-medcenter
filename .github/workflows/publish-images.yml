@@ -54,3 +54,122 @@ jobs:
             BUILD_REVISION=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  update-homelab:
+    name: Update homelab deployment
+    runs-on: ubuntu-latest
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      HOMELAB_REPO: ravilushqa/homelab
+      COMPOSE_FILE: komodo/stacks/vova-medcenter/compose.yaml
+    steps:
+      - name: Check HOMELAB_DEPLOY_KEY
+        env:
+          HOMELAB_DEPLOY_KEY: ${{ secrets.HOMELAB_DEPLOY_KEY }}
+        run: |
+          if [ -z "$HOMELAB_DEPLOY_KEY" ]; then
+            echo "::error::HOMELAB_DEPLOY_KEY secret is required to update ravilushqa/homelab"
+            exit 1
+          fi
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Log in to GHCR with crane
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GHCR_TOKEN"
+
+      - name: Resolve published image digests
+        id: digests
+        run: |
+          backend_image="${{ env.IMAGE_NAMESPACE }}/vova-medcenter-backend:${{ github.sha }}"
+          frontend_image="${{ env.IMAGE_NAMESPACE }}/vova-medcenter-frontend:${{ github.sha }}"
+          backend_digest="$(crane digest "$backend_image")"
+          frontend_digest="$(crane digest "$frontend_image")"
+          {
+            echo "backend_image=${backend_image}@${backend_digest}"
+            echo "frontend_image=${frontend_image}@${frontend_digest}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out homelab
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.HOMELAB_REPO }}
+          ssh-key: ${{ secrets.HOMELAB_DEPLOY_KEY }}
+          path: homelab
+
+      - name: Update compose image references
+        working-directory: homelab
+        env:
+          BACKEND_IMAGE: ${{ steps.digests.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.digests.outputs.frontend_image }}
+          EXPECTED_REVISION: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("komodo/stacks/vova-medcenter/compose.yaml")
+          text = path.read_text()
+          replacements = {
+              "ghcr.io/zent7/vova-medcenter-backend:": ("BACKEND_IMAGE",),
+              "ghcr.io/zent7/vova-medcenter-frontend:": ("FRONTEND_IMAGE",),
+              "EXPECTED_REVISION": ("EXPECTED_REVISION",),
+          }
+
+          import os
+
+          lines = []
+          changed = {key: False for key in replacements}
+          for line in text.splitlines(keepends=True):
+              stripped = line.lstrip()
+              indent = line[: len(line) - len(stripped)]
+              newline = "\n" if line.endswith("\n") else ""
+              body = line[:-1] if newline else line
+
+              if stripped.startswith("image: ghcr.io/zent7/vova-medcenter-backend:"):
+                  line = f"{indent}image: {os.environ['BACKEND_IMAGE']}{newline}"
+                  changed["ghcr.io/zent7/vova-medcenter-backend:"] = True
+              elif stripped.startswith("image: ghcr.io/zent7/vova-medcenter-frontend:"):
+                  line = f"{indent}image: {os.environ['FRONTEND_IMAGE']}{newline}"
+                  changed["ghcr.io/zent7/vova-medcenter-frontend:"] = True
+              elif stripped.startswith("EXPECTED_REVISION:"):
+                  line = f"{indent}EXPECTED_REVISION: {os.environ['EXPECTED_REVISION']}{newline}"
+                  changed["EXPECTED_REVISION"] = True
+              elif "EXPECTED_REVISION=" in body:
+                  prefix = body.split("EXPECTED_REVISION=", 1)[0]
+                  line = f"{prefix}EXPECTED_REVISION={os.environ['EXPECTED_REVISION']}{newline}"
+                  changed["EXPECTED_REVISION"] = True
+
+              lines.append(line)
+
+          missing = [key for key, was_changed in changed.items() if not was_changed]
+          if missing:
+              raise SystemExit(f"Did not find expected compose entries: {', '.join(missing)}")
+
+          path.write_text("".join(lines))
+          PY
+
+      - name: Push homelab update branch
+        working-directory: homelab
+        env:
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          short_sha="${SHORT_SHA::7}"
+          branch="automation/vova-medcenter-${short_sha}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git checkout -B "$branch"
+
+          if git diff --quiet -- "$COMPOSE_FILE"; then
+            echo "Homelab is already up to date for ${{ github.sha }}"
+            exit 0
+          else
+            git add "$COMPOSE_FILE"
+            git commit -m "Update vova-medcenter images to ${short_sha}"
+          fi
+
+          git push --force-with-lease origin "HEAD:$branch"
+          echo "Pushed homelab branch: $branch"
