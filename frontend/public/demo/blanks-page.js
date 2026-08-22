@@ -85,10 +85,16 @@
     const data = window.data;
     if (!data || data.blanksLoading) return;
 
+    // Флаг занятости ставим до первого await: раздел загружают и сам модуль, и
+    // loadPageData() из app.js, а без этого оба вызова успевали пройти проверку
+    // выше и уходили в API одновременно.
+    data.blanksLoading = true;
+
     let centerId = null;
     try {
       centerId = await window.resolveWorkspaceCenterId?.();
     } catch (error) {
+      data.blanksLoading = false;
       data.blanksError = window.humanizeApiError
         ? window.humanizeApiError(error, "Не удалось определить текущий медцентр")
         : String(error?.message || error || "Не удалось определить текущий медцентр");
@@ -96,9 +102,11 @@
       return;
     }
 
-    if (data.blanksLoaded && Number(data.blanksCenterId) === Number(centerId) && !force) return;
+    if (data.blanksLoaded && Number(data.blanksCenterId) === Number(centerId) && !force) {
+      data.blanksLoading = false;
+      return;
+    }
 
-    data.blanksLoading = true;
     data.blanksError = "";
     if (window.appState?.page === "blanks") {
       window.renderApp?.();
@@ -194,9 +202,14 @@
               <div class="visit-form__grid">
                 <label class="field">
                   <span>Тип бланка</span>
-                  <select name="blank_type" required>
-                    ${typeOptions.map((item) => `<option value="${esc(item.code)}">${esc(item.name)}</option>`).join("")}
+                  <select name="blank_type" required ${typeOptions.length ? "" : "disabled"}>
+                    ${
+                      typeOptions.length
+                        ? typeOptions.map((item) => `<option value="${esc(item.code)}">${esc(item.name)}</option>`).join("")
+                        : '<option value="">Список типов не загрузился</option>'
+                    }
                   </select>
+                  ${typeOptions.length ? "" : '<span class="muted">Список типов бланков не загрузился. Нажмите «Обновить» вверху страницы.</span>'}
                 </label>
                 <label class="field">
                   <span>Серия</span>
@@ -226,7 +239,7 @@
               }
               <div class="visit-form__actions">
                 <button type="button" class="ghost-button" data-blanks-close-form>Отмена</button>
-                <button type="submit" class="primary-button">${data.blanksFormSaving ? "Добавление..." : "Добавить"}</button>
+                <button type="submit" class="primary-button" ${typeOptions.length ? "" : "disabled"}>${data.blanksFormSaving ? "Добавление..." : "Добавить"}</button>
               </div>
             </form>
           `
@@ -562,7 +575,7 @@
           <button type="button" class="tabs__item ${appState.blanksTab === "forms" ? "tabs__item--active" : ""}" data-blanks-tab="forms">Номера бланков</button>
         </div>
         ${data.blanksError ? `<div class="form-error">${esc(data.blanksError)}</div>` : ""}
-        ${data.blanksLoading && !data.blanksLoaded ? '<p class="muted">Загрузка данных по бланкам...</p>' : renderActiveTab()}
+        ${!data.blanksLoaded && !data.blanksError ? '<p class="muted">Загрузка данных по бланкам...</p>' : renderActiveTab()}
       </section>
     `;
   }
@@ -755,4 +768,12 @@
   window.loadBlanksData = loadBlanksData;
   window.renderBlanksPage = renderBlanksPage;
   window.bindBlanksHandlers = bindBlanksHandlers;
+
+  // app.js подключается раньше и может успеть вызвать loadPageData("blanks") до того,
+  // как этот модуль зарегистрировал loadBlanksData. Тогда запрос не уходил вовсе и
+  // раздел оставался пустым: без партий, без типов бланков и без сообщения об ошибке.
+  if (window.appState?.page === "blanks" && !window.data?.blanksLoaded && !window.data?.blanksLoading) {
+    window.renderApp?.();
+    loadBlanksData();
+  }
 })();
