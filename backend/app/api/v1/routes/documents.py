@@ -5,7 +5,7 @@ import shutil
 from threading import Lock
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -52,7 +52,7 @@ _DOCUMENT_MEDIA_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xml": "application/xml",
 }
-_PRINT_TICKET_TTL_SECONDS = 120
+_PRINT_TICKET_TTL_SECONDS = 600
 _print_ticket_lock = Lock()
 _print_tickets: dict[str, tuple[Path, datetime]] = {}
 
@@ -427,14 +427,43 @@ def _download_print_ticket(token: str) -> FileResponse:
     )
 
 
-@router.get("/print-ticket/{token}/{file_name}", name="download_print_ticket_file_named")
-def download_print_ticket_file_named(token: str, file_name: str) -> FileResponse:
-    return _download_print_ticket(token)
+def _serve_print_ticket(token: str, request: Request) -> Response:
+    file_response = _download_print_ticket(token)
+    if request.method == "OPTIONS":
+        return Response(
+            status_code=status.HTTP_204_NO_CONTENT,
+            headers={
+                "Allow": "GET, HEAD, OPTIONS",
+                "Cache-Control": "no-store",
+            },
+        )
+    if request.method == "HEAD":
+        headers = dict(file_response.headers)
+        headers["Content-Length"] = str(Path(file_response.path).stat().st_size)
+        return Response(
+            status_code=status.HTTP_200_OK,
+            media_type=file_response.media_type,
+            headers=headers,
+        )
+    return file_response
 
 
-@router.get("/print-ticket/{token}", name="download_print_ticket_file")
-def download_print_ticket_file(token: str) -> FileResponse:
-    return _download_print_ticket(token)
+@router.api_route(
+    "/print-ticket/{token}/{file_name}",
+    methods=["GET", "HEAD", "OPTIONS"],
+    name="download_print_ticket_file_named",
+)
+def download_print_ticket_file_named(token: str, file_name: str, request: Request) -> Response:
+    return _serve_print_ticket(token, request)
+
+
+@router.api_route(
+    "/print-ticket/{token}",
+    methods=["GET", "HEAD", "OPTIONS"],
+    name="download_print_ticket_file",
+)
+def download_print_ticket_file(token: str, request: Request) -> Response:
+    return _serve_print_ticket(token, request)
 
 
 @router.get("/generated/{file_name}")
