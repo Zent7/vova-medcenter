@@ -92,6 +92,51 @@ class DashboardDoctorStatusesTests(unittest.TestCase):
         self.assertIn("gynecologist", status.existing_doctor_role_ids)
         self.assertNotIn("gynecologist", status.completed_doctor_role_ids)
 
+    def test_has_glasses_is_false_without_chairman_mark(self):
+        self.db.add(
+            DoctorExam(
+                id=1,
+                client_id=1,
+                encounter_id=1,
+                doctor_role_id="chairman",
+                is_completed=True,
+                fields_json={"hasGlasses": False, "indicationGlasses": False},
+            )
+        )
+        self.db.commit()
+
+        self.assertFalse(self._statuses().has_glasses)
+
+    def test_chairman_glasses_checkbox_sets_has_glasses(self):
+        self.db.add(
+            DoctorExam(
+                id=1,
+                client_id=1,
+                encounter_id=1,
+                doctor_role_id="chairman",
+                is_completed=False,
+                fields_json={"hasGlasses": True},
+            )
+        )
+        self.db.commit()
+
+        self.assertTrue(self._statuses().has_glasses)
+
+    def test_chairman_glasses_indication_sets_has_glasses(self):
+        self.db.add(
+            DoctorExam(
+                id=1,
+                client_id=1,
+                encounter_id=1,
+                doctor_role_id="chairman",
+                is_completed=True,
+                fields_json={"indicationGlasses": True},
+            )
+        )
+        self.db.commit()
+
+        self.assertTrue(self._statuses().has_glasses)
+
     def test_requested_encounters_for_same_client_have_separate_statuses(self):
         self.db.add_all(
             [

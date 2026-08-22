@@ -32,6 +32,17 @@ def _append_unique_role(target: list[str], role_id: object) -> None:
         target.append(normalized)
 
 
+# Отметка "очки" ставится председателем в его карточке: либо чекбокс "Очки",
+# либо отметка "очки/линзы" в показаниях к управлению.
+GLASSES_EXAM_FIELD_KEYS = ("hasGlasses", "indicationGlasses")
+
+
+def _exam_has_glasses(fields_json: object) -> bool:
+    if not isinstance(fields_json, dict):
+        return False
+    return any(bool(fields_json.get(key)) for key in GLASSES_EXAM_FIELD_KEYS)
+
+
 @router.get("/stats", response_model=DashboardStats)
 def get_dashboard_stats(db: Session = Depends(get_db)) -> DashboardStats:
     clients_count = db.scalar(select(func.count()).select_from(Client)) or 0
@@ -213,6 +224,7 @@ def get_client_doctor_statuses(
     services_by_encounter: dict[int, list[DashboardClientDoctorStatusService]] = defaultdict(list)
     existing_roles_by_encounter: dict[int, list[str]] = defaultdict(list)
     completed_roles_by_encounter: dict[int, list[str]] = defaultdict(list)
+    glasses_by_encounter: dict[int, bool] = defaultdict(bool)
     blank_number_by_encounter: dict[int, str] = {}
 
     if selected_encounter_ids:
@@ -227,17 +239,24 @@ def get_client_doctor_statuses(
             )
 
         exam_rows = db.execute(
-            select(DoctorExam.encounter_id, DoctorExam.doctor_role_id, DoctorExam.is_completed)
+            select(
+                DoctorExam.encounter_id,
+                DoctorExam.doctor_role_id,
+                DoctorExam.is_completed,
+                DoctorExam.fields_json,
+            )
             .where(
                 DoctorExam.deleted_at.is_(None),
                 DoctorExam.encounter_id.in_(selected_encounter_ids),
             )
             .order_by(DoctorExam.encounter_id.asc(), DoctorExam.id.asc())
         ).all()
-        for encounter_id, doctor_role_id, is_completed in exam_rows:
+        for encounter_id, doctor_role_id, is_completed, fields_json in exam_rows:
             _append_unique_role(existing_roles_by_encounter[encounter_id], doctor_role_id)
             if is_completed:
                 _append_unique_role(completed_roles_by_encounter[encounter_id], doctor_role_id)
+            if _exam_has_glasses(fields_json):
+                glasses_by_encounter[encounter_id] = True
 
         blank_rows = db.execute(
             select(GeneratedDocument.encounter_id, GeneratedDocument.blank_number_snapshot)
@@ -267,6 +286,7 @@ def get_client_doctor_statuses(
                 existing_doctor_role_ids=existing_roles_by_encounter[row_encounter_id],
                 completed_doctor_role_ids=completed_roles_by_encounter[row_encounter_id],
                 suppressed_doctor_role_ids=encounter_by_id[row_encounter_id][2],
+                has_glasses=glasses_by_encounter[row_encounter_id],
             )
             for row_encounter_id in selected_encounter_ids
         ]
@@ -289,6 +309,7 @@ def get_client_doctor_statuses(
                 existing_doctor_role_ids=existing_roles_by_encounter[encounter_id],
                 completed_doctor_role_ids=completed_roles_by_encounter[encounter_id],
                 suppressed_doctor_role_ids=suppressed_doctor_role_ids,
+                has_glasses=glasses_by_encounter[encounter_id],
             )
         )
     return result

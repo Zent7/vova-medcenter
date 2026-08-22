@@ -475,6 +475,7 @@ const columnKeys = [
   "phthisiatrician",
   "uzist",
   "chairman",
+  "glasses",
   "note",
   "cardNumber",
   "organization",
@@ -938,6 +939,31 @@ function getExistingDoctorRoleIdsForDashboardVisit(client, visit = null, status 
   }
 
   return existing;
+}
+
+// Отметка "очки" ставится председателем в его карточке: чекбокс "Очки"
+// либо "очки/линзы" в показаниях к управлению.
+const GLASSES_EXAM_FIELD_KEYS = ["hasGlasses", "indicationGlasses"];
+
+function examFieldsHaveGlasses(fields) {
+  if (!fields || typeof fields !== "object") return false;
+  return GLASSES_EXAM_FIELD_KEYS.some((key) => Boolean(fields[key]));
+}
+
+function hasGlassesForDashboardVisit(client, visit = null, status = null) {
+  if (visit) {
+    const localMatch = (Array.isArray(data.doctorExams) ? data.doctorExams : []).some(
+      (exam) =>
+        String(exam?.clientId) === String(client?.id) &&
+        String(exam?.visitId) === String(visit.id) &&
+        examFieldsHaveGlasses(exam?.fields),
+    );
+    if (localMatch) return true;
+    if (visit.backendId && String(status?.encounterId || "") !== String(visit.backendId)) {
+      return false;
+    }
+  }
+  return Boolean(status?.hasGlasses);
 }
 
 function getSuppressedDoctorRoleIdsForDashboardVisit(visit = null, status = null) {
@@ -4233,6 +4259,10 @@ function mapDashboardDoctorStatus(status, previousStatus = null) {
       ? status.completed_doctor_role_ids.slice()
       : [],
     suppressedDoctorRoleIds,
+    hasGlasses:
+      typeof status?.has_glasses === "boolean"
+        ? status.has_glasses
+        : Boolean(previousStatus?.hasGlasses),
   };
 }
 
@@ -5556,6 +5586,9 @@ function buildExcelRows(clients) {
       phthisiatrician: markDoctor("phthisiatrist"),
       uzist: markDoctor("uzist"),
       chairman: markDoctor("chairman"),
+      glasses: hasGlassesForDashboardVisit(client, currentVisit, status)
+        ? { value: "✓", title: "Председатель отметил очки/линзы", state: "done" }
+        : { value: "", title: "", state: "empty" },
       stamp: "",
       note: client.note || "",
       encounterDate: client.encounterDate || "",
@@ -5593,6 +5626,13 @@ function renderExcelDoctorCell(row, key) {
   const value = typeof mark === "object" && mark !== null ? mark.value || "" : mark || "";
   const title = typeof mark === "object" && mark !== null ? mark.title || "" : "";
   return `<span class="excel-doctor-mark" title="${escapeHtml(title)}" data-row-doctor-role-id="${escapeHtml(doctorRoleId)}">${escapeHtml(value)}</span>`;
+}
+
+// Информационная отметка без привязки к карточке врача (столбец "Очки").
+function renderExcelMarkCell(mark) {
+  const value = mark?.value || "";
+  const title = mark?.title || "";
+  return `<span class="excel-doctor-mark" title="${escapeHtml(title)}">${escapeHtml(value)}</span>`;
 }
 
 function renderExcelActionCell(value, actionId) {
@@ -5913,6 +5953,7 @@ function renderSketchHome() {
     "Фтизиатр",
     "Узист",
     "Председатель",
+    "Очки",
     "Примечания",
     "Номер бланка",
     "Организация",
@@ -6064,6 +6105,7 @@ function renderSketchHome() {
                           ${renderExcelDoctorCell(row, "phthisiatrician")}
                           ${renderExcelDoctorCell(row, "uzist")}
                           ${renderExcelDoctorCell(row, "chairman")}
+                          ${renderExcelMarkCell(row.glasses)}
                           <span>${escapeHtml(row.note)}</span>
                           <span>${escapeHtml(row.blankNumber)}</span>
                           <span>${escapeHtml(row.organization)}</span>

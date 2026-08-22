@@ -31,6 +31,7 @@
   --excel-col-phthisiatrician: clamp(34px, 2.4vw, 46px);
   --excel-col-uzist: clamp(34px, 2.4vw, 46px);
   --excel-col-chairman: clamp(34px, 2.4vw, 46px);
+  --excel-col-glasses: clamp(34px, 2.4vw, 46px);
   --excel-col-note: clamp(140px, 9vw, 190px);
   --excel-col-cardNumber: clamp(78px, 5vw, 104px);
   --excel-col-organization: clamp(116px, 7.4vw, 160px);
@@ -2444,6 +2445,7 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
     var(--excel-col-phthisiatrician)
     var(--excel-col-uzist)
     var(--excel-col-chairman)
+    var(--excel-col-glasses)
     var(--excel-col-note)
     var(--excel-col-cardNumber)
     var(--excel-col-organization)
@@ -2655,7 +2657,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   animation: dashboard-table-skeleton-pulse 1.2s ease-in-out infinite;
 }
 
-.sketch-table__grid--skeleton > span:nth-child(n + 7):nth-child(-n + 19) .dashboard-table-skeleton-bar {
+.sketch-table__grid--skeleton > span:nth-child(n + 7):nth-child(-n + 20) .dashboard-table-skeleton-bar {
   width: 8px;
   margin-inline: auto;
 }

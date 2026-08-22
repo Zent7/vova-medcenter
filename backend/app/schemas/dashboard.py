@@ -25,6 +25,7 @@ class DashboardClientDoctorStatus(BaseModel):
     existing_doctor_role_ids: list[str] = Field(default_factory=list)
     completed_doctor_role_ids: list[str] = Field(default_factory=list)
     suppressed_doctor_role_ids: list[str] = Field(default_factory=list)
+    has_glasses: bool = False
 
 
 class DashboardEncounterRow(BaseModel):
