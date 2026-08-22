@@ -44,7 +44,21 @@ alembic downgrade -1                                   # roll back one step
 
 Default DB: `postgresql+psycopg://medcenters:medcenters@127.0.0.1:5434/medcenters`
 
-## Git and PR Workflow
+### Mandatory Alembic / DB Checks
+
+For any backend, database, seed-data, API, or migration-related change, verify migration history compatibility before publishing it:
+
+- Check whether model, seed-data, or API changes depend on new or changed database columns or tables.
+- Verify that the current head revision exists and `alembic heads` shows the expected single head.
+- Run `alembic upgrade head` against a clean PostgreSQL database.
+- If an existing database or dump is available, verify that upgrading it to head also succeeds.
+- Never delete, rename, or revert a migration file that may already have been applied to live or staging. Add a new migration to change or remove obsolete schema instead.
+- For a new application image, verify that the backend container starts, migrations apply, `/api/v1/health` reports the expected `build_revision`, and the frontend image contains the expected change.
+- If live infrastructure is unavailable, explicitly state that live runtime and migrations were not verified.
+
+`Can't locate revision identified by '<revision>'` means that a database expects a migration missing from the code or image. Treat this as a migration-history compatibility failure, not a deployment-tool failure.
+
+## Git Delivery Workflow
 
 Before changing files, check the branch state:
 ```bash
@@ -55,9 +69,30 @@ git branch --show-current
 
 If the working tree is dirty, preserve the user's changes and do not overwrite them. If the current branch is behind or has diverged from its upstream/target branch, update or report that before making edits.
 
-When implementation and verification are complete, opening a pull request is enough. The PR will be merged shortly by the normal automation/process; do not wait for the merge unless explicitly asked.
+Repository-owner preference: after implementation and proportionate verification, commit and push application changes directly to `origin/main`. Do not create a routine PR in `Zent7/vova-medcenter` unless the user explicitly requests one, direct publication is unsafe, or permissions/protection prevent a direct push.
 
-After opening a PR, check whether it is mergeable and whether it has conflicts, for example with `gh pr view --json mergeable,mergeStateStatus,statusCheckRollup` or the GitHub PR page. If there are conflicts, fix them before handing off; if they cannot be fixed locally, clearly report the conflict status and affected files.
+When the current checkout is dirty or not based on current `origin/main`, use a clean isolated worktree for integration. Preserve the original working tree and report any local changes that remain outside `main`.
+
+After pushing `main`:
+
+- Confirm that the remote `main` SHA matches the intended commit.
+- Monitor the `Publish application images` GitHub Actions run through all jobs.
+- Treat a failed or cancelled run as incomplete delivery and report the failing job and step.
+- Delete obsolete remote feature branches after their commits are integrated or archived with a recovery tag.
+
+If a PR is explicitly required, check mergeability, conflicts, and status checks before handoff.
+
+## GitHub Actions
+
+The active workflow is `.github/workflows/publish-images.yml` (`Publish application images`). It runs for pushes to `main`, exceptional `codex/**` branches, and manual dispatches.
+
+- `publish` builds backend and frontend images, tags them with the immutable source commit SHA, and pushes them to `ghcr.io/zent7`.
+- `update-homelab` runs only after a successful `main` publication. It resolves both image digests, checks out `ravilushqa/homelab` with `HOMELAB_DEPLOY_KEY`, updates `komodo/stacks/vova-medcenter/compose.yaml`, and pushes `automation/vova-medcenter-<short-sha>`.
+- The downstream homelab automation opens and processes the delivery PR. Do not create a duplicate homelab PR when that automation succeeds.
+- The required repository secret is `HOMELAB_DEPLOY_KEY`. A missing secret or failed homelab job blocks delivery even if both images were published.
+- Concurrency is scoped by Git ref and cancels stale in-progress runs, preventing an older push from overtaking a newer one.
+
+Action majors currently used and intentionally tracked: `actions/checkout@v7`, `docker/setup-buildx-action@v4`, `docker/login-action@v4`, `docker/build-push-action@v7`, and `imjasonh/setup-crane@v0.7`. Review their official releases before changing majors.
 
 ## Backend Architecture
 
@@ -108,18 +143,19 @@ Do not reintroduce a second React UI unless the delivery demo is first ported in
 
 ## Live Site Delivery
 
-When the user asks to change the site, assume the change must be reflected on the live demo site, not only in local files:
+The live demo is maintained through the automated image and homelab workflow:
 
 - Live demo: https://vova-medcenter.ravil.space/demo/index.html
-- Deploy PR: https://github.com/ravilushqa/homelab/pull/261
 
 Default workflow for site changes:
-- User preference for all future chats in this repository: publish site/demo changes to the live demo immediately after local verification, unless the user explicitly says local-only.
+
+- Publish verified site/demo changes directly to `main` unless the user explicitly requests local-only work.
 - Make the change in this repository, usually under `frontend/public/demo/` for UI behavior and styling.
 - Verify locally with the relevant checks for the touched files.
-- After implementation and verification, prepare the repo changes for delivery and use the existing deploy workflow/PR above so the live demo receives the update.
-- Do not stop at "changed locally" unless the user explicitly says local-only is enough.
-- Report whether the change is local-only, pushed/PR-ready, or actually visible on the live demo site.
+- Let `Publish application images` publish immutable images and hand the digest-pinned update to homelab automation.
+- Verify the application workflow and resulting homelab PR instead of reusing or hard-coding an old PR URL.
+- Do not claim the live site is updated until the downstream PR is merged and the runtime health/build revision is verified.
+- Report whether the change is local-only, in `main`, published as images, merged into homelab, or verified live.
 
 ## Utility Scripts
 
