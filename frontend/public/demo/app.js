@@ -216,6 +216,9 @@ function isRestorablePage(page) {
   return typeof page === "string" && RESTORABLE_PAGES.has(page);
 }
 
+// Разделы, чьи данные loadWorkflowData() запрашивает по выбранному клиенту.
+const CLIENT_SCOPED_PAGES = new Set(["chart", "xml", "documents"]);
+
 function getMedicalRecordPanelHeight() {
   try {
     const raw = window.localStorage?.getItem(MEDICAL_RECORD_PANEL_HEIGHT_KEY);
@@ -1345,6 +1348,7 @@ function persistDemoState() {
         DEMO_STORAGE_KEY,
         JSON.stringify({ ...payload, visits: [], mkb10History: [] }),
       );
+      showToast("Лимит браузера исчерпан: история обращений не сохраняется локально");
     }
   } catch (error) {
     console.warn("Не удалось сохранить демо-данные", error);
@@ -13189,11 +13193,26 @@ window.renderApp = renderApp;
 window.openDriverPrintFlow = openDriverPrintFlow;
 
 renderApp();
-// Модули разделов (бланки, услуги, карточка врача) подключаются скриптами после app.js,
-// поэтому восстановленный раздел дорисовываем и догружаем, когда все скрипты готовы.
-window.setTimeout(() => {
+
+// Модули разделов (бланки, услуги, карточка врача) подключаются отдельными <script>
+// после app.js. setTimeout(0) для них слишком рано: таймер успевает сработать, пока
+// парсер еще качает следующий скрипт, и window.loadBlanksData оказывается undefined.
+// DOMContentLoaded гарантирует, что все скрипты страницы уже выполнены.
+function initRestoredPage() {
   if (appState.page !== "dashboard") renderApp();
-  loadPageData(appState.page);
-}, 0);
+  // Клиенты подгружаются ниже и на этот момент еще не пришли, поэтому
+  // getSelectedBackendClientId() вернул бы null, а loadWorkflowData() ушел бы в API
+  // без client_id — то есть за журналами, согласиями и картами всех пациентов сразу.
+  // Разделы, привязанные к клиенту, наполнит restoreWorkplaceSelection() после загрузки.
+  if (!CLIENT_SCOPED_PAGES.has(appState.page) || getSelectedBackendClientId()) {
+    loadPageData(appState.page);
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initRestoredPage, { once: true });
+} else {
+  window.setTimeout(initRestoredPage, 0);
+}
 Promise.allSettled([loadClientsFromBackend(appState.clientSearch), loadServicesFromBackend(), loadDocumentTemplatesFromBackend()])
   .then(() => restoreWorkplaceSelection());
