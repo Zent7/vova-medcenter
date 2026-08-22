@@ -6,6 +6,7 @@ from app.schemas.blank_form import (
     BlankBatchCreate,
     BlankBatchRead,
     BlankFormRead,
+    BlankFormsPageRead,
     BlankFormSpoilRequest,
     BlankSeriesRead,
     BlankStatsItem,
@@ -25,6 +26,7 @@ from app.services.blank_forms import (
     list_batches,
     list_blank_types,
     list_forms,
+    list_forms_page,
     release_form,
     resolve_blank_type_for_series,
     spoil_form,
@@ -132,6 +134,35 @@ def get_forms(
         limit=limit,
     )
     return [BlankFormRead.model_validate(enrich_form_for_read(db, item)) for item in items]
+
+
+@router.get("/forms/page", response_model=BlankFormsPageRead)
+def get_forms_page(
+    blank_type: str | None = Query(default=None),
+    batch_id: int | None = None,
+    blank_status: str | None = Query(default=None, alias="status"),
+    center_id: int | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> BlankFormsPageRead:
+    items, total = list_forms_page(
+        db,
+        blank_type=blank_type,
+        batch_id=batch_id,
+        status=blank_status,
+        center_id=center_id,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+    return BlankFormsPageRead(
+        items=[BlankFormRead.model_validate(enrich_form_for_read(db, item)) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/forms/next", response_model=BlankFormRead)

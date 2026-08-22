@@ -42,6 +42,8 @@ const appState = {
   blanksFormOpen: false,
   blanksFilterStatus: "all",
   blanksFilterBatchId: "all",
+  blanksFilterType: "all",
+  blanksFormsPage: 1,
   blanksSearch: "",
   restoreInputId: null,
   selectedEncounterId: null,
@@ -128,6 +130,9 @@ const data = {
   blanksStats: [],
   blanksBatches: [],
   blanksForms: [],
+  blanksFormsTotal: 0,
+  blanksFormsLimit: 50,
+  blanksFormsOffset: 0,
   blanksLoading: false,
   blanksLoaded: false,
   blanksCenterId: null,
@@ -1157,6 +1162,12 @@ function applyPersistedDemoState() {
   if (typeof savedAppState.blanksFilterBatchId === "string" && savedAppState.blanksFilterBatchId) {
     appState.blanksFilterBatchId = savedAppState.blanksFilterBatchId;
   }
+  if (typeof savedAppState.blanksFilterType === "string" && savedAppState.blanksFilterType) {
+    appState.blanksFilterType = savedAppState.blanksFilterType;
+  }
+  if (Number.isFinite(savedAppState.blanksFormsPage) && savedAppState.blanksFormsPage > 0) {
+    appState.blanksFormsPage = savedAppState.blanksFormsPage;
+  }
   if (typeof savedAppState.blanksSearch === "string") {
     appState.blanksSearch = savedAppState.blanksSearch;
   }
@@ -1220,6 +1231,8 @@ function persistDemoState() {
         blanksFormOpen: appState.blanksFormOpen,
         blanksFilterStatus: appState.blanksFilterStatus,
         blanksFilterBatchId: appState.blanksFilterBatchId,
+        blanksFilterType: appState.blanksFilterType,
+        blanksFormsPage: appState.blanksFormsPage,
         blanksSearch: appState.blanksSearch,
         restoreInputId: appState.restoreInputId,
         selectedEncounterId: appState.selectedEncounterId,

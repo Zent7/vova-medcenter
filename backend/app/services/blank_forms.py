@@ -321,6 +321,25 @@ def list_forms(
     search: str | None = None,
     limit: int = 200,
 ) -> list[BlankForm]:
+    query = _build_forms_query(
+        blank_type=blank_type,
+        batch_id=batch_id,
+        status=status,
+        center_id=center_id,
+        search=search,
+    )
+    query = query.order_by(BlankForm.number_value.asc(), BlankForm.id.asc()).limit(limit)
+    return list(db.execute(query).scalars())
+
+
+def _build_forms_query(
+    *,
+    blank_type: str | None = None,
+    batch_id: int | None = None,
+    status: str | None = None,
+    center_id: int | None = None,
+    search: str | None = None,
+):
     query = select(BlankForm)
     if blank_type:
         query = query.where(BlankForm.blank_type == blank_type)
@@ -330,11 +349,56 @@ def list_forms(
         query = query.where(BlankForm.status == status)
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
-    if search:
-        like = f"%{search.strip()}%"
-        query = query.where(BlankForm.full_number.ilike(like))
-    query = query.order_by(BlankForm.number_value.asc(), BlankForm.id.asc()).limit(limit)
-    return list(db.execute(query).scalars())
+    search_clean = (search or "").strip()
+    if search_clean:
+        like = f"%{search_clean}%"
+        query = query.outerjoin(Client, Client.id == BlankForm.client_id).outerjoin(
+            GeneratedDocument, GeneratedDocument.id == BlankForm.generated_document_id
+        )
+        query = query.where(
+            or_(
+                BlankForm.full_number.ilike(like),
+                Client.last_name.ilike(like),
+                Client.first_name.ilike(like),
+                Client.middle_name.ilike(like),
+                GeneratedDocument.file_name.ilike(like),
+            )
+        )
+    return query
+
+
+def list_forms_page(
+    db: Session,
+    *,
+    blank_type: str | None = None,
+    batch_id: int | None = None,
+    status: str | None = None,
+    center_id: int | None = None,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[BlankForm], int]:
+    query = _build_forms_query(
+        blank_type=blank_type,
+        batch_id=batch_id,
+        status=status,
+        center_id=center_id,
+        search=search,
+    )
+    total = int(db.execute(select(func.count()).select_from(query.subquery())).scalar_one() or 0)
+    order_by_type = case(
+        {code: index for index, (code, _name) in enumerate(NUMBERED_BLANK_TYPES)},
+        value=BlankForm.blank_type,
+        else_=len(NUMBERED_BLANK_TYPES),
+    )
+    items = list(
+        db.execute(
+            query.order_by(order_by_type, BlankForm.number_value.asc(), BlankForm.id.asc())
+            .offset(offset)
+            .limit(limit)
+        ).scalars()
+    )
+    return items, total
 
 
 def stats(db: Session, *, center_id: int | None = None) -> list[dict[str, object]]:

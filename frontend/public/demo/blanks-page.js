@@ -33,6 +33,10 @@
     }
   }
 
+  function normalizeText(value) {
+    return String(value ?? "").trim().toLowerCase();
+  }
+
   function getTypeName(code) {
     const item = (window.data?.blanksTypes || []).find((entry) => entry.code === code);
     return item?.name || code;
@@ -48,8 +52,34 @@
     return map[status] || { label: status || "—", className: "free" };
   }
 
-  function normalizeText(value) {
-    return String(value ?? "").trim().toLowerCase();
+  const BLANKS_FORMS_PAGE_SIZE = 50;
+  let blanksSearchTimer = null;
+
+  function getFormsPage() {
+    const page = Number.parseInt(String(window.appState?.blanksFormsPage || "1"), 10);
+    return Number.isFinite(page) && page > 0 ? page : 1;
+  }
+
+  function resetFormsPage() {
+    window.appState.blanksFormsPage = 1;
+  }
+
+  function buildFormsPageQuery(centerId) {
+    const page = getFormsPage();
+    const params = new URLSearchParams({
+      center_id: String(centerId),
+      limit: String(BLANKS_FORMS_PAGE_SIZE),
+      offset: String((page - 1) * BLANKS_FORMS_PAGE_SIZE),
+    });
+    const status = window.appState?.blanksFilterStatus || "all";
+    const blankType = window.appState?.blanksFilterType || "all";
+    const batchId = window.appState?.blanksFilterBatchId || "all";
+    const search = String(window.appState?.blanksSearch || "").trim();
+    if (status !== "all") params.set("status", status);
+    if (blankType !== "all") params.set("blank_type", blankType);
+    if (batchId !== "all") params.set("batch_id", batchId);
+    if (search) params.set("search", search);
+    return params.toString();
   }
 
   function getBatchRangeLabel(item) {
@@ -121,23 +151,42 @@
 
     try {
       const centerQuery = new URLSearchParams({ center_id: String(centerId) }).toString();
-      const [types, stats, batches, forms] = await Promise.all([
+      const formsQuery = buildFormsPageQuery(centerId);
+      const historyQuery = new URLSearchParams({
+        center_id: String(centerId),
+        status: "issued",
+        limit: "1000",
+      }).toString();
+      const [types, stats, batches, forms, historyForms] = await Promise.all([
         window.apiRequest("/blanks/types"),
         window.apiRequest(`/blanks/stats?${centerQuery}`),
         window.apiRequest(`/blanks/batches?${centerQuery}`),
-        window.apiRequest(`/blanks/forms?limit=1000&${centerQuery}`),
+        window.apiRequest(`/blanks/forms/page?${formsQuery}`),
+        window.apiRequest(`/blanks/forms?${historyQuery}`),
       ]);
 
       data.blanksTypes = Array.isArray(types) ? types : [];
       data.blanksStats = Array.isArray(stats?.items) ? stats.items : [];
       data.blanksBatches = Array.isArray(batches) ? batches : [];
-      data.blanksForms = Array.isArray(forms) ? forms : [];
+      data.blanksForms = Array.isArray(forms?.items) ? forms.items : [];
+      data.blanksHistoryForms = Array.isArray(historyForms) ? historyForms : [];
+      data.blanksFormsTotal = Number(forms?.total || 0);
+      data.blanksFormsLimit = Number(forms?.limit || BLANKS_FORMS_PAGE_SIZE);
+      data.blanksFormsOffset = Number(forms?.offset || 0);
       data.blanksLoaded = true;
       data.blanksCenterId = Number(centerId);
 
       const activeBatchIds = new Set(data.blanksBatches.map((item) => String(item.id)));
       if (!activeBatchIds.has(String(window.appState?.blanksFilterBatchId || ""))) {
         window.appState.blanksFilterBatchId = "all";
+      }
+      const totalPages = Math.max(1, Math.ceil(data.blanksFormsTotal / BLANKS_FORMS_PAGE_SIZE));
+      if (getFormsPage() > totalPages) {
+        window.appState.blanksFormsPage = totalPages;
+        window.persistDemoState?.();
+        data.blanksLoading = false;
+        await loadBlanksData({ force: true });
+        return;
       }
     } catch (error) {
       data.blanksError = window.humanizeApiError
@@ -282,32 +331,12 @@
     `;
   }
 
-  function getFilteredForms() {
-    const forms = Array.isArray(window.data?.blanksForms) ? window.data.blanksForms : [];
-    const status = window.appState?.blanksFilterStatus || "all";
-    const batchId = window.appState?.blanksFilterBatchId || "all";
-    const search = normalizeText(window.appState?.blanksSearch || "");
-
-    return forms.filter((item) => {
-      if (status !== "all" && item.status !== status) return false;
-      if (batchId !== "all" && String(item.batch_id) !== String(batchId)) return false;
-      if (!search) return true;
-
-      const haystack = [
-        item.full_number,
-        item.client_full_name,
-        item.document_label,
-        item.issued_by_name,
-        item.spoiled_reason,
-      ]
-        .map(normalizeText)
-        .join(" ");
-      return haystack.includes(search);
-    });
-  }
-
   function getIssuedHistoryGroups() {
-    const forms = Array.isArray(window.data?.blanksForms) ? window.data.blanksForms : [];
+    const forms = Array.isArray(window.data?.blanksHistoryForms)
+      ? window.data.blanksHistoryForms
+      : Array.isArray(window.data?.blanksForms)
+        ? window.data.blanksForms
+        : [];
     const types = Array.isArray(window.data?.blanksTypes) ? window.data.blanksTypes : [];
     const search = normalizeText(window.appState?.blanksHistorySearch || "");
     const issuedForms = forms
@@ -426,8 +455,15 @@
   function renderFormsTab() {
     const data = window.data || {};
     const appState = window.appState || {};
-    const forms = getFilteredForms();
+    const forms = Array.isArray(data.blanksForms) ? data.blanksForms : [];
+    const typeOptions = Array.isArray(data.blanksTypes) ? data.blanksTypes : [];
     const batches = Array.isArray(data.blanksBatches) ? data.blanksBatches : [];
+    const total = Number(data.blanksFormsTotal || 0);
+    const limit = Number(data.blanksFormsLimit || BLANKS_FORMS_PAGE_SIZE);
+    const currentPage = getFormsPage();
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const visibleFrom = total ? Number(data.blanksFormsOffset || 0) + 1 : 0;
+    const visibleTo = total ? Math.min(total, Number(data.blanksFormsOffset || 0) + forms.length) : 0;
 
     return `
       <article class="card">
@@ -450,6 +486,15 @@
             </select>
           </label>
           <label class="field">
+            <span>Тип бланка</span>
+            <select data-blanks-filter-type>
+              <option value="all" ${appState.blanksFilterType === "all" ? "selected" : ""}>Все</option>
+              ${typeOptions
+                .map((item) => `<option value="${esc(item.code)}" ${appState.blanksFilterType === item.code ? "selected" : ""}>${esc(item.name)}</option>`)
+                .join("")}
+            </select>
+          </label>
+          <label class="field">
             <span>Партия</span>
             <select data-blanks-filter-batch>
               <option value="all" ${appState.blanksFilterBatchId === "all" ? "selected" : ""}>Все партии</option>
@@ -469,6 +514,7 @@
                   <thead>
                     <tr>
                       <th>Номер</th>
+                      <th>Тип</th>
                       <th>Статус</th>
                       <th>Клиент</th>
                       <th>Документ</th>
@@ -485,6 +531,7 @@
                         return `
                           <tr>
                             <td>${esc(item.full_number)}</td>
+                            <td>${esc(getTypeName(item.blank_type))}</td>
                             <td><span class="blank-status blank-status--${meta.className}">${esc(meta.label)}</span></td>
                             <td>${esc(item.client_full_name || "—")}</td>
                             <td>${esc(item.document_label || "—")}</td>
@@ -510,6 +557,28 @@
             `
             : '<p class="muted">По текущим фильтрам бланков не найдено.</p>'
         }
+        <div class="table-pagination">
+          <span class="muted">Показано ${visibleFrom}–${visibleTo} из ${total}</span>
+          <div class="table-pagination__pages">
+            <button
+              type="button"
+              class="ghost-button table-pagination__button"
+              data-blanks-forms-page="${Math.max(1, currentPage - 1)}"
+              ${currentPage <= 1 ? "disabled" : ""}
+            >
+              Назад
+            </button>
+            <button type="button" class="table-pagination__page table-pagination__page--active" disabled>${currentPage}</button>
+            <button
+              type="button"
+              class="ghost-button table-pagination__button"
+              data-blanks-forms-page="${Math.min(totalPages, currentPage + 1)}"
+              ${currentPage >= totalPages ? "disabled" : ""}
+            >
+              Вперед
+            </button>
+          </div>
+        </div>
       </article>
     `;
   }
@@ -591,8 +660,9 @@
     document.querySelector("[data-blanks-show-issued]")?.addEventListener("click", () => {
       window.appState.blanksFilterStatus = "issued";
       window.appState.blanksSearch = "";
+      resetFormsPage();
       window.persistDemoState?.();
-      window.renderApp?.();
+      loadBlanksData({ force: true });
       window.showToast?.("Выберите нужный номер и нажмите «Освободить номер» в его строке");
     });
 
@@ -605,20 +675,42 @@
 
     document.querySelector("[data-blanks-filter-status]")?.addEventListener("change", (event) => {
       window.appState.blanksFilterStatus = event.target.value || "all";
+      resetFormsPage();
       window.persistDemoState?.();
-      window.renderApp?.();
+      loadBlanksData({ force: true });
+    });
+
+    document.querySelector("[data-blanks-filter-type]")?.addEventListener("change", (event) => {
+      window.appState.blanksFilterType = event.target.value || "all";
+      resetFormsPage();
+      window.persistDemoState?.();
+      loadBlanksData({ force: true });
     });
 
     document.querySelector("[data-blanks-filter-batch]")?.addEventListener("change", (event) => {
       window.appState.blanksFilterBatchId = event.target.value || "all";
+      resetFormsPage();
       window.persistDemoState?.();
-      window.renderApp?.();
+      loadBlanksData({ force: true });
     });
 
     document.querySelector("[data-blanks-search]")?.addEventListener("input", (event) => {
       window.appState.blanksSearch = event.target.value || "";
+      resetFormsPage();
       window.persistDemoState?.();
-      window.renderApp?.();
+      window.clearTimeout(blanksSearchTimer);
+      blanksSearchTimer = window.setTimeout(() => {
+        loadBlanksData({ force: true });
+      }, 250);
+    });
+
+    document.querySelectorAll("[data-blanks-forms-page]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextPage = Number.parseInt(button.dataset.blanksFormsPage || "1", 10);
+        window.appState.blanksFormsPage = Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 1;
+        window.persistDemoState?.();
+        loadBlanksData({ force: true });
+      });
     });
 
     document.querySelector("[data-blanks-history-search]")?.addEventListener("input", (event) => {

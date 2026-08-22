@@ -80,6 +80,13 @@ class BlankFormRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class BlankFormsPageRead(BaseModel):
+    items: list[BlankFormRead]
+    total: int
+    limit: int
+    offset: int
+
+
 class BlankFormSpoilRequest(BaseModel):
     reason: str | None = None
 
