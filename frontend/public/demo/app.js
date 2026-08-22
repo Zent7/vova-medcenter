@@ -165,6 +165,11 @@ const data = {
   reportSummary: null,
   reportLoading: false,
   reportError: "",
+  cashRows: [],
+  cashLoading: false,
+  cashError: "",
+  cashRequestKey: "",
+  cashRequestId: 0,
 };
 
 let clientSearchTimer = null;
@@ -5283,6 +5288,7 @@ function renderNav() {
       }
       if (page === "cash") {
         resetCashPeriodToToday();
+        data.cashRequestKey = "";
       }
       if (page === "reports" && !canAccessReportsWorkspace()) {
         showToast("Отчеты доступны только председателю");
@@ -5303,6 +5309,9 @@ function renderNav() {
       }
       if (page === "reports" && !data.reportLoading) {
         loadReportsSummary();
+      }
+      if (page === "cash" && !data.cashLoading) {
+        loadCashReport();
       }
       if ((page === "chart" || page === "xml") && !data.workflowDataLoading) {
         loadWorkflowData();
@@ -6409,6 +6418,96 @@ function getCashReportPeriod() {
   return { dateFrom, dateTo };
 }
 
+function buildCashReportRequestKey(dateFrom, dateTo, centerId) {
+  return `${dateFrom}:${dateTo}:${centerId || "all"}`;
+}
+
+function mapBackendCashRow(row) {
+  const services = Array.isArray(row?.services)
+    ? row.services.map((service) => ({
+        name: service.name || "Услуга",
+        basePrice: Number(service.base_price || 0),
+        paidPrice: Number(service.paid_price || 0),
+        discount: Number(service.discount || 0),
+        paymentType: row.payment_type || "",
+        comment: service.comment || "",
+      }))
+    : [];
+  const amount = Number(row?.amount || 0);
+  const paymentTotals = getVisitPaymentTotals(services, amount, row?.payment_type || "");
+  const paymentLabel = formatPaymentTypeLabel(row?.payment_type);
+  const visitDate = row?.encounter_date ? formatApiDate(row.encounter_date) : formatApiDate(row?.payment_date);
+  return {
+    visit: {
+      id: `payment-${row.payment_id}`,
+      backendId: row.encounter_id,
+      clientId: row.client_id,
+      visitDate,
+      createdAt: row.encounter_created_at || row.payment_date,
+      paymentType: row.payment_type || "",
+      amount,
+      comment: row.comment || "",
+      center: row.center_name || getWorkspaceCenterName(),
+    },
+    client: {
+      id: row.client_id,
+      fullName: row.client_full_name || "Клиент не найден",
+      patientNumber: row.patient_number,
+      center: row.center_name || getWorkspaceCenterName(),
+    },
+    services,
+    amount,
+    discount: Number(row?.discount || 0),
+    cashAmount: paymentTotals.cash,
+    nonCashAmount: paymentTotals.nonCash,
+    paymentLabel,
+  };
+}
+
+function getBackendCashRows() {
+  return Array.isArray(data.cashRows) ? data.cashRows.map(mapBackendCashRow) : [];
+}
+
+async function loadCashReport() {
+  const { dateFrom, dateTo } = getCashReportPeriod();
+  const requestId = ++data.cashRequestId;
+  data.cashLoading = true;
+  data.cashError = "";
+  renderApp();
+  try {
+    let centerId = null;
+    try {
+      centerId = await resolveWorkspaceCenterId();
+    } catch (error) {
+      console.warn("Не удалось определить медцентр для кассы", error);
+    }
+    const requestKey = buildCashReportRequestKey(dateFrom, dateTo, centerId);
+    const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+    if (centerId) params.set("center_id", String(centerId));
+    const rows = await apiRequest(`/payments/cash-report?${params.toString()}`);
+    if (requestId !== data.cashRequestId) return;
+    data.cashRows = Array.isArray(rows) ? rows : [];
+    data.cashRequestKey = requestKey;
+  } catch (error) {
+    if (requestId !== data.cashRequestId) return;
+    data.cashRows = [];
+    data.cashError = humanizeApiError(error, "Не удалось загрузить кассу из базы");
+  } finally {
+    if (requestId !== data.cashRequestId) return;
+    data.cashLoading = false;
+    renderApp();
+  }
+}
+
+function ensureCashReportLoaded() {
+  const { dateFrom, dateTo } = getCashReportPeriod();
+  const knownCenter = data.centers.find((center) => center?.name === getWorkspaceCenterName());
+  const requestKey = buildCashReportRequestKey(dateFrom, dateTo, knownCenter?.id || "pending");
+  if (data.cashLoading) return;
+  if (data.cashRequestKey && data.cashRequestKey === requestKey) return;
+  window.setTimeout(loadCashReport, 0);
+}
+
 function formatCashReportDate(value) {
   return value ? formatApiDate(value) : "";
 }
@@ -6605,7 +6704,7 @@ function renderCashReportPrintHtml(rows) {
 }
 
 function printCashReport() {
-  const rows = getCashVisitRows();
+  const rows = getBackendCashRows();
   const printWindow = window.open("about:blank", "_blank");
   if (!printWindow) {
     showToast("Браузер заблокировал окно печати");
@@ -6626,7 +6725,8 @@ function printCashReport() {
 }
 
 function renderCashPage() {
-  const rows = getCashVisitRows();
+  ensureCashReportLoaded();
+  const rows = getBackendCashRows();
   const centerName = getWorkspaceCenterName();
   const total = rows.reduce((sum, row) => sum + row.amount, 0);
   const discountTotal = rows.reduce((sum, row) => sum + row.discount, 0);
@@ -6676,6 +6776,9 @@ function renderCashPage() {
           <div class="summary-card__meta">разница с прайсом</div>
         </article>
       </div>
+
+      ${data.cashLoading ? `<article class="card"><p class="muted">Загружаю кассу из базы...</p></article>` : ""}
+      ${data.cashError ? `<article class="card"><p class="muted">${escapeHtml(data.cashError)}</p></article>` : ""}
 
       <div class="cash-list">
         ${
@@ -11312,7 +11415,8 @@ function bindContentEvents() {
     cashDateFromInput.addEventListener("input", (event) => {
       appState.cashDateFrom = event.target.value;
       persistDemoState();
-      renderApp();
+      data.cashRequestKey = "";
+      loadCashReport();
     });
   }
 
@@ -11321,7 +11425,8 @@ function bindContentEvents() {
     cashDateToInput.addEventListener("input", (event) => {
       appState.cashDateTo = event.target.value;
       persistDemoState();
-      renderApp();
+      data.cashRequestKey = "";
+      loadCashReport();
     });
   }
 
@@ -11330,7 +11435,8 @@ function bindContentEvents() {
     cashPeriodTodayButton.addEventListener("click", () => {
       resetCashPeriodToToday();
       persistDemoState();
-      renderApp();
+      data.cashRequestKey = "";
+      loadCashReport();
     });
   }
 
@@ -12689,9 +12795,14 @@ if (centerSelect) {
     data.blanksStats = [];
     data.blanksBatches = [];
     data.blanksForms = [];
+    data.cashRequestKey = "";
+    data.cashRows = [];
     actionModal?.classList.add("hidden");
     persistDemoState();
     renderApp();
+    if (appState.page === "cash" && !data.cashLoading) {
+      loadCashReport();
+    }
     if (appState.page === "blanks" && typeof window.loadBlanksData === "function") {
       window.loadBlanksData({ force: true });
     }
