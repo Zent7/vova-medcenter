@@ -60,7 +60,7 @@ For any backend, database, seed-data, API, or migration-related change, verify m
 
 ## Git Delivery Workflow
 
-`main` in `Zent7/vova-medcenter` (remote `origin`) is the default branch and the single integration point — `git remote show origin` reports `HEAD branch: main`. Work is delivered by pushing to `main`, not by long-lived branches. Feature branches are deleted once integrated, so a `codex/*` branch still present locally is finished history: never start new work on top of one, and never assume its copy of this file is current.
+`main` in `Zent7/vova-medcenter` (remote `origin`) is the default branch and the single integration point — `git remote show origin` reports `HEAD branch: main`. Work is delivered by pushing to `main`, not by branches or pull requests. Feature branches are deleted once integrated, so a `codex/*` branch still present locally is finished history: never start new work on top of one, and never assume its copy of this file is current.
 
 Before changing files, check the branch state:
 ```bash
@@ -72,7 +72,7 @@ git rev-list --left-right --count origin/main...HEAD   # commits only on main / 
 
 A non-zero left-hand count means the checkout is behind `main`. Rebase onto `origin/main` or move to a fresh worktree before editing: a change prepared on stale history is reviewed against the wrong code and can silently revert newer work.
 
-Repository-owner preference: after implementation and proportionate verification, commit and push application changes directly to `origin/main`. Do not create a routine PR in `Zent7/vova-medcenter` unless the user explicitly requests one, direct publication is unsafe, or permissions/protection prevent a direct push.
+**Repository-owner rule: no branches, no pull requests — every change goes straight into `main`.** After implementation and proportionate verification, commit and push directly to `origin/main`. Do not create a feature branch for the work, do not open a PR in `Zent7/vova-medcenter`, and do not ask the user which branch to use. The only exceptions are an explicit request from the user for a PR, or a direct push refused by permissions or branch protection — in that case report the exact blocker and leave the work committed locally, instead of silently falling back to a branch and PR.
 
 When the current checkout is dirty or not based on current `origin/main`, use a clean isolated worktree for integration:
 ```bash
@@ -93,7 +93,7 @@ After pushing `main`:
 - Treat a failed or cancelled run as incomplete delivery and report the failing job and step.
 - Delete obsolete remote feature branches after their commits are integrated or archived with a recovery tag.
 
-If a PR is explicitly required, check mergeability, conflicts, and status checks before handoff. The `gh` CLI is not installed on every machine used with this repository — check `gh --version` first, and without it push the branch and hand off the PR-creation URL that `git push` prints.
+If the user explicitly asks for a PR, check mergeability, conflicts, and status checks before handoff. The `gh` CLI is not installed on every machine used with this repository — check `gh --version` first, and without it push the branch and hand off the PR-creation URL that `git push` prints.
 
 ## GitHub Actions
 
