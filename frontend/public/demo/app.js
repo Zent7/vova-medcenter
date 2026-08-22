@@ -14,7 +14,7 @@ function getLocalDateInputValue(value = new Date()) {
 const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2"];
 
 const appState = {
-  page: "dashboard",
+  page: "start",
   dashboardPage: 1,
   auth: {
     accessToken: "",
@@ -53,17 +53,6 @@ const appState = {
     doctorRoleId: null,
   },
 };
-
-const demoParams = new URLSearchParams(window.location.search);
-if (demoParams.get("employeeAuth") === "chairman") {
-  appState.page = "employee";
-  appState.auth = {
-    accessToken: "demo-token-2",
-    userName: "Председатель комиссии",
-    roleCode: "chairman",
-    roleName: "Председатель",
-  };
-}
 
 let serviceGroups = [];
 let doctorRoles = [];
@@ -428,14 +417,6 @@ function canManageEmployeeWorkspace() {
 
 function canAccessReportsWorkspace() {
   return appState.auth.roleCode === "chairman";
-}
-
-function ensureDemoAuthConsistency() {
-  if (appState.auth.roleCode === "chairman" && !appState.auth.accessToken) {
-    appState.auth.accessToken = "demo-token-2";
-    appState.auth.userName = appState.auth.userName || "Председатель комиссии";
-    appState.auth.roleName = appState.auth.roleName || "Председатель";
-  }
 }
 
 const columnKeys = [
@@ -1030,7 +1011,12 @@ function normalizeSearchTextWithRepairs(value) {
 function loadPersistedDemoState() {
   try {
     const raw = window.localStorage?.getItem(DEMO_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const saved = raw ? JSON.parse(raw) : null;
+    if (saved && typeof saved === "object" && Object.hasOwn(saved, "auth")) {
+      delete saved.auth;
+      window.localStorage?.setItem(DEMO_STORAGE_KEY, JSON.stringify(saved));
+    }
+    return saved;
   } catch (error) {
     console.warn("Не удалось прочитать сохранение демки", error);
     return null;
@@ -1094,12 +1080,13 @@ function applyPersistedDemoState() {
   if (saved.activeVisitId) appState.activeVisitId = saved.activeVisitId;
 
   const savedAppState = saved.appState && typeof saved.appState === "object" ? saved.appState : {};
-  const savedAuth = saved.auth && typeof saved.auth === "object" ? saved.auth : {};
-  appState.page = "dashboard";
-  if (typeof savedAuth.accessToken === "string") appState.auth.accessToken = savedAuth.accessToken;
-  if (typeof savedAuth.userName === "string") appState.auth.userName = savedAuth.userName;
-  if (typeof savedAuth.roleCode === "string") appState.auth.roleCode = savedAuth.roleCode;
-  if (typeof savedAuth.roleName === "string") appState.auth.roleName = savedAuth.roleName;
+  appState.page = "start";
+  appState.auth = {
+    accessToken: "",
+    userName: "",
+    roleCode: "",
+    roleName: "",
+  };
   if (savedAppState.selectedClientId !== undefined && savedAppState.selectedClientId !== null) {
     appState.selectedClientId = savedAppState.selectedClientId;
   }
@@ -1176,7 +1163,6 @@ function applyPersistedDemoState() {
     doctorRoleId: null,
   };
   applyDefaultDoctorDirectory();
-  ensureDemoAuthConsistency();
 }
 
 function persistDemoState() {
@@ -1204,12 +1190,6 @@ function persistDemoState() {
       mkb10History: data.mkb10History || [],
       activeVisitId: appState.activeVisitId,
       lastCreatedStaffUser: data.lastCreatedStaffUser || null,
-      auth: {
-        accessToken: appState.auth.accessToken || "",
-        userName: appState.auth.userName || "",
-        roleCode: appState.auth.roleCode || "",
-        roleName: appState.auth.roleName || "",
-      },
       appState: {
         page: appState.page,
         selectedClientId: appState.selectedClientId,
@@ -2519,7 +2499,6 @@ function humanizeApiError(error, fallback = "Не удалось выполни�
 const DEFAULT_API_REQUEST_TIMEOUT_MS = 60000;
 
 async function apiRequest(path, options = {}) {
-  ensureDemoAuthConsistency();
   const {
     timeoutMs = DEFAULT_API_REQUEST_TIMEOUT_MS,
     ...fetchOptions
@@ -2623,7 +2602,6 @@ async function getApiErrorMessage(response) {
 }
 
 async function fetchAuthorizedFileObjectUrl(url) {
-  ensureDemoAuthConsistency();
   if (!appState.auth?.accessToken) {
     throw new Error("Чтобы открыть файл, войдите под учетной записью сотрудника.");
   }
@@ -5270,6 +5248,10 @@ function rerenderAndRestoreInput(inputId, value, caretPosition) {
 
 function renderNav() {
   if (!navRoot) return;
+  if (!appState.auth.accessToken) {
+    navRoot.innerHTML = "";
+    return;
+  }
   const visibleNavItems = navItems.filter((item) => (item.id === "reports" ? canAccessReportsWorkspace() : true));
 
   navRoot.innerHTML = repairDemoText(`
@@ -10790,7 +10772,25 @@ function renderRecallCalendarPage() {
   `;
 }
 
+function renderStartPage() {
+  return `
+    <section class="start-page">
+      <article class="start-card">
+        <div class="start-card__badge">MedCenters</div>
+        <h2>Добро пожаловать</h2>
+        <p>Для работы с журналом пациентов войдите под своей учетной записью. При открытии сайта данные клиентов больше не показываются автоматически.</p>
+        <div class="start-card__actions">
+          <button class="primary-button" type="button" data-start-login>Войти по логину</button>
+        </div>
+        <p class="start-card__note">Логин и пароль вводятся вручную и не сохраняются в браузере.</p>
+      </article>
+    </section>
+  `;
+}
+
 function renderContent() {
+  if (!appState.auth.accessToken) return renderStartPage();
+  if (appState.page === "start") return renderStartPage();
   if (appState.page === "dashboard") return renderSketchHome();
   if (appState.page === "chart") return renderAmbulatoryCardPage();
   if (appState.page === "services" && window.renderServicesPage) return window.renderServicesPage();
@@ -11019,6 +11019,7 @@ window.addEventListener("scroll", () => {
 }, true);
 
 function getPageTitle() {
+  if (appState.page === "start") return "Старт";
   if (appState.page === "dashboard") return "Главная";
   if (appState.page === "documents") return "Документы по обращению";
   return navItems.find((item) => item.id === appState.page)?.label || "Главная";
@@ -11300,6 +11301,11 @@ function renderAppKeepingOperatorVisitPosition(form) {
 
 function bindContentEvents() {
   attachNativeDatePickers(contentRoot);
+
+  document.querySelector("[data-start-login]")?.addEventListener("click", () => {
+    loginModal?.classList.remove("hidden");
+  });
+
 
   const cashDateFromInput = document.getElementById("cashDateFrom");
   if (cashDateFromInput) {
@@ -11786,7 +11792,7 @@ function bindContentEvents() {
       data.staffRoles = [];
       data.staffError = "";
       data.staffCreateError = "";
-      appState.page = "employee";
+      appState.page = "start";
       renderApp();
       persistDemoState();
       showToast("Вы вышли из режима сотрудника");
@@ -12608,7 +12614,7 @@ function bindMedicalRecordPanelResize() {
 function renderApp() {
   _clientPoolCache = null;
   if (appState.page === "reports" && !canAccessReportsWorkspace()) {
-    appState.page = appState.auth.accessToken ? "employee" : "dashboard";
+    appState.page = appState.auth.accessToken ? "employee" : "start";
   }
   document.body.dataset.page = appState.page;
   const workspaceCenterName = getWorkspaceCenterName();
@@ -12708,10 +12714,11 @@ document.getElementById("performLogin")?.addEventListener("click", async () => {
     await loginDemoStaff(login, password);
     loginModal?.classList.add("hidden");
     showToast(`Вход выполнен: ${appState.auth.userName || login}`);
-    if (appState.page === "employee" || appState.auth.roleCode === "admin" || appState.auth.roleCode === "chairman") {
+    if (appState.auth.roleCode === "admin" || appState.auth.roleCode === "chairman") {
       appState.page = "employee";
       await loadStaffWorkspace();
     } else {
+      appState.page = "dashboard";
       renderApp();
     }
   } catch (error) {

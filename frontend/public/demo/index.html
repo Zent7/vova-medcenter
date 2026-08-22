@@ -53,11 +53,11 @@
         <div class="login-card">
           <label class="field">
             <span>Логин</span>
-            <input id="loginInput" value="chairman" />
+            <input id="loginInput" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
           </label>
           <label class="field">
             <span>Пароль</span>
-            <input id="passwordInput" type="password" value="chairman123" />
+            <input id="passwordInput" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" />
           </label>
           <div class="note">Вход для всех сотрудников выполняется по логину и паролю. Председатель может создавать новые учетные записи во вкладке «Сотрудник».</div>
           <button class="primary-button" id="performLogin">Войти</button>
@@ -86,7 +86,7 @@
           : "/api/v1";
     </script>
     <script src="./services-data.js?v=20260731-short-service-names-v1"></script>
-    <script src="./app.js?v=20260801-vu-tractor-front-xls"></script>
+    <script src="./app.js?v=20260822-start-page-auth-privacy"></script>
     <script src="./blanks-page.js?v=20260731-center-workspaces-v1"></script>
     <script src="./services-page.js?v=20260617-single-top-title"></script>
     <script src="./client-modal.js?v=20260721-service-encounter-rows"></script>
