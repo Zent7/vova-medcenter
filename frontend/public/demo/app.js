@@ -190,7 +190,31 @@ const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
 const DEMO_STORAGE_KEY = "vova-medcenter-demo-state-v2";
 const COLUMN_WIDTHS_STORAGE_KEY = "vova-medcenter-column-widths-v1";
 const SELECTION_STORAGE_KEY = "vova-medcenter-selection-v1";
+const AUTH_STORAGE_KEY = "vova-medcenter-auth-v1";
 const MEDICAL_RECORD_PANEL_HEIGHT_KEY = "vova-medcenter-medical-record-height-v1";
+
+// navItems объявляется ниже по файлу, а applyPersistedDemoState() вызывается раньше,
+// поэтому список разделов для восстановления держим отдельно. "start" сюда не входит:
+// это экран входа, возвращаться на него авторизованному сотруднику незачем.
+const RESTORABLE_PAGES = new Set([
+  "dashboard",
+  "chart",
+  "calendar",
+  "doctors",
+  "services",
+  "blanks",
+  "templates",
+  "upload",
+  "employee",
+  "cash",
+  "xml",
+  "reports",
+  "documents",
+]);
+
+function isRestorablePage(page) {
+  return typeof page === "string" && RESTORABLE_PAGES.has(page);
+}
 
 function getMedicalRecordPanelHeight() {
   try {
@@ -1035,6 +1059,46 @@ function loadPersistedDemoState() {
   }
 }
 
+// Сессия живет в sessionStorage: переживает обновление страницы, но пропадает
+// вместе с вкладкой. Логин и пароль в браузере по-прежнему не хранятся, а при
+// открытии сайта в новой вкладке снова показывается стартовый экран.
+function loadPersistedAuth() {
+  try {
+    const raw = window.sessionStorage?.getItem(AUTH_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    console.warn("Не удалось прочитать сохраненную сессию", error);
+    return null;
+  }
+}
+
+function persistAuth() {
+  try {
+    window.sessionStorage?.setItem(
+      AUTH_STORAGE_KEY,
+      JSON.stringify({
+        accessToken: appState.auth.accessToken || "",
+        userName: appState.auth.userName || "",
+        roleCode: appState.auth.roleCode || "",
+        roleName: appState.auth.roleName || "",
+      }),
+    );
+  } catch (error) {
+    console.warn("Не удалось сохранить сессию", error);
+  }
+}
+
+function applyPersistedAuth() {
+  const savedAuth = loadPersistedAuth() || {};
+  appState.auth = {
+    accessToken: typeof savedAuth.accessToken === "string" ? savedAuth.accessToken : "",
+    userName: typeof savedAuth.userName === "string" ? savedAuth.userName : "",
+    roleCode: typeof savedAuth.roleCode === "string" ? savedAuth.roleCode : "",
+    roleName: typeof savedAuth.roleName === "string" ? savedAuth.roleName : "",
+  };
+}
+
 function applyDefaultDoctorDirectory() {
   if (!data.doctorDirectory || typeof data.doctorDirectory !== "object") {
     data.doctorDirectory = {};
@@ -1047,8 +1111,11 @@ function applyDefaultDoctorDirectory() {
 }
 
 function applyPersistedDemoState() {
+  applyPersistedAuth();
+
   const saved = loadPersistedDemoState();
   if (!saved || typeof saved !== "object") {
+    appState.page = appState.auth.accessToken ? "dashboard" : "start";
     applyDefaultDoctorDirectory();
     return;
   }
@@ -1092,13 +1159,11 @@ function applyPersistedDemoState() {
   if (saved.activeVisitId) appState.activeVisitId = saved.activeVisitId;
 
   const savedAppState = saved.appState && typeof saved.appState === "object" ? saved.appState : {};
-  appState.page = "start";
-  appState.auth = {
-    accessToken: "",
-    userName: "",
-    roleCode: "",
-    roleName: "",
-  };
+  if (!appState.auth.accessToken) {
+    appState.page = "start";
+  } else {
+    appState.page = isRestorablePage(savedAppState.page) ? savedAppState.page : "dashboard";
+  }
   if (savedAppState.selectedClientId !== undefined && savedAppState.selectedClientId !== null) {
     appState.selectedClientId = savedAppState.selectedClientId;
   }
@@ -1184,6 +1249,7 @@ function applyPersistedDemoState() {
 }
 
 function persistDemoState() {
+  persistAuth();
   try {
     const selectedClient = getSelectedClient();
     const activeVisit = selectedClient ? getCurrentVisitForClient(selectedClient.id) : null;
@@ -1243,7 +1309,17 @@ function persistDemoState() {
       savedAt: new Date().toISOString(),
     };
 
-    window.localStorage?.setItem(DEMO_STORAGE_KEY, JSON.stringify(payload));
+    try {
+      window.localStorage?.setItem(DEMO_STORAGE_KEY, JSON.stringify(payload));
+    } catch (error) {
+      // Обращения и история МКБ занимают больше всего места: если лимит браузера
+      // исчерпан, сохраняем хотя бы настройки рабочего места.
+      console.warn("Не удалось сохранить демо-данные целиком", error);
+      window.localStorage?.setItem(
+        DEMO_STORAGE_KEY,
+        JSON.stringify({ ...payload, visits: [], mkb10History: [] }),
+      );
+    }
   } catch (error) {
     console.warn("Не удалось сохранить демо-данные", error);
     showToast("Не удалось сохранить демо-данные: лимит браузера");
@@ -5323,6 +5399,27 @@ function rerenderAndRestoreInput(inputId, value, caretPosition) {
   appState.restoreInputId = null;
 }
 
+function loadPageData(page) {
+  if (page === "employee" && (appState.auth.roleCode === "chairman" || appState.auth.roleCode === "admin") && !data.staffLoading) {
+    loadStaffWorkspace();
+  }
+  if (page === "calendar" && !data.recallItemsLoaded && !data.recallItemsLoading) {
+    loadRecallCalendar();
+  }
+  if (page === "reports" && !data.reportLoading) {
+    loadReportsSummary();
+  }
+  if (page === "cash" && !data.cashLoading) {
+    loadCashReport();
+  }
+  if ((page === "chart" || page === "xml" || page === "documents") && !data.workflowDataLoading) {
+    loadWorkflowData();
+  }
+  if (page === "blanks" && typeof window.loadBlanksData === "function" && !data.blanksLoading) {
+    window.loadBlanksData();
+  }
+}
+
 function renderNav() {
   if (!navRoot) return;
   if (!appState.auth.accessToken) {
@@ -5372,25 +5469,9 @@ function renderNav() {
         return;
       }
       appState.page = page;
+      persistDemoState();
       setTimeout(renderApp, 0);
-      if (page === "employee" && (appState.auth.roleCode === "chairman" || appState.auth.roleCode === "admin") && !data.staffLoading) {
-        loadStaffWorkspace();
-      }
-      if (page === "calendar" && !data.recallItemsLoaded && !data.recallItemsLoading) {
-        loadRecallCalendar();
-      }
-      if (page === "reports" && !data.reportLoading) {
-        loadReportsSummary();
-      }
-      if (page === "cash" && !data.cashLoading) {
-        loadCashReport();
-      }
-      if ((page === "chart" || page === "xml") && !data.workflowDataLoading) {
-        loadWorkflowData();
-      }
-      if (page === "blanks" && typeof window.loadBlanksData === "function" && !data.blanksLoading) {
-        window.loadBlanksData();
-      }
+      loadPageData(page);
       window.scrollTo({ top: 0, behavior: "auto" });
       if (button.dataset.toast) showToast(button.dataset.toast);
     });
@@ -8401,8 +8482,11 @@ function renderPatientConsentsTable() {
 }
 
 function renderBlanksPage() {
-  if (typeof window.renderBlanksPage === "function") {
-    return window.renderBlanksPage();
+  // blanks-page.js подключается после app.js и перезаписывает window.renderBlanksPage:
+  // до этого момента там лежит эта же функция, поэтому сравниваем ссылки.
+  const blanksModuleRenderer = window.renderBlanksPage;
+  if (typeof blanksModuleRenderer === "function" && blanksModuleRenderer !== renderBlanksPage) {
+    return blanksModuleRenderer();
   }
   return `
     <section class="card">
@@ -12983,9 +13067,11 @@ document.getElementById("performLogin")?.addEventListener("click", async () => {
     showToast(`Вход выполнен: ${appState.auth.userName || login}`);
     if (appState.auth.roleCode === "admin" || appState.auth.roleCode === "chairman") {
       appState.page = "employee";
+      persistDemoState();
       await loadStaffWorkspace();
     } else {
       appState.page = "dashboard";
+      persistDemoState();
       renderApp();
     }
   } catch (error) {
@@ -13061,8 +13147,11 @@ window.renderApp = renderApp;
 window.openDriverPrintFlow = openDriverPrintFlow;
 
 renderApp();
-if ((appState.page === "chart" || appState.page === "xml" || appState.page === "documents") && !data.workflowDataLoading) {
-  loadWorkflowData();
-}
+// Модули разделов (бланки, услуги, карточка врача) подключаются скриптами после app.js,
+// поэтому восстановленный раздел дорисовываем и догружаем, когда все скрипты готовы.
+window.setTimeout(() => {
+  if (appState.page !== "dashboard") renderApp();
+  loadPageData(appState.page);
+}, 0);
 Promise.allSettled([loadClientsFromBackend(appState.clientSearch), loadServicesFromBackend(), loadDocumentTemplatesFromBackend()])
   .then(() => restoreWorkplaceSelection());
