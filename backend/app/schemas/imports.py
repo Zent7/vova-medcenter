@@ -24,6 +24,8 @@ class ClientImportPreviewResponse(BaseModel):
     created_candidates: int
     update_candidates: int
     service_rows: int
+    service_warnings: list[str] = []
+    service_warning_rows: int = 0
     preview_rows: list[ClientImportPreviewRow]
 
 
@@ -33,3 +35,5 @@ class ClientImportResultResponse(BaseModel):
     created: int
     updated: int
     encounters_created: int
+    service_warnings: list[str] = []
+    service_warning_rows: int = 0

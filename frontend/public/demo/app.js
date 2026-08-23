@@ -6227,7 +6227,10 @@ async function commitClientImport() {
         file_content_base64: data.importFileBase64,
       }),
     });
-    data.importSuccess = `Импорт завершен. Создано клиентов: ${result.created}. Обновлено: ${result.updated}. Создано обращений: ${result.encounters_created || 0}.`;
+    const warningRows = result.service_warning_rows || 0;
+    data.importSuccess =
+      `Импорт завершен. Создано клиентов: ${result.created}. Обновлено: ${result.updated}. Создано обращений: ${result.encounters_created || 0}.` +
+      (warningRows ? ` Строк с нераспознанной услугой: ${warningRows} — назначь услугу вручную.` : "");
     data.importPreview = null;
     scheduleClientSearch(appState.clientSearch || "");
   } catch (error) {
@@ -6250,7 +6253,7 @@ function renderClientImportPage() {
           </div>
           <a
             class="primary-button"
-            href="./client-import-template.xlsx?v=20260729-services-v1"
+            href="./client-import-template.xlsx?v=20260823-clients-only-v1"
             download="client-import-template.xlsx"
           >Скачать шаблон Excel</a>
         </div>
@@ -6259,11 +6262,11 @@ function renderClientImportPage() {
           <div>
             <strong>Как это работает</strong>
             <ol>
-              <li>Скачать шаблон.</li>
-              <li>Заполнить обязательные поля: фамилию, имя и дату рождения.</li>
-              <li>При необходимости выбрать услугу из выпадающего списка.</li>
+              <li>Скачать шаблон и отправить заводу.</li>
+              <li>Завод заполняет обязательные поля: фамилию, имя и дату рождения.</li>
               <li>Выбрать заполненный файл ниже.</li>
               <li>Сначала посмотреть предпросмотр, потом загрузить в базу.</li>
+              <li>Услугу и обращение назначить уже здесь, после загрузки.</li>
             </ol>
           </div>
           <div>
@@ -6271,7 +6274,7 @@ function renderClientImportPage() {
             <ul>
               <li>создавать новых клиентов;</li>
               <li>обновлять существующих по СНИЛС, документу или ФИО + дате рождения;</li>
-              <li>создавать обращение по выбранной услуге;</li>
+              <li>при обновлении заполнять только те поля, что есть в файле — паспорт и адрес в карточке не стираются;</li>
               <li>поддерживает файлы <code>.xlsx</code> и <code>.xls</code>.</li>
             </ul>
           </div>
@@ -6317,6 +6320,20 @@ function renderClientImportPage() {
                   <div class="summary-card__value">${preview.service_rows || 0}</div>
                 </div>
               </div>
+
+              ${
+                (preview.service_warnings || []).length
+                  ? `<div class="empty">
+                      <strong>Услуги из файла не распознаны (${preview.service_warning_rows || preview.service_warnings.length})</strong>
+                      <ul>${preview.service_warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+                      ${
+                        (preview.service_warning_rows || 0) > preview.service_warnings.length
+                          ? `<small>Показаны первые ${preview.service_warnings.length}.</small>`
+                          : ""
+                      }
+                    </div>`
+                  : ""
+              }
 
               <div class="import-preview-list">
                 ${preview.preview_rows

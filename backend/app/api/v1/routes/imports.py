@@ -379,23 +379,53 @@ def build_service_lookup(services: list[Service]) -> dict[str, list[Service]]:
 def resolve_import_service(
     row: dict[str, Any],
     service_lookup: dict[str, list[Service]],
-) -> Service | None:
+) -> tuple[Service | None, str | None]:
+    """Подбирает услугу по строке файла.
+
+    Колонка «Услуга» осталась только ради файлов, скачанных по старому шаблону:
+    их список услуг мог устареть. Нераспознанная услуга не должна ронять всю
+    загрузку — клиента заводим, а строку возвращаем предупреждением.
+    """
+
     value = normalize_text(row.get("service"))
     if not value:
-        return None
+        return None, None
     matches = service_lookup.get(normalize_service_lookup(value), [])
     if len(matches) == 1:
-        return matches[0]
+        return matches[0], None
     row_number = row.get("row_number", "?")
     if len(matches) > 1:
-        raise ValueError(
-            f'Строка {row_number}: услуга "{value}" неоднозначна. '
-            "Выберите вариант из выпадающего списка с ценой."
+        return None, (
+            f'Строка {row_number}: услуга "{value}" совпала с несколькими из справочника. '
+            "Клиент загружен, обращение не создано — назначьте услугу вручную."
         )
-    raise ValueError(
-        f'Строка {row_number}: услуга "{value}" не найдена или неактивна. '
-        "Выберите значение из выпадающего списка."
+    return None, (
+        f'Строка {row_number}: услуга "{value}" не найдена в справочнике или неактивна. '
+        "Клиент загружен, обращение не создано — назначьте услугу вручную."
     )
+
+
+SERVICE_WARNING_LIMIT = 20
+
+
+def resolve_import_services(
+    rows: list[dict[str, Any]],
+    service_lookup: dict[str, list[Service]],
+) -> tuple[dict[int, Service | None], list[str], int]:
+    """Возвращает услуги по строкам, показываемые предупреждения и их полное число.
+
+    Список режем, чтобы не заваливать экран, а счётчик отдаём настоящий —
+    иначе оператор недосчитается строк, которым нужна ручная услуга.
+    """
+
+    resolved: dict[int, Service | None] = {}
+    warnings: list[str] = []
+    for row in rows:
+        service, warning = resolve_import_service(row, service_lookup)
+        resolved[int(row["row_number"])] = service
+        if warning:
+            warnings.append(warning)
+    return resolved, warnings[:SERVICE_WARNING_LIMIT], len(warnings)
 
 
 def get_import_services(db: Session) -> list[Service]:
@@ -434,28 +464,45 @@ def dedupe_legacy_clients(clients: list[dict[str, Any]]) -> list[dict[str, Any]]
     return list(by_patient_number.values())
 
 
+def find_first_client(db: Session, *conditions: Any, include_deleted: bool = False) -> Client | None:
+    """Первый подходящий клиент по возрастанию id.
+
+    Именно first(), а не scalar_one_or_none(): в базе встречаются дубликаты
+    (одинаковые ФИО с датой рождения, один и тот же паспорт), и строгая
+    выборка роняла бы весь импорт пятисотой ошибкой.
+
+    Удалённые карточки пропускаем — иначе импорт молча писал бы данные в
+    невидимую строку. Исключение только для № пациента: он уникален по всей
+    таблице, включая удалённых, и новую карточку с тем же номером не завести.
+    """
+
+    query = select(Client).where(*conditions)
+    if not include_deleted:
+        query = query.where(Client.deleted_at.is_(None))
+    return db.execute(query.order_by(Client.id.asc()).limit(1)).scalars().first()
+
+
 def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[Client | None, str | None]:
     patient_number = row.get("patient_number")
     if patient_number:
-        client = db.execute(select(Client).where(Client.patient_number == patient_number)).scalar_one_or_none()
+        client = find_first_client(db, Client.patient_number == patient_number, include_deleted=True)
         if client is not None:
             return client, "по № пациента"
 
     snils = normalize_text(row.get("snils"))
     if snils:
-        client = db.execute(select(Client).where(Client.snils == snils)).scalar_one_or_none()
+        client = find_first_client(db, Client.snils == snils)
         if client is not None:
             return client, "по СНИЛС"
 
     document_series = normalize_text(row.get("document_series"))
     document_number = normalize_text(row.get("document_number"))
     if document_series and document_number:
-        client = db.execute(
-            select(Client).where(
-                Client.document_series == document_series,
-                Client.document_number == document_number,
-            )
-        ).scalar_one_or_none()
+        client = find_first_client(
+            db,
+            Client.document_series == document_series,
+            Client.document_number == document_number,
+        )
         if client is not None:
             return client, "по документу"
 
@@ -464,14 +511,13 @@ def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[C
     middle_name = normalize_text(row.get("middle_name"))
     birth_date = row.get("birth_date")
     if last_name and first_name and birth_date:
-        client = db.execute(
-            select(Client).where(
-                func.lower(Client.last_name) == last_name.lower(),
-                func.lower(Client.first_name) == first_name.lower(),
-                func.lower(func.coalesce(Client.middle_name, "")) == (middle_name or "").lower(),
-                Client.birth_date == birth_date,
-            )
-        ).scalar_one_or_none()
+        client = find_first_client(
+            db,
+            func.lower(Client.last_name) == last_name.lower(),
+            func.lower(Client.first_name) == first_name.lower(),
+            func.lower(func.coalesce(Client.middle_name, "")) == (middle_name or "").lower(),
+            Client.birth_date == birth_date,
+        )
         if client is not None:
             return client, "по ФИО и дате рождения"
 
@@ -651,12 +697,9 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     services = get_import_services(db)
     service_lookup = build_service_lookup(services)
-    resolved_services: dict[int, Service | None] = {}
-    try:
-        for row in rows:
-            resolved_services[int(row["row_number"])] = resolve_import_service(row, service_lookup)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    resolved_services, service_warnings, service_warning_rows = resolve_import_services(
+        rows, service_lookup
+    )
 
     service_rows = sum(1 for service in resolved_services.values() if service is not None)
     if service_rows and get_import_center(db, get_system_user_id(db)) is None:
@@ -708,6 +751,8 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
         created_candidates=created_candidates,
         update_candidates=update_candidates,
         service_rows=service_rows,
+        service_warnings=service_warnings,
+        service_warning_rows=service_warning_rows,
         preview_rows=preview_rows,
     )
 
@@ -722,13 +767,9 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
     actor_user_id = get_system_user_id(db)
     services = get_import_services(db)
     service_lookup = build_service_lookup(services)
-    try:
-        resolved_services = {
-            int(row["row_number"]): resolve_import_service(row, service_lookup)
-            for row in rows
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    resolved_services, service_warnings, service_warning_rows = resolve_import_services(
+        rows, service_lookup
+    )
     import_center = get_import_center(db, actor_user_id)
     if any(service is not None for service in resolved_services.values()) and import_center is None:
         raise HTTPException(
@@ -760,6 +801,10 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
             else:
                 client = existing_client
                 for key, value in client_payload.items():
+                    # Шаблон уже, чем карточка клиента: пустое значение означает
+                    # «в файле нет данных», а не «стереть паспорт, СНИЛС и адрес».
+                    if value is None:
+                        continue
                     setattr(client, key, value)
                 updated += 1
             db.flush()
@@ -812,6 +857,7 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
             "created": created,
             "updated": updated,
             "encounters_created": encounters_created,
+            "service_warning_rows": service_warning_rows,
         },
     )
     db.commit()
@@ -821,4 +867,6 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
         created=created,
         updated=updated,
         encounters_created=encounters_created,
+        service_warnings=service_warnings,
+        service_warning_rows=service_warning_rows,
     )

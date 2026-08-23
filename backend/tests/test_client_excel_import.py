@@ -1,11 +1,10 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
 
-from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
@@ -123,17 +122,110 @@ class ClientExcelImportTests(unittest.TestCase):
         self.assertEqual(encounter_service.service_id, self.service.id)
         self.assertEqual(payment.amount, Decimal("1000.00"))
 
-    def test_preview_rejects_unknown_service(self):
+    def test_unknown_service_warns_but_still_imports_client(self):
         row = self._row(service="Несуществующая услуга")
         with patch(
             "app.api.v1.routes.imports.read_client_excel_rows",
             return_value=[row],
         ):
-            with self.assertRaises(HTTPException) as error:
-                preview_client_excel_import(self.request, db=self.db)
+            preview = preview_client_excel_import(self.request, db=self.db)
+            result = commit_client_excel_import(self.request, db=self.db)
 
-        self.assertEqual(error.exception.status_code, 400)
-        self.assertIn("не найдена", str(error.exception.detail))
+        self.assertEqual(preview.service_rows, 0)
+        self.assertIn("не найдена", " ".join(preview.service_warnings))
+        self.assertEqual(result.created, 1)
+        self.assertEqual(result.encounters_created, 0)
+        self.assertIn("не найдена", " ".join(result.service_warnings))
+        self.assertEqual(self.db.scalar(select(func.count(Client.id))), 1)
+
+    def test_deleted_client_is_not_matched_and_stays_deleted(self):
+        deleted = Client(
+            patient_number=9,
+            last_name="Удалённый",
+            first_name="Клиент",
+            birth_date=date(1990, 5, 20),
+            snils="999-888-777 66",
+            deleted_at=datetime(2026, 1, 1),
+        )
+        self.db.add(deleted)
+        self.db.commit()
+
+        row = self._row(snils="999-888-777 66", service=None)
+        with patch(
+            "app.api.v1.routes.imports.read_client_excel_rows",
+            return_value=[row],
+        ):
+            result = commit_client_excel_import(self.request, db=self.db)
+
+        self.assertEqual(result.created, 1)
+        self.assertEqual(result.updated, 0)
+        self.db.refresh(deleted)
+        self.assertIsNotNone(deleted.deleted_at)
+        self.assertEqual(deleted.last_name, "Удалённый")
+
+    def test_service_warning_rows_counts_every_row_not_only_shown(self):
+        rows = [
+            self._row(row_number=number, service="Несуществующая услуга")
+            for number in range(2, 27)
+        ]
+        with patch(
+            "app.api.v1.routes.imports.read_client_excel_rows",
+            return_value=rows,
+        ):
+            preview = preview_client_excel_import(self.request, db=self.db)
+
+        self.assertEqual(preview.service_warning_rows, 25)
+        self.assertEqual(len(preview.service_warnings), 20)
+
+    def test_update_keeps_fields_missing_from_template(self):
+        existing = Client(
+            patient_number=7,
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            birth_date=date(1990, 5, 20),
+            snils="111-222-333 44",
+            document_type="Паспорт РФ",
+            document_series="4501",
+            document_number="123456",
+            document_issued_by="ГУ МВД России",
+            email="ivanov@example.com",
+            address_text="Тверь, Лесная 1",
+            admission_category="Медкомиссия",
+            reference_number="МК-001",
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        # Шаблон для завода не содержит паспортных колонок вовсе.
+        narrow_row = {
+            "row_number": 2,
+            "patient_number": None,
+            "last_name": "Иванов",
+            "first_name": "Иван",
+            "middle_name": "Иванович",
+            "birth_date": date(1990, 5, 20),
+            "snils": "111-222-333 44",
+            "organization": "ООО Новый Завод",
+            "_birth_date_invalid": False,
+        }
+        with patch(
+            "app.api.v1.routes.imports.read_client_excel_rows",
+            return_value=[narrow_row],
+        ):
+            result = commit_client_excel_import(self.request, db=self.db)
+
+        self.assertEqual(result.updated, 1)
+        self.assertEqual(result.created, 0)
+        client = self.db.execute(select(Client)).scalar_one()
+        self.assertEqual(client.organization, "ООО Новый Завод")
+        self.assertEqual(client.document_series, "4501")
+        self.assertEqual(client.document_number, "123456")
+        self.assertEqual(client.document_type, "Паспорт РФ")
+        self.assertEqual(client.email, "ivanov@example.com")
+        self.assertEqual(client.address_text, "Тверь, Лесная 1")
+        self.assertEqual(client.admission_category, "Медкомиссия")
+        self.assertEqual(client.reference_number, "МК-001")
 
 
 if __name__ == "__main__":
