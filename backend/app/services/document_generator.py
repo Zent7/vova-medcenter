@@ -3463,6 +3463,7 @@ def _generate_prof_amb_xls(
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
     target_book.save(str(output_path))
+    _patch_driver_saved_xls_layout(Path(output_path))
 
 
 def _generate_prof_amb_xlsx(
@@ -4101,6 +4102,76 @@ def _patch_xls_hidden_rows(
     output_path.write_bytes(file_bytes)
 
 
+def _xls_sheet_offsets(workbook_stream: bytes) -> list[int]:
+    sheet_offsets: list[int] = []
+    offset = 0
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream):
+            break
+        if record_id == 0x0085 and payload_length >= 4:
+            sheet_offsets.append(struct.unpack_from("<I", workbook_stream, payload_start)[0])
+        offset = payload_end
+    return sheet_offsets
+
+
+def _patch_xls_hidden_columns(
+    output_path: Path,
+    *,
+    sheet_index: int,
+    start_col: int,
+    end_col: int,
+) -> None:
+    original_bytes = output_path.read_bytes()
+    file_bytes = bytearray(original_bytes)
+    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
+    sheet_offsets = _xls_sheet_offsets(workbook_stream)
+    if sheet_index >= len(sheet_offsets):
+        raise ValueError("В XLS не найден лист для скрытия правой части")
+
+    managed_cols = set(range(start_col, end_col + 1))
+    patched_cols: set[int] = set()
+    offset = sheet_offsets[sheet_index]
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream):
+            break
+        if record_id == 0x007D and payload_length >= 12:
+            first_col, last_col = struct.unpack_from("<HH", workbook_stream, payload_start)
+            record_cols = set(range(first_col, last_col + 1))
+            overlap = record_cols & managed_cols
+            if overlap:
+                if first_col < start_col or last_col > end_col:
+                    raise ValueError("В XLS найден объединенный диапазон колонок, пересекающий правую часть")
+                options = struct.unpack_from("<H", workbook_stream, payload_start + 8)[0] | 0x0001
+                _write_new_xls_stream_bytes(file_bytes, sectors, payload_start + 4, struct.pack("<H", 0))
+                _write_new_xls_stream_bytes(file_bytes, sectors, payload_start + 8, struct.pack("<H", options))
+                patched_cols.update(overlap)
+        if record_id == 0x000A:
+            break
+        offset = payload_end
+
+    if patched_cols:
+        output_path.write_bytes(file_bytes)
+
+
+def _patch_driver_saved_xls_layout(output_path: Path) -> None:
+    try:
+        workbook = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+    except Exception:
+        return
+    sheet_names = workbook.sheet_names()
+    for sheet_index, sheet_name in enumerate(sheet_names):
+        if sheet_name in DRIVER_XLS_FRONT_SHEET_NAMES:
+            _patch_xls_hidden_columns(output_path, sheet_index=sheet_index, start_col=27, end_col=65)
+        elif sheet_name in DRIVER_XLS_BACK_SHEET_NAMES:
+            _patch_xls_hidden_columns(output_path, sheet_index=sheet_index, start_col=34, end_col=65)
+
+
 def _generate_preserved_new_xls(
     template_path: Path,
     output_path: Path,
@@ -4290,6 +4361,7 @@ def _generate_preserved_legacy_xls(
                 hidden_rows=hidden_rows,
             )
         _apply_print_variant_to_saved_xls_file(output_path, print_variant)
+        _patch_driver_saved_xls_layout(output_path)
     finally:
         temporary_path.unlink(missing_ok=True)
 

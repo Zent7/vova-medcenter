@@ -385,6 +385,12 @@ class DriverDocumentContextTests(unittest.TestCase):
             result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
 
             self.assertEqual(result_book.sheet_names(), [expected_sheet])
+            result_sheet = result_book.sheet_by_name(expected_sheet)
+            hidden_range = range(27, 66) if variant == "driver_front" else range(34, 66)
+            managed_cols = [col for col in hidden_range if col in result_sheet.colinfo_map]
+            self.assertTrue(managed_cols)
+            self.assertTrue(all(result_sheet.colinfo_map[col].hidden for col in managed_cols))
+            self.assertTrue(all(result_sheet.colinfo_map[col].width == 0 for col in managed_cols))
 
 
 if __name__ == "__main__":
