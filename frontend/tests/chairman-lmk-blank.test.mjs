@@ -56,7 +56,7 @@ test("only the LMK book requires a pre-entered LMK blank", () => {
   assert.match(appSource, /\["lmk_title", "ЛМК"\]/);
   assert.doesNotMatch(appSource, /CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set\(\["ЛМК"/);
   assert.match(appSource, /isChairmanAutoNumberedPrintKind\(printKind\)/);
-  assert.match(appSource, /findChairmanBlank\(requiredBlankSeries, null, \{/);
+  assert.match(appSource, /chairmanPrintBlankState\.findBlank\(requiredBlankSeries, null, \{/);
   assert.match(
     appSource,
     /\? getChairmanBlankSeriesForPrintKind\(printKind\)/,

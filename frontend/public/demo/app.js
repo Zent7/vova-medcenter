@@ -8948,6 +8948,20 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   );
 }
 
+// Повторная печать должна ложиться на тот же бланк, поэтому ищем уже выданный
+// документ этого типа в обращении. Нужно и меню печати, и самой печати.
+function findLatestCertificateDocumentForVisit(certificateType, visit, client = null) {
+  if (!visit) return null;
+  const template = pickDocumentTemplate(certificateType, visit, client);
+  const templateName = String(template?.name || "").toLowerCase();
+  const templateFileName = String(template?.file_name || "").toLowerCase();
+  return getDocumentsForVisit(visit.id).find((item) => {
+    if (template?.id && String(item.templateId || "") === String(template.id)) return true;
+    const haystack = `${item.title || ""} ${item.fileName || ""}`.toLowerCase();
+    return (templateName && haystack.includes(templateName)) || (templateFileName && haystack.includes(templateFileName));
+  }) || null;
+}
+
 function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
   const config = getChairmanFormConfigForVisit(visit);
   if (String(printKind || "").endsWith("_certificate")) {
@@ -12587,17 +12601,8 @@ function bindContentEvents() {
           ? fullNumber.slice(normalizedSeries.length).trim()
           : fullNumber;
       };
-      const findLatestCertificateDocument = (certificateType) => {
-        if (!visit) return null;
-        const template = pickDocumentTemplate(certificateType, visit, client);
-        const templateName = String(template?.name || "").toLowerCase();
-        const templateFileName = String(template?.file_name || "").toLowerCase();
-        return getDocumentsForVisit(visit.id).find((item) => {
-          if (template?.id && String(item.templateId || "") === String(template.id)) return true;
-          const haystack = `${item.title || ""} ${item.fileName || ""}`.toLowerCase();
-          return (templateName && haystack.includes(templateName)) || (templateFileName && haystack.includes(templateFileName));
-        }) || null;
-      };
+      const findLatestCertificateDocument = (certificateType) =>
+        findLatestCertificateDocumentForVisit(certificateType, visit, client);
       if (certificateTemplateMenu) {
         certificatePrintGroup.items.forEach(([certificateType]) => {
           const series = getChairmanCertificatePrintSeries(certificateType, client);
@@ -12951,7 +12956,7 @@ function bindContentEvents() {
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (autoNumberedDocument) {
-              const previousDocument = findLatestCertificateDocument(directPrintType);
+              const previousDocument = findLatestCertificateDocumentForVisit(directPrintType, visit, client);
               if (previousDocument?.blankFormId) {
                 selectedBlank = {
                   id: previousDocument.blankFormId,
@@ -12961,7 +12966,7 @@ function bindContentEvents() {
                   generated_document_id: previousDocument.backendId || previousDocument.id || null,
                 };
               } else if (!selectedBlank?.id) {
-                selectedBlank = await findChairmanBlank(requiredBlankSeries, null, {
+                selectedBlank = await chairmanPrintBlankState.findBlank(requiredBlankSeries, null, {
                   updateInput: false,
                   silent: true,
                 });
