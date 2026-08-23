@@ -15,13 +15,18 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db.base import Base  # noqa: E402
+from app.models.center import Center  # noqa: E402
 from app.models.client import Client  # noqa: E402
+from app.models.document_template import DocumentTemplate  # noqa: E402
+from app.models.encounter import Encounter  # noqa: E402
 from app.models.generated_document import GeneratedDocument  # noqa: E402
 from app.services.document_generator import (  # noqa: E402
+    _center_paper_journal_last_number,
     _generate_docx,
     _is_lmk_certificate_template,
     _lock_sequential_document_numbers,
     _next_sequential_document_number,
+    lmk_certificate_next_number,
 )
 
 
@@ -132,6 +137,30 @@ class LmkCertificateNumberTests(unittest.TestCase):
         db.flush()
         return client
 
+    def _add_center(self, db, center_id, *, last_number=None):
+        center = Center(
+            id=center_id,
+            code=f"center-{center_id}",
+            name=f"Медцентр {center_id}",
+            is_active=True,
+            lmk_certificate_last_number=last_number,
+        )
+        db.add(center)
+        db.flush()
+        return center
+
+    def _add_encounter(self, db, encounter_id, *, client_id, center_id):
+        encounter = Encounter(
+            id=encounter_id,
+            client_id=client_id,
+            center_id=center_id,
+            encounter_date=date(2026, 8, 23),
+            payment_type="cash",
+        )
+        db.add(encounter)
+        db.flush()
+        return encounter
+
     def _add_document(self, db, *, client_id, encounter_id, number):
         document = GeneratedDocument(
             client_id=client_id,
@@ -184,15 +213,172 @@ class LmkCertificateNumberTests(unittest.TestCase):
                 "2",
             )
 
-    def test_reprint_of_same_encounter_reuses_number(self):
+    def test_numbering_continues_the_paper_journal(self):
+        """Бумажный журнал закончился на 391 — первая справка в программе 392."""
+
         with self.Session() as db:
-            client = self._add_client(db, 2)
-            self._add_document(db, client_id=client.id, encounter_id=11, number="5")
+            self._add_center(db, 1, last_number=391)
+            client = self._add_client(db, 4)
+            self._add_encounter(db, 31, client_id=client.id, center_id=1)
+            self._add_encounter(db, 32, client_id=client.id, center_id=1)
             self.assertEqual(
                 _next_sequential_document_number(
-                    db, template_id=self.TEMPLATE_ID, client_id=client.id, encounter_id=11
+                    db,
+                    template_id=self.TEMPLATE_ID,
+                    client_id=client.id,
+                    encounter_id=31,
+                    center_id=1,
+                    start_after=_center_paper_journal_last_number(db, 1),
                 ),
-                "5",
+                "392",
+            )
+            self._add_document(db, client_id=client.id, encounter_id=31, number="392")
+            self.assertEqual(
+                _next_sequential_document_number(
+                    db,
+                    template_id=self.TEMPLATE_ID,
+                    client_id=client.id,
+                    encounter_id=32,
+                    center_id=1,
+                    start_after=_center_paper_journal_last_number(db, 1),
+                ),
+                "393",
+            )
+
+    def test_each_center_keeps_its_own_sequence(self):
+        """Номера соседнего медцентра не сдвигают счётчик этого."""
+
+        with self.Session() as db:
+            self._add_center(db, 1, last_number=391)
+            self._add_center(db, 2, last_number=17)
+            client = self._add_client(db, 6)
+            self._add_encounter(db, 51, client_id=client.id, center_id=1)
+            self._add_encounter(db, 52, client_id=client.id, center_id=2)
+            self._add_document(db, client_id=client.id, encounter_id=51, number="392")
+
+            self.assertEqual(
+                _next_sequential_document_number(
+                    db,
+                    template_id=self.TEMPLATE_ID,
+                    client_id=client.id,
+                    encounter_id=52,
+                    center_id=2,
+                    start_after=_center_paper_journal_last_number(db, 2),
+                ),
+                "18",
+            )
+
+    def test_center_without_a_paper_number_starts_at_one(self):
+        with self.Session() as db:
+            self._add_center(db, 3)
+            client = self._add_client(db, 7)
+            self._add_encounter(db, 61, client_id=client.id, center_id=3)
+            self.assertEqual(_center_paper_journal_last_number(db, 3), 0)
+            self.assertEqual(
+                _next_sequential_document_number(
+                    db,
+                    template_id=self.TEMPLATE_ID,
+                    client_id=client.id,
+                    encounter_id=61,
+                    center_id=3,
+                    start_after=_center_paper_journal_last_number(db, 3),
+                ),
+                "1",
+            )
+
+    def test_certificate_without_an_encounter_does_not_reuse_a_number(self):
+        """Справка вне обращения не привязана к медцентру, но номер занимает."""
+
+        with self.Session() as db:
+            self._add_center(db, 1, last_number=391)
+            client = self._add_client(db, 8)
+            self._add_encounter(db, 71, client_id=client.id, center_id=1)
+            self._add_encounter(db, 72, client_id=client.id, center_id=1)
+            self._add_document(db, client_id=client.id, encounter_id=71, number="392")
+
+            # Печать без обращения: медцентр неизвестен, но номер уходит клиенту.
+            orphan_number = _next_sequential_document_number(
+                db,
+                template_id=self.TEMPLATE_ID,
+                client_id=client.id,
+                encounter_id=None,
+                center_id=None,
+                start_after=_center_paper_journal_last_number(db, None),
+            )
+            self._add_document(db, client_id=client.id, encounter_id=None, number=orphan_number)
+            self.assertEqual(orphan_number, "393")
+
+            self.assertEqual(
+                _next_sequential_document_number(
+                    db,
+                    template_id=self.TEMPLATE_ID,
+                    client_id=client.id,
+                    encounter_id=72,
+                    center_id=1,
+                    start_after=_center_paper_journal_last_number(db, 1),
+                ),
+                "394",
+            )
+
+    def test_next_number_counts_certificates_already_issued(self):
+        """Страница «Бланки» показывает следующий номер, а не бумажный + 1."""
+
+        with self.Session() as db:
+            self._add_center(db, 1, last_number=391)
+            db.add(
+                DocumentTemplate(
+                    id=self.TEMPLATE_ID,
+                    code="lmk-certificate",
+                    name="ЛМК справка",
+                    file_name="ЛМК_справка_шаблон.docx",
+                    file_path="/templates/ЛМК_справка_шаблон.docx",
+                    template_type="docx",
+                )
+            )
+            client = self._add_client(db, 9)
+            self._add_encounter(db, 81, client_id=client.id, center_id=1)
+            db.flush()
+
+            self.assertEqual(lmk_certificate_next_number(db, 1), 392)
+            self._add_document(db, client_id=client.id, encounter_id=81, number="392")
+            self.assertEqual(lmk_certificate_next_number(db, 1), 393)
+
+    def test_number_below_the_paper_journal_is_reissued_on_reprint(self):
+        """Справка, напечатанная до настройки счётчика, получает корректный номер."""
+
+        with self.Session() as db:
+            self._add_center(db, 1, last_number=391)
+            client = self._add_client(db, 5)
+            self._add_encounter(db, 41, client_id=client.id, center_id=1)
+            self._add_document(db, client_id=client.id, encounter_id=41, number="1")
+            self.assertEqual(
+                _next_sequential_document_number(
+                    db,
+                    template_id=self.TEMPLATE_ID,
+                    client_id=client.id,
+                    encounter_id=41,
+                    center_id=1,
+                    start_after=_center_paper_journal_last_number(db, 1),
+                ),
+                "392",
+            )
+
+    def test_reprint_of_same_encounter_reuses_number(self):
+        with self.Session() as db:
+            self._add_center(db, 1, last_number=391)
+            client = self._add_client(db, 2)
+            self._add_encounter(db, 11, client_id=client.id, center_id=1)
+            self._add_document(db, client_id=client.id, encounter_id=11, number="405")
+            self.assertEqual(
+                _next_sequential_document_number(
+                    db,
+                    template_id=self.TEMPLATE_ID,
+                    client_id=client.id,
+                    encounter_id=11,
+                    center_id=1,
+                    start_after=_center_paper_journal_last_number(db, 1),
+                ),
+                "405",
             )
 
     def test_non_numeric_legacy_numbers_are_ignored(self):

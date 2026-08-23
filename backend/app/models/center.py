@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -20,3 +20,6 @@ class Center(TimestampMixin, Base):
     license_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
     license_date: Mapped[str | None] = mapped_column(String(80), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Последний номер справки ЛМК, выданный в этом медцентре до перехода на
+    # программу: электронная нумерация продолжает бумажный журнал со следующего.
+    lmk_certificate_last_number: Mapped[int | None] = mapped_column(Integer, nullable=True)

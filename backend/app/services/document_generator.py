@@ -18,7 +18,7 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 import xlrd
 import xlwt
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 from xlrd import xldate
 from xlrd.compdoc import CompDoc
@@ -31,6 +31,7 @@ from app.models.blank_form import (
     BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
     BlankForm,
 )
+from app.models.center import Center
 from app.models.client import Client
 from app.models.doctor_exam import DoctorExam
 from app.models.document_journal import DocumentJournalEntry
@@ -4659,19 +4660,65 @@ def _lock_sequential_document_numbers(db: Session, template_id: int) -> None:
     )
 
 
+def _center_paper_journal_last_number(db: Session, center_id: int | None) -> int:
+    """Последний номер справки ЛМК, выданный в медцентре до перехода на программу."""
+
+    if center_id is None:
+        return 0
+    center = db.get(Center, center_id)
+    return max(0, int(getattr(center, "lmk_certificate_last_number", None) or 0))
+
+
+def _issued_sequential_numbers(db: Session, *, template_id: int, center_id: int | None) -> list[int]:
+    """Номера, уже выданные в этом медцентре по шаблону без номерного бланка.
+
+    Справка, напечатанная вне обращения, не привязана ни к какому медцентру.
+    Такие номера попадают в выборку любого медцентра, иначе они выпали бы из
+    учёта и следующая справка получила бы номер, который уже отдан клиенту.
+    """
+
+    query = select(GeneratedDocument.document_number).where(
+        GeneratedDocument.template_id == template_id
+    )
+    if center_id is not None:
+        query = query.where(
+            or_(
+                GeneratedDocument.encounter_id.is_(None),
+                GeneratedDocument.encounter_id.in_(
+                    select(Encounter.id).where(Encounter.center_id == center_id)
+                ),
+            )
+        )
+    return [
+        int(str(value).strip())
+        for value in db.execute(query).scalars()
+        if value and str(value).strip().isdigit()
+    ]
+
+
 def _next_sequential_document_number(
     db: Session,
     *,
     template_id: int,
     client_id: int,
     encounter_id: int | None,
+    center_id: int | None = None,
+    start_after: int = 0,
 ) -> str:
     """Порядковый номер для справки, которая печатается без номерного бланка.
 
-    Повторная печать того же обращения переиспользует уже выданный номер.
+    У каждого медцентра свой ряд номеров, поэтому чужие справки в расчёт не
+    берутся. Нумерация продолжает бумажный журнал: `start_after` — последний
+    номер, выданный до перехода на программу, поэтому первая справка получает
+    `start_after + 1`. Повторная печать того же обращения переиспользует уже
+    выданный номер, но номер из бумажного диапазона (например единица, выданная
+    до того, как в медцентре задали последний номер) считается ошибочным и
+    заменяется новым.
     """
 
     _lock_sequential_document_numbers(db, template_id)
+
+    floor = max(0, int(start_after or 0))
 
     reuse_query = select(GeneratedDocument.document_number).where(
         GeneratedDocument.template_id == template_id,
@@ -4682,19 +4729,34 @@ def _next_sequential_document_number(
     else:
         reuse_query = reuse_query.where(GeneratedDocument.encounter_id == encounter_id)
     for value in db.execute(reuse_query.order_by(GeneratedDocument.id.desc())).scalars():
-        if value and str(value).strip().isdigit():
+        if value and str(value).strip().isdigit() and int(str(value).strip()) > floor:
             return str(value).strip()
 
-    issued = [
-        int(str(value).strip())
-        for value in db.execute(
-            select(GeneratedDocument.document_number).where(
-                GeneratedDocument.template_id == template_id
-            )
-        ).scalars()
-        if value and str(value).strip().isdigit()
-    ]
-    return str(max(issued) + 1 if issued else 1)
+    issued = _issued_sequential_numbers(db, template_id=template_id, center_id=center_id)
+    return str(max([floor, *issued]) + 1)
+
+
+def lmk_certificate_next_number(db: Session, center_id: int | None) -> int:
+    """Номер, который получит следующая справка ЛМК в этом медцентре.
+
+    Нужен, чтобы страница «Бланки» показывала настоящий следующий номер, а не
+    только продолжение бумажного журнала: после первой же печати счёт ведут уже
+    выданные справки.
+    """
+
+    floor = _center_paper_journal_last_number(db, center_id)
+    template = next(
+        (
+            item
+            for item in db.execute(select(DocumentTemplate)).scalars()
+            if _is_lmk_certificate_template(item)
+        ),
+        None,
+    )
+    if template is None:
+        return floor + 1
+    issued = _issued_sequential_numbers(db, template_id=template.id, center_id=center_id)
+    return max([floor, *issued]) + 1
 
 
 def _get_journal_info(template: DocumentTemplate) -> tuple[str, str] | None:
@@ -5268,11 +5330,14 @@ def generate_document(
             context["DocumentNumber"] = blank_form.full_number
             context["CertificateNumber"] = blank_form.full_number
         elif _is_lmk_certificate_template(template):
+            certificate_center_id = encounter.center_id if encounter else None
             sequential_number = _next_sequential_document_number(
                 db,
                 template_id=template.id,
                 client_id=client.id,
                 encounter_id=encounter.id if encounter else None,
+                center_id=certificate_center_id,
+                start_after=_center_paper_journal_last_number(db, certificate_center_id),
             )
             context["CertificateNumber"] = sequential_number
         context.update(_chairman_082_context_overrides(template, document_exams, blank_form))

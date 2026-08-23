@@ -48,7 +48,8 @@ test("a second loader call does not duplicate the requests of the first one", as
   await window.loadBlanksData();
   await new Promise((done) => setTimeout(done, 0));
 
-  assert.equal(requested.length, 5, `лишние запросы: ${requested.join(", ")}`);
+  // Типы, остатки, партии, страница номеров, история и нумерация справок ЛМК.
+  assert.equal(requested.length, 6, `лишние запросы: ${requested.join(", ")}`);
 });
 
 test("blanks module does not reload data that is already in memory", async () => {

@@ -1,4 +1,6 @@
 (function () {
+  const NUMBER_ONLY_RE = /^\d+$/;
+
   function esc(value) {
     return window.escapeHtml ? window.escapeHtml(value) : String(value ?? "");
   }
@@ -120,12 +122,13 @@
         status: "issued",
         limit: "1000",
       }).toString();
-      const [types, stats, batches, forms, historyForms] = await Promise.all([
+      const [types, stats, batches, forms, historyForms, numbering] = await Promise.all([
         window.apiRequest("/blanks/types"),
         window.apiRequest(`/blanks/stats?${centerQuery}`),
         window.apiRequest(`/blanks/batches?${centerQuery}`),
         window.apiRequest(`/blanks/forms/page?${formsQuery}`),
         window.apiRequest(`/blanks/forms?${historyQuery}`),
+        window.apiRequest(`/centers/${centerId}/numbering`),
       ]);
 
       data.blanksTypes = Array.isArray(types) ? types : [];
@@ -136,6 +139,7 @@
       data.blanksFormsTotal = Number(forms?.total || 0);
       data.blanksFormsLimit = Number(forms?.limit || BLANKS_FORMS_PAGE_SIZE);
       data.blanksFormsOffset = Number(forms?.offset || 0);
+      data.blanksLmkNumbering = numbering && typeof numbering === "object" ? numbering : null;
       data.blanksLoaded = true;
       data.blanksCenterId = Number(centerId);
 
@@ -157,6 +161,43 @@
         window.renderApp?.();
       }
     }
+  }
+
+  function parseNumbering(value) {
+    const numeric = Number.parseInt(String(value ?? ""), 10);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+  }
+
+  function renderLmkNumberingCard() {
+    const centerName = window.getWorkspaceCenterName?.() || window.appState?.centerFilter || "Медцентр";
+    const data = window.data || {};
+    const numbering = data.blanksLmkNumbering || null;
+    const lastNumber = parseNumbering(numbering?.lmk_certificate_last_number);
+    // Следующий номер считает бэкенд: после первой печати счёт ведёт уже
+    // выданная справка, а не последний номер бумажного журнала.
+    const nextNumber = parseNumbering(numbering?.lmk_certificate_next_number) ?? (lastNumber || 0) + 1;
+
+    return `
+      <form class="card" id="blanksLmkNumberForm">
+        <h3>Нумерация справок ЛМК — ${esc(centerName)}</h3>
+        <p class="muted">Справка ЛМК печатается на чистом листе, номерной бланк на неё не расходуется — номер присваивает программа. Впишите последний номер из бумажного журнала этого медцентра, чтобы нумерация продолжилась с него, а не началась заново.</p>
+        <div class="visit-form__grid">
+          <label class="field">
+            <span>Последний выданный номер</span>
+            <input name="lmk_certificate_last_number" inputmode="numeric" placeholder="391" value="${lastNumber === null ? "" : String(lastNumber)}" />
+          </label>
+        </div>
+        <p class="muted">${
+          lastNumber === null
+            ? `Номер из бумажного журнала не задан. Следующая справка получит номер <strong>${nextNumber}</strong>.`
+            : `Следующая справка получит номер <strong>${nextNumber}</strong>.`
+        }</p>
+        ${data.blanksLmkNumberError ? `<div class="form-error">${esc(data.blanksLmkNumberError)}</div>` : ""}
+        <div class="visit-form__actions">
+          <button type="submit" class="primary-button">${data.blanksLmkNumberSaving ? "Сохранение..." : "Сохранить"}</button>
+        </div>
+      </form>
+    `;
   }
 
   function renderOverviewTab() {
@@ -245,6 +286,7 @@
           `
           : ""
       }
+      ${renderLmkNumberingCard()}
       <article class="card">
         <h3>Поступившие бланки</h3>
         ${
@@ -669,6 +711,45 @@
       if (searchInput) {
         searchInput.focus();
         searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+      }
+    });
+
+    document.getElementById("blanksLmkNumberForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const raw = String(new FormData(event.currentTarget).get("lmk_certificate_last_number") || "").trim();
+      const parsed = raw ? Number.parseInt(raw, 10) : null;
+      if (raw && (!Number.isFinite(parsed) || parsed < 0 || !NUMBER_ONLY_RE.test(raw))) {
+        window.data.blanksLmkNumberError = "Номер должен быть целым числом, например 391";
+        window.renderApp?.();
+        return;
+      }
+
+      window.data.blanksLmkNumberSaving = true;
+      window.data.blanksLmkNumberError = "";
+      window.renderApp?.();
+
+      try {
+        const centerId = await window.resolveWorkspaceCenterId?.();
+        const numbering = await window.apiRequest(`/centers/${centerId}/numbering`, {
+          method: "PATCH",
+          body: JSON.stringify({ lmk_certificate_last_number: parsed }),
+        });
+        window.data.blanksLmkNumbering = numbering && typeof numbering === "object" ? numbering : null;
+        const nextNumber = parseNumbering(numbering?.lmk_certificate_next_number);
+        window.showToast?.(
+          nextNumber === null
+            ? "Номер сохранён"
+            : `Следующая справка ЛМК получит номер ${nextNumber}`,
+        );
+      } catch (error) {
+        window.data.blanksLmkNumberError = window.humanizeApiError
+          ? window.humanizeApiError(error, "Не удалось сохранить номер")
+          : String(error?.message || error || "Не удалось сохранить номер");
+      } finally {
+        window.data.blanksLmkNumberSaving = false;
+        if (window.appState?.page === "blanks") {
+          window.renderApp?.();
+        }
       }
     });
 
