@@ -9967,8 +9967,9 @@ function renderDriverFrontCheckPrompt() {
     <div class="driver-front-check">
       <div class="driver-front-check__icon">?</div>
       <div class="driver-front-check__text">
-        <p>Справка напечатана нормально.</p>
-        <p>Нажмите "Да" для продолжения.</p>
+        <p>Лицевая сторона напечатана нормально.</p>
+        <p>Нажмите "Да", чтобы подтвердить лицевую сторону.</p>
+        <p>Оборот печатается отдельно кнопкой "Печатать оборот".</p>
         <p>Нажмите "Нет" если бланк испорчен.</p>
       </div>
       <div class="driver-front-check__actions">
@@ -10225,7 +10226,7 @@ async function openDriverPrintFlow(options = {}) {
     });
   };
 
-  const handleFrontPrintResult = async (result, backVariantId) => {
+  const handleFrontPrintResult = async (result) => {
     openActionModal("Инструкции по печати на обеих сторонах", renderDriverPrintInstructionPrompt(), "modal--print-instruction");
     document.getElementById("driverPrintContinue")?.addEventListener("click", async () => {
       openActionModal("Результат печати:", renderDriverFrontCheckPrompt(), "modal--front-print-check");
@@ -10235,7 +10236,11 @@ async function openDriverPrintFlow(options = {}) {
       document.getElementById("driverFrontCheckYes")?.addEventListener("click", async () => {
         try {
           await markPrintedDocument(result.generated_document_id, true);
-          await printVariant(backVariantId, { skipConfirmation: true });
+          await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
+          flowState.loading = false;
+          actionModal.classList.add("hidden");
+          renderFlow();
+          showToast("Лицевая сторона подтверждена. Для второй стороны нажмите «Печатать оборот».");
         } catch (error) {
           showToast(humanizeApiError(error, "Не удалось подтвердить лицевую сторону"));
         }
@@ -10295,8 +10300,7 @@ async function openDriverPrintFlow(options = {}) {
           showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
       } else if (isFrontDriverPrintVariant(variant.id)) {
-        const backVariantId = variant.id === "tractor_front" ? "tractor_back" : "driver_back";
-        await handleFrontPrintResult(result, backVariantId);
+        await handleFrontPrintResult(result);
       } else {
         await handleStandardPrintResult(result, printedDocument);
       }

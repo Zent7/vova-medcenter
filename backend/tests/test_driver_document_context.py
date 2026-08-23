@@ -12,6 +12,7 @@ from xlutils.copy import copy as copy_xls_workbook
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.document_generator import (  # noqa: E402
+    _apply_print_variant_to_xls_workbook,
     _driver_categories_for_documents,
     _driver_document_context_overrides,
     _exam_map,
@@ -268,6 +269,23 @@ class DriverDocumentContextTests(unittest.TestCase):
             cell = front_sheet.cell(23, col_index)
             self.assertEqual(cell.value, expected)
             self.assertEqual(cell.ctype, xlrd.XL_CELL_TEXT)
+
+    def test_driver_print_variants_keep_only_selected_side(self):
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
+        for variant, expected_sheet in [
+            ("driver_front", "Водительская Лицевая"),
+            ("driver_back", "Водительская Оборотная"),
+        ]:
+            source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
+            target_book = copy_xls_workbook(source_book)
+
+            _apply_print_variant_to_xls_workbook(target_book, variant)
+
+            output_path = Path(tempfile.gettempdir()) / f"driver_{variant}_single_side_test.xls"
+            target_book.save(str(output_path))
+            result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
+
+            self.assertEqual(result_book.sheet_names(), [expected_sheet])
 
 
 if __name__ == "__main__":
