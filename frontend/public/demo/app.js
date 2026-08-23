@@ -4319,6 +4319,10 @@ function getDashboardBlankNumber(client, status = null) {
   return String(documents[0]?.blankNumber || "").trim();
 }
 
+function getDashboardCertificateNumber(client, status = null) {
+  return getDashboardBlankNumber(client, status) || String(client?.referenceNumber || "").trim();
+}
+
 function areDashboardDoctorStatusesReady(clients) {
   return (Array.isArray(clients) ? clients : []).every((client) => {
     const key = getDashboardDoctorStatusStorageKey(client);
@@ -5576,7 +5580,7 @@ function buildExcelRows(clients) {
       birthDate: client.birthDate,
       registration: client.registration || client.document || "",
       category: resolveDashboardAdmissionCategory(client, currentVisit),
-      referenceNumber: client.referenceNumber || "",
+      referenceNumber: getDashboardCertificateNumber(client, status),
       gynecologist: markDoctor("gynecologist"),
       stomatologist: markDoctor("dentist"),
       dermatologist: markDoctor("dermatologist"),
@@ -5774,7 +5778,7 @@ function renderAmbulatoryCardPage() {
             <div><span>Агент</span><strong>${escapeHtml(selectedClient.agent || "не указан")}</strong></div>
             <div><span>Категория</span><strong>${escapeHtml(selectedClient.category || "не указана")}</strong></div>
             <div><span>№ карты</span><strong>${escapeHtml(selectedClient.cardNumber || "не указан")}</strong></div>
-            <div><span>№ справки</span><strong>${escapeHtml(selectedClient.referenceNumber || "не указан")}</strong></div>
+            <div><span>№ справки</span><strong>${escapeHtml(getDashboardCertificateNumber(selectedClient) || "не указан")}</strong></div>
             <div><span>МКБ-10</span><strong>${escapeHtml(selectedClient.mkb10 || "не указан")}</strong></div>
           </div>
           ${
