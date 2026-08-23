@@ -67,6 +67,32 @@ class DriverDocumentContextTests(unittest.TestCase):
 
         self.assertEqual(selected, {"A", "B", "C1E", "Tm"})
 
+    def test_legacy_default_driver_categories_are_treated_as_b_only(self):
+        selected = _driver_categories_for_documents(
+            client(admission_category="A B C D BE M"),
+            [],
+        )
+
+        self.assertEqual(selected, {"B"})
+
+        selected_from_chairman = _driver_categories_for_documents(
+            client(),
+            [
+                chairman(
+                    {
+                        "categoryA": True,
+                        "categoryB": True,
+                        "categoryC": True,
+                        "categoryD": True,
+                        "categoryBE": True,
+                        "categoryM": True,
+                    }
+                )
+            ],
+        )
+
+        self.assertEqual(selected_from_chairman, {"B"})
+
     def test_legacy_category_e_expands_to_be_ce_de(self):
         selected = _driver_categories_for_documents(
             client(admission_category=""),

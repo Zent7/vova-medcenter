@@ -15,6 +15,13 @@ test("driver categories are not invented from an empty value", () => {
 });
 
 test("new driver visits default to category B only", () => {
+  assert.match(appSource, /const DRIVER_DEFAULT_CATEGORIES = \["B"\];/);
   assert.match(clientModalSource, /const CLIENT_DRIVER_DEFAULT_CATEGORIES = \["B"\];/);
   assert.doesNotMatch(clientModalSource, /const CLIENT_DRIVER_DEFAULT_CATEGORIES = \["A", "B", "C", "D", "BE", "M"\];/);
+});
+
+test("stored legacy driver category default is treated as category B", () => {
+  assert.match(appSource, /const DRIVER_LEGACY_DEFAULT_CATEGORY_SET = \["A", "B", "C", "D", "BE", "M"\];/);
+  assert.match(appSource, /function normalizeStoredDriverCategories\(categories\)/);
+  assert.match(appSource, /DRIVER_LEGACY_DEFAULT_CATEGORY_SET\.every\(\(category\) => normalized\.includes\(category\)\)/);
 });

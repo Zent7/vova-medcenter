@@ -2052,6 +2052,7 @@ def _driver_auxiliary_line(context: dict[str, str], key: str, fallback: str = "Ğ
 
 
 DRIVER_XLS_CATEGORY_KEYS = ("A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E")
+DRIVER_LEGACY_DEFAULT_CATEGORY_SET = {"A", "B", "C", "D", "BE", "M"}
 DRIVER_XLS_CATEGORY_CELLS_LEFT = (
     (10, 2),
     (10, 4),
@@ -2197,6 +2198,10 @@ def _driver_category_tokens(value: object) -> set[str]:
     return tokens
 
 
+def _normalize_driver_legacy_default_categories(selected: set[str]) -> set[str]:
+    return {"B"} if selected == DRIVER_LEGACY_DEFAULT_CATEGORY_SET else selected
+
+
 def _driver_completed_chairman(exams: list[DoctorExam]) -> DoctorExam | None:
     return next(
         (
@@ -2231,10 +2236,10 @@ def _driver_categories_from_chairman(fields: dict) -> set[str] | None:
         }
         if _truthy_driver_value(fields.get("categoryE")) and not selected.intersection({"BE", "CE", "DE"}):
             selected.update({"BE", "CE", "DE"})
-        return selected
+        return _normalize_driver_legacy_default_categories(selected)
     driver_categories = fields.get("driverCategories")
     if str(driver_categories or "").strip():
-        return _driver_category_tokens(driver_categories)
+        return _normalize_driver_legacy_default_categories(_driver_category_tokens(driver_categories))
     return None
 
 
@@ -2245,7 +2250,7 @@ def _driver_categories_from_context(context: dict[str, str], client: Client) -> 
         if _truthy_driver_value(context.get(f"Category{category}") or context.get(f"{category}Calc"))
     }
     selected.update(_driver_category_tokens(client.admission_category))
-    return selected
+    return _normalize_driver_legacy_default_categories(selected)
 
 
 def _driver_categories_for_documents(client: Client, exams: list[DoctorExam]) -> set[str]:
@@ -2253,7 +2258,7 @@ def _driver_categories_for_documents(client: Client, exams: list[DoctorExam]) ->
     chairman_categories = _driver_categories_from_chairman(chairman.fields_json or {}) if chairman else None
     if chairman_categories is not None:
         return chairman_categories
-    return _driver_category_tokens(client.admission_category)
+    return _normalize_driver_legacy_default_categories(_driver_category_tokens(client.admission_category))
 
 
 def _driver_category_context_values(selected: set[str], true_value: str = "X", false_value: str = "") -> dict[str, str]:
