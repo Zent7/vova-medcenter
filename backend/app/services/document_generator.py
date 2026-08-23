@@ -18,7 +18,7 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 import xlrd
 import xlwt
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from xlrd import xldate
 from xlrd.compdoc import CompDoc
@@ -77,6 +77,9 @@ XMLDSIG_NS = "http://www.w3.org/2000/09/xmldsig#"
 MIAC_DRIVER_TEMPLATE = "Водительская(новая).xml"
 MIAC_GUARD_TEMPLATE = "Чод_новый.xml"
 MIAC_GIMS_TEMPLATE = "ГИМС_шаблон_для_загрузки_из_файла.xml"
+# Справка ЛМК печатается на чистом листе А4, поэтому номерной бланк для неё
+# не расходуется, а порядковый номер подставляется в документ автоматически.
+LMK_CERTIFICATE_TEMPLATE = "ЛМК_справка_шаблон.docx"
 
 CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
     {
@@ -4541,6 +4544,71 @@ def _sport_context_overrides(exams: list[DoctorExam]) -> dict[str, str]:
     }
 
 
+def _is_lmk_certificate_template(template: DocumentTemplate) -> bool:
+    file_name = str(template.file_name or Path(template.file_path or "").name)
+    return file_name.casefold() == LMK_CERTIFICATE_TEMPLATE.casefold()
+
+
+# Пространство advisory-блокировок для выдачи порядковых номеров ("LMK").
+SEQUENTIAL_NUMBER_LOCK_NAMESPACE = 0x4C4D4B
+
+
+def _lock_sequential_document_numbers(db: Session, template_id: int) -> None:
+    """Сериализует выдачу порядкового номера между параллельными печатями.
+
+    Номер вычисляется как max+1 задолго до вставки строки generated_documents
+    (сначала формируется сам файл), поэтому без блокировки две одновременные
+    печати получили бы одинаковый номер. Блокировка держится до конца
+    транзакции; на SQLite (тесты) она не нужна и не поддерживается.
+    """
+
+    bind = db.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, :template_id)"),
+        {"namespace": SEQUENTIAL_NUMBER_LOCK_NAMESPACE, "template_id": template_id},
+    )
+
+
+def _next_sequential_document_number(
+    db: Session,
+    *,
+    template_id: int,
+    client_id: int,
+    encounter_id: int | None,
+) -> str:
+    """Порядковый номер для справки, которая печатается без номерного бланка.
+
+    Повторная печать того же обращения переиспользует уже выданный номер.
+    """
+
+    _lock_sequential_document_numbers(db, template_id)
+
+    reuse_query = select(GeneratedDocument.document_number).where(
+        GeneratedDocument.template_id == template_id,
+        GeneratedDocument.client_id == client_id,
+    )
+    if encounter_id is None:
+        reuse_query = reuse_query.where(GeneratedDocument.encounter_id.is_(None))
+    else:
+        reuse_query = reuse_query.where(GeneratedDocument.encounter_id == encounter_id)
+    for value in db.execute(reuse_query.order_by(GeneratedDocument.id.desc())).scalars():
+        if value and str(value).strip().isdigit():
+            return str(value).strip()
+
+    issued = [
+        int(str(value).strip())
+        for value in db.execute(
+            select(GeneratedDocument.document_number).where(
+                GeneratedDocument.template_id == template_id
+            )
+        ).scalars()
+        if value and str(value).strip().isdigit()
+    ]
+    return str(max(issued) + 1 if issued else 1)
+
+
 def _get_journal_info(template: DocumentTemplate) -> tuple[str, str] | None:
     name = f"{template.name} {template.file_name}".lower()
     if "вод" in name or "driver" in name or re.search(r"(?:^|\W)ву(?:$|\W)", name):
@@ -5100,6 +5168,8 @@ def generate_document(
             }
         )
         context.update(_chairman_certificate_date_context_overrides(template, document_exams))
+        context.setdefault("CertificateNumber", "")
+        sequential_number = ""
         if blank_form is not None:
             reference_number = _blank_reference_number(blank_form)
             context["ReferenceNumber"] = reference_number
@@ -5108,6 +5178,15 @@ def generate_document(
             context["BlankSeries"] = blank_form.series or ""
             context["BlankFullNumber"] = blank_form.full_number
             context["DocumentNumber"] = blank_form.full_number
+            context["CertificateNumber"] = blank_form.full_number
+        elif _is_lmk_certificate_template(template):
+            sequential_number = _next_sequential_document_number(
+                db,
+                template_id=template.id,
+                client_id=client.id,
+                encounter_id=encounter.id if encounter else None,
+            )
+            context["CertificateNumber"] = sequential_number
         context.update(_chairman_082_context_overrides(template, document_exams, blank_form))
         if is_side_print:
             context["ReferenceNumber"] = ""
@@ -5115,6 +5194,7 @@ def generate_document(
             context["BlankNumber"] = ""
             context["BlankSeries"] = ""
             context["BlankFullNumber"] = ""
+            context["CertificateNumber"] = ""
 
         if template.template_type == "docx":
             _generate_docx(
@@ -5159,7 +5239,11 @@ def generate_document(
         else:
             shutil.copy2(template_path, output_path)
 
-        document_number = blank_form.full_number if blank_form is not None else client.reference_number
+        document_number = (
+            blank_form.full_number
+            if blank_form is not None
+            else (sequential_number or client.reference_number)
+        )
         document_series = blank_form.series if blank_form is not None else client.document_series
 
         generated_document = GeneratedDocument(

@@ -8966,7 +8966,6 @@ function getChairmanPrintActionForVisit(visit) {
 
 const CHAIRMAN_PRINT_BLANK_SERIES = new Map([
   ["lmk_title", "ЛМК"],
-  ["lmk_certificate", "29Н"],
   ["prof_conclusion", "29Н"],
   ["prof_ambulatory_extract", "29Н"],
   ["prof_ambulatory", "29Н"],
@@ -9011,8 +9010,9 @@ function getChairmanBlankSeriesForPrintKind(printKind) {
 
 const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "095У", "СЭМТ-196"]);
 
+// Справка ЛМК печатается на чистом листе А4: номерной бланк ей не нужен,
+// порядковый номер подставляет бэкенд при генерации документа.
 const CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS = new Set([
-  "lmk_certificate",
   "prof_conclusion",
   "prof_ambulatory_extract",
   "prof_ambulatory",
@@ -9020,6 +9020,13 @@ const CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS = new Set([
 
 function isChairmanAutoNumberedPrintKind(printKind) {
   return CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS.has(String(printKind || "").toLowerCase());
+}
+
+// Печать на чистом листе А4: номерной бланк не запрашивается и не расходуется.
+const CHAIRMAN_UNNUMBERED_PRINT_KINDS = new Set(["lmk_certificate"]);
+
+function isChairmanUnnumberedPrintKind(printKind) {
+  return CHAIRMAN_UNNUMBERED_PRINT_KINDS.has(String(printKind || "").toLowerCase());
 }
 
 function canAutoCreateChairmanBlankSeries(series) {
@@ -12908,11 +12915,13 @@ function bindContentEvents() {
           const printOptions = { targetWindow };
           const certificateType = isExplicitCertificateTemplate ? printType : "";
           const autoNumberedDocument = isChairmanAutoNumberedPrintKind(printKind);
-          const requiredBlankSeries = autoNumberedDocument
-            ? getChairmanBlankSeriesForPrintKind(printKind)
-            : certificateType
-              ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
-              : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
+          const requiredBlankSeries = isChairmanUnnumberedPrintKind(printKind)
+            ? ""
+            : autoNumberedDocument
+              ? getChairmanBlankSeriesForPrintKind(printKind)
+              : certificateType
+                ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
+                : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (autoNumberedDocument) {

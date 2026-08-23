@@ -54,15 +54,29 @@ test("LMK print menu separates the typographic book blank from automatic documen
 
 test("only the LMK book requires a pre-entered LMK blank", () => {
   assert.match(appSource, /\["lmk_title", "ЛМК"\]/);
-  assert.match(appSource, /\["lmk_certificate", "29Н"\]/);
   assert.doesNotMatch(appSource, /CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set\(\["ЛМК"/);
   assert.match(appSource, /isChairmanAutoNumberedPrintKind\(printKind\)/);
   assert.match(appSource, /findChairmanBlank\(requiredBlankSeries, null, \{/);
   assert.match(
     appSource,
-    /const requiredBlankSeries = autoNumberedDocument\s+\? getChairmanBlankSeriesForPrintKind\(printKind\)/,
+    /\? getChairmanBlankSeriesForPrintKind\(printKind\)/,
   );
   assert.match(appSource, /findLatestCertificateDocument\("lmk_title"\)/);
+});
+
+// Справка ЛМК идёт на чистом листе А4: номерной бланк ей не нужен,
+// порядковый номер подставляет бэкенд.
+test("LMK certificate never consumes a numbered blank", () => {
+  assert.doesNotMatch(appSource, /\["lmk_certificate", "29Н"\]/);
+  assert.match(appSource, /const CHAIRMAN_UNNUMBERED_PRINT_KINDS = new Set\(\["lmk_certificate"\]\)/);
+  assert.doesNotMatch(
+    appSource,
+    /CHAIRMAN_AUTO_NUMBERED_PRINT_KINDS = new Set\(\[\s*"lmk_certificate"/,
+  );
+  assert.match(
+    appSource,
+    /const requiredBlankSeries = isChairmanUnnumberedPrintKind\(printKind\)\s+\? ""/,
+  );
 });
 
 test("LMK printing reads the selected blank series from shared state", () => {
