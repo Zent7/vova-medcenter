@@ -2387,7 +2387,15 @@ def _write_driver_marker_cells(source_book, source_sheet, target_sheet, cells: t
 
 def _hide_xls_columns(target_sheet, start_col: int, end_col: int) -> None:
     for col_index in range(start_col, end_col + 1):
-        target_sheet.col(col_index).hidden = 1
+        col = target_sheet.col(col_index)
+        col.hidden = 1
+        col.width = 0
+
+
+def _clear_xls_range(source_sheet, target_sheet, start_row: int, end_row: int, start_col: int, end_col: int) -> None:
+    for row_index in range(start_row, end_row + 1):
+        for col_index in range(start_col, end_col + 1):
+            _write_xls_cell(target_sheet, source_sheet, row_index, col_index, "")
 
 
 def _fill_driver_xls_sheets(
@@ -2465,6 +2473,7 @@ def _fill_driver_xls_sheets(
             ((41, 12), (41, 39)),
         ]:
             _copy_xls_target_cell_style(front_target, *target_coord, *style_coord)
+        _clear_xls_range(front_source, front_target, 0, 45, 27, 65)
         _hide_xls_columns(front_target, 27, 65)
     back_source, back_target, _ = _sheet_pair_any(source_book, target_book, DRIVER_XLS_BACK_SHEET_NAMES)
     if back_source and back_target:
@@ -2477,6 +2486,7 @@ def _fill_driver_xls_sheets(
             status_value = _restriction_text(context.get(context_key))
             back_cells.append(((row_index, DRIVER_XLS_BACK_STATUS_COLS[0]), status_value))
         _write_xls_pairs(back_target, back_source, back_cells)
+        _clear_xls_range(back_source, back_target, 0, 40, 34, 65)
         _hide_xls_columns(back_target, 34, 65)
 
 
