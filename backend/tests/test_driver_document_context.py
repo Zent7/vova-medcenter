@@ -240,9 +240,10 @@ class DriverDocumentContextTests(unittest.TestCase):
 
         expected_marks = ["Z", "✓", "✓", "Z", "Z", "Z", "Z", "✓", "Z", "Z", "Z", "Z", "Z", "Z", "✓", "Z"]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
-        self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], expected_marks)
+        self.assertNotEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], expected_marks)
+        self.assertTrue(all(back_sheet.colinfo_map[col].hidden for col in range(34, 66)))
         self.assertEqual(back_sheet.cell_value(36, 8), "Председатель")
-        self.assertEqual(back_sheet.cell_value(36, 41), "Председатель")
+        self.assertNotEqual(back_sheet.cell_value(36, 41), "Председатель")
         for row_index, expected in [
             (14, "установлено"),
             (17, "установлено"),
@@ -254,7 +255,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             (33, "установлено"),
         ]:
             self.assertEqual(back_sheet.cell_value(row_index, 29), expected)
-            self.assertEqual(back_sheet.cell_value(row_index, 62), expected)
+            self.assertNotEqual(back_sheet.cell_value(row_index, 62), expected)
 
     def test_driver_xls_front_sheet_writes_issue_date_as_text(self):
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
@@ -296,6 +297,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             cell = front_sheet.cell(23, col_index)
             self.assertEqual(cell.value, expected)
             self.assertEqual(cell.ctype, xlrd.XL_CELL_TEXT)
+        self.assertTrue(all(front_sheet.colinfo_map[col].hidden for col in range(27, 66)))
 
     def test_driver_print_variants_keep_only_selected_side(self):
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"

@@ -2385,6 +2385,11 @@ def _write_driver_marker_cells(source_book, source_sheet, target_sheet, cells: t
         target_sheet.write(row_index, col_index, mark, _driver_marker_style(source_book, source_sheet, row_index, col_index))
 
 
+def _hide_xls_columns(target_sheet, start_col: int, end_col: int) -> None:
+    for col_index in range(start_col, end_col + 1):
+        target_sheet.col(col_index).hidden = 1
+
+
 def _fill_driver_xls_sheets(
     source_book,
     target_book,
@@ -2460,20 +2465,19 @@ def _fill_driver_xls_sheets(
             ((41, 12), (41, 39)),
         ]:
             _copy_xls_target_cell_style(front_target, *target_coord, *style_coord)
+        _hide_xls_columns(front_target, 27, 65)
     back_source, back_target, _ = _sheet_pair_any(source_book, target_book, DRIVER_XLS_BACK_SHEET_NAMES)
     if back_source and back_target:
         category_marks = _driver_category_marks(context, client, exams_by_role)
         _write_driver_marker_cells(source_book, back_source, back_target, DRIVER_XLS_CATEGORY_CELLS_LEFT, category_marks)
-        _write_driver_marker_cells(source_book, back_source, back_target, DRIVER_XLS_CATEGORY_CELLS_RIGHT, category_marks)
         back_cells = [
             ((36, 8), driver_lines[6]),
-            ((36, 41), driver_lines[6]),
         ]
         for row_index, context_key in DRIVER_XLS_BACK_STATUS_ROWS:
             status_value = _restriction_text(context.get(context_key))
-            for col_index in DRIVER_XLS_BACK_STATUS_COLS:
-                back_cells.append(((row_index, col_index), status_value))
+            back_cells.append(((row_index, DRIVER_XLS_BACK_STATUS_COLS[0]), status_value))
         _write_xls_pairs(back_target, back_source, back_cells)
+        _hide_xls_columns(back_target, 34, 65)
 
 
 def _fill_tractor_xls_sheets(source_book, target_book, exams_by_role: dict[str, DoctorExam]) -> None:
