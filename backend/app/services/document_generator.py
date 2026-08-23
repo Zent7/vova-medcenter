@@ -3610,6 +3610,29 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
     target_book._Workbook__active_sheet = 0
 
 
+def _apply_print_variant_to_saved_xls_file(output_path: Path, print_variant: str | None) -> None:
+    if not str(print_variant or "").strip():
+        return
+
+    source_book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+    target_book = copy_xls_workbook(source_book)
+    _apply_print_variant_to_xls_workbook(target_book, print_variant)
+
+    temporary_file = tempfile.NamedTemporaryFile(
+        prefix=".print_variant_",
+        suffix=".xls",
+        dir=output_path.parent,
+        delete=False,
+    )
+    temporary_path = Path(temporary_file.name)
+    temporary_file.close()
+    try:
+        target_book.save(str(temporary_path))
+        temporary_path.replace(output_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def _generate_xls(
     template_path: Path,
     output_path: Path,
@@ -4177,6 +4200,7 @@ def _generate_preserved_legacy_xls(
     client: Client,
     encounter: Encounter | None,
     runtime_values: dict[str, object],
+    print_variant: str | None = None,
 ) -> None:
     temporary_file = tempfile.NamedTemporaryFile(
         prefix=".legacy_xls_values_",
@@ -4243,6 +4267,7 @@ def _generate_preserved_legacy_xls(
                 managed_rows=managed_rows,
                 hidden_rows=hidden_rows,
             )
+        _apply_print_variant_to_saved_xls_file(output_path, print_variant)
     finally:
         temporary_path.unlink(missing_ok=True)
 
@@ -4282,6 +4307,7 @@ def _generate_runtime_xls(
             client,
             encounter,
             runtime_values,
+            print_variant,
         )
         return
     _generate_unpreserved_runtime_xls(

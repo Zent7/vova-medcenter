@@ -18,11 +18,12 @@ from app.services.document_generator import (  # noqa: E402
     _exam_map,
     _fill_driver_xls_sheets,
     _driver_xml_context_overrides,
+    _generate_runtime_xls,
 )
 
 
 def client(admission_category="", indications=""):
-    return SimpleNamespace(admission_category=admission_category, indications=indications)
+    return SimpleNamespace(admission_category=admission_category, indications=indications, birth_date=None)
 
 
 def chairman(fields, *, is_completed=True):
@@ -283,6 +284,44 @@ class DriverDocumentContextTests(unittest.TestCase):
 
             output_path = Path(tempfile.gettempdir()) / f"driver_{variant}_single_side_test.xls"
             target_book.save(str(output_path))
+            result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
+
+            self.assertEqual(result_book.sheet_names(), [expected_sheet])
+
+    def test_driver_runtime_xls_print_variant_keeps_only_selected_side(self):
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
+        context = {
+            "ClientCalc": "Иванов Иван Иванович",
+            "BirthDateCalc_DAY": "11",
+            "BirthDateCalc_DATEMONTH": "февраля",
+            "BirthDateCalc_YEAR": "1991",
+            "SubjectCalc": "Россия",
+            "DistrictCalc": "",
+            "CityCalc": "Москва",
+            "StreetCalc": "Тестовая",
+            "HouseNumberCalc": "1",
+            "HouseBodyCalc": "",
+            "ApartmentNumberCalc": "2",
+            "VisitDate_DATEMONTH": "июля",
+            "InstrumentalExamination": "Без отклонений",
+            "LaboratoryStudy": "Без отклонений",
+        }
+        runtime_values = {"exams": [], "service_names": []}
+
+        for variant, expected_sheet in [
+            ("driver_front", "Водительская Лицевая"),
+            ("driver_back", "Водительская Оборотная"),
+        ]:
+            output_path = Path(tempfile.gettempdir()) / f"driver_runtime_{variant}_single_side_test.xls"
+            _generate_runtime_xls(
+                template_path,
+                output_path,
+                context,
+                client(admission_category="B"),
+                SimpleNamespace(encounter_date=date(2026, 7, 31)),
+                runtime_values,
+                print_variant=variant,
+            )
             result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
 
             self.assertEqual(result_book.sheet_names(), [expected_sheet])
