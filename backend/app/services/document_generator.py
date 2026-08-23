@@ -4144,9 +4144,11 @@ def _patch_xls_hidden_columns(
             first_col, last_col = struct.unpack_from("<HH", workbook_stream, payload_start)
             record_cols = set(range(first_col, last_col + 1))
             overlap = record_cols & managed_cols
-            if overlap:
-                if first_col < start_col or last_col > end_col:
-                    raise ValueError("В XLS найден объединенный диапазон колонок, пересекающий правую часть")
+            # Ширину колонок в готовом файле правим по месту, поэтому одну запись
+            # COLINFO нельзя разрезать на видимую и скрытую половины.
+            if overlap and first_col >= start_col:
+                # Запись может тянуться правее end_col: xlwt объединяет хвост листа
+                # в один диапазон до 256-й колонки. Там пусто, прячем целиком.
                 options = struct.unpack_from("<H", workbook_stream, payload_start + 8)[0] | 0x0001
                 _write_new_xls_stream_bytes(file_bytes, sectors, payload_start + 4, struct.pack("<H", 0))
                 _write_new_xls_stream_bytes(file_bytes, sectors, payload_start + 8, struct.pack("<H", options))

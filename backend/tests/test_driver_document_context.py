@@ -392,6 +392,38 @@ class DriverDocumentContextTests(unittest.TestCase):
             self.assertTrue(all(result_sheet.colinfo_map[col].hidden for col in managed_cols))
             self.assertTrue(all(result_sheet.colinfo_map[col].width == 0 for col in managed_cols))
 
+    def test_driver_runtime_xls_without_print_variant_hides_duplicate_columns(self):
+        """Без print_variant файл собирается другим путём: xlwt склеивает колонки
+        одинаковой ширины в диапазоны COLINFO, и хвост листа уходит за 65-ю колонку."""
+
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
+        output_path = Path(tempfile.gettempdir()) / "driver_runtime_no_variant_columns_test.xls"
+
+        _generate_runtime_xls(
+            template_path,
+            output_path,
+            {"ClientCalc": "Иванов Иван Иванович"},
+            client(admission_category="B"),
+            SimpleNamespace(encounter_date=date(2026, 7, 31)),
+            {"exams": [], "service_names": []},
+        )
+
+        result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
+        for sheet_name, first_hidden_col in [
+            ("Водительская Лицевая", 27),
+            ("Водительская Оборотная", 34),
+        ]:
+            with self.subTest(sheet=sheet_name):
+                colinfo = result_book.sheet_by_name(sheet_name).colinfo_map
+                duplicate_cols = [col for col in range(first_hidden_col, 66) if col in colinfo]
+                self.assertTrue(duplicate_cols)
+                self.assertTrue(all(colinfo[col].hidden for col in duplicate_cols))
+                self.assertTrue(all(colinfo[col].width == 0 for col in duplicate_cols))
+                # Сама справка слева от границы остаётся видимой.
+                self.assertFalse(
+                    [col for col in range(0, first_hidden_col) if col in colinfo and colinfo[col].hidden]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
