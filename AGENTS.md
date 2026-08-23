@@ -168,6 +168,17 @@ Important paths:
 
 Do not reintroduce a second React UI unless the delivery demo is first ported into that frontend shell.
 
+### Asset cache versions
+
+`frontend/public/demo/index.html` loads every script and stylesheet with a manual
+cache-busting query, for example `./app.js?v=20260823-profosmotr-print-scope-v1`.
+Browsers keep the previously cached file until that token changes.
+
+**Whenever a file under `frontend/public/demo/` changes, bump its `?v=` token in the
+same commit.** Without the bump the change is published and deployed but never
+reaches the browser, so the old behaviour — including the old error — persists and
+the fix looks like it did not work.
+
 ## Live Site Delivery
 
 The live demo is maintained through the automated image and homelab workflow:
