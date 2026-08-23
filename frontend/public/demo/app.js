@@ -1806,7 +1806,7 @@ function normalizeDriverCategories(categories) {
         .split(/[\s,;/]+/)
         .map((item) => item.trim())
         .filter(Boolean);
-  if (!source.length) return Array.isArray(categories) ? [] : ["A", "B"];
+  if (!source.length) return [];
   const expanded = new Set(source);
   if (expanded.has("E")) {
     expanded.add("BE");

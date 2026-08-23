@@ -3,7 +3,7 @@ let clientModalServiceDetails = {};
 let clientModalSubmitAction = "save";
 let clientModalSexKey = "";
 
-const CLIENT_DRIVER_DEFAULT_CATEGORIES = ["A", "B", "C", "D", "BE", "M"];
+const CLIENT_DRIVER_DEFAULT_CATEGORIES = ["B"];
 const CLIENT_DRIVER_CATEGORY_ROWS = [
   ["A", "B", "C", "D"],
   ["BE", "CE", "DE"],
