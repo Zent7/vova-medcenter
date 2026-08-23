@@ -9025,7 +9025,7 @@ function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
 
-const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "095У", "СЭМТ-196"]);
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "086У", "095У", "СЭМТ-196"]);
 
 // Справка ЛМК печатается на чистом листе А4: номерной бланк ей не нужен,
 // порядковый номер подставляет бэкенд при генерации документа.
@@ -9702,6 +9702,15 @@ function isCertificatePrintSeries(series) {
 
 function isNumberedCertificatePrintType(type) {
   return new Set(["086", "095"]).has(String(type || "").toLowerCase());
+}
+
+// Справка 086у печатается со сквозной автонумерацией: типографские бланки
+// для неё не заводятся. У 095у номер по-прежнему берётся из партии,
+// заведённой в разделе «Бланки».
+const PREENTERED_CERTIFICATE_PRINT_TYPES = new Set(["095"]);
+
+function certificateRequiresPreenteredBlank(type) {
+  return PREENTERED_CERTIFICATE_PRINT_TYPES.has(String(type || "").toLowerCase());
 }
 
 function isNumberedCertificatePrintSeries(series) {
@@ -10527,13 +10536,13 @@ async function openDriverPrintFlow(options = {}) {
           return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         };
         const shouldAutoCreateImmediately =
-          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
+          !certificateRequiresPreenteredBlank(flowState.selectedCertificateType) &&
           !isPreenteredBlankSeries(requestedSeries) &&
           !canAutoCreateChairmanBlankSeries(requestedSeries);
         try {
           flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
         } catch (error) {
-          if (isNumberedCertificatePrintType(flowState.selectedCertificateType) || !canAutoCreateChairmanBlankSeries(requestedSeries)) {
+          if (certificateRequiresPreenteredBlank(flowState.selectedCertificateType) || !canAutoCreateChairmanBlankSeries(requestedSeries)) {
             throw error;
           }
           flowState.currentBlank = await fetchNextBlank(true);
@@ -10604,7 +10613,7 @@ async function openDriverPrintFlow(options = {}) {
         );
         const requestedSeries = lookupSeries || flowState.selectedSeries;
         const autoCreate =
-          !isNumberedCertificatePrintType(flowState.selectedCertificateType) &&
+          !certificateRequiresPreenteredBlank(flowState.selectedCertificateType) &&
           !isPreenteredBlankSeries(requestedSeries);
 
         if (currentBlank.status === "free") {
@@ -12747,14 +12756,14 @@ function bindContentEvents() {
           });
           let blank = null;
           const shouldAutoCreateImmediately =
-            !isNumberedCertificatePrintType(certificateType) &&
+            !certificateRequiresPreenteredBlank(certificateType) &&
             !isPreenteredBlankSeries(normalizedSeries) &&
-            !canAutoCreateChairmanBlankSeries(normalizedSeries);
+            !canAutoCreateChairmanBlankSeries(lookupSeries);
           try {
             if (shouldAutoCreateImmediately) query.set("auto_create", "true");
             blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
           } catch (error) {
-            if (isNumberedCertificatePrintType(certificateType) || !canAutoCreateChairmanBlankSeries(normalizedSeries)) {
+            if (certificateRequiresPreenteredBlank(certificateType) || !canAutoCreateChairmanBlankSeries(lookupSeries)) {
               throw error;
             }
             query.set("auto_create", "true");
