@@ -9436,6 +9436,16 @@ function normalizeBlankSeries(series) {
   return String(series ?? "").trim();
 }
 
+// Серия 086у подписывается полом ("086у (М)"), а в разделе «Бланки» она
+// заведена без пометки. Сравниваем серии по общему ключу, иначе выбранная
+// в окне председателя серия не совпадает со свободной серией бланков.
+function getBlankSeriesMatchKey(series) {
+  return normalizeBlankSeries(series)
+    .toLowerCase()
+    .replace(/\s*\([мж]\)$/, "")
+    .trim();
+}
+
 const DRIVER_PRINT_SERIES_STORAGE_KEY = "driverPrint.lastSeries";
 const DRIVER_PRINT_VARIANTS = [
   { id: "driver_front", label: "Печатать лицевую часть", errorLabel: "лицевую сторону водительской справки" },
@@ -10096,11 +10106,21 @@ async function openDriverPrintFlow(options = {}) {
   const availableSeriesOptions = Array.isArray(seriesOptions) ? seriesOptions.slice() : [];
   const storedSeries = getStoredDriverPrintSeries();
   const isPreselectedSeriesAvailable = availableSeriesOptions.some(
-    (item) => normalizeBlankSeries(item?.series).toLowerCase() === preselectedSeries.toLowerCase(),
+    (item) => getBlankSeriesMatchKey(item?.series) === getBlankSeriesMatchKey(preselectedSeries),
   );
   const isStoredSeriesAvailable = availableSeriesOptions.some(
-    (item) => normalizeBlankSeries(item?.series).toLowerCase() === storedSeries.toLowerCase(),
+    (item) => getBlankSeriesMatchKey(item?.series) === getBlankSeriesMatchKey(storedSeries),
   );
+  // Справку 086у/095у открывают явной кнопкой, поэтому её серия важнее списка
+  // свободных партий: у 086у типографских бланков нет вовсе, и без этого окно
+  // молча откатывалось на последнюю использованную серию (обычно 095у).
+  const requestedCertificateType =
+    String(options.selectedCertificateType || "").toLowerCase() || preselectedCertificateType;
+  const keepsPreselectedSeries =
+    Boolean(preselectedSeries) &&
+    (isNumberedCertificatePrintType(requestedCertificateType) ||
+      isPreselectedSeriesAvailable ||
+      !availableSeriesOptions.length);
   const defaultSeries = normalizeBlankSeries(availableSeriesOptions[0]?.series || seriesOptions[0]?.series);
   const seriesOptionMap = new Map();
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
@@ -10157,7 +10177,7 @@ async function openDriverPrintFlow(options = {}) {
     blankType,
     seriesOptions,
     selectedSeries:
-      (preselectedSeries && (isPreselectedSeriesAvailable || !availableSeriesOptions.length) ? preselectedSeries : "") ||
+      (keepsPreselectedSeries ? preselectedSeries : "") ||
       (isStoredSeriesAvailable ? storedSeries : "") ||
       defaultSeries ||
       normalizeBlankSeries(seriesOptions[0]?.series),
