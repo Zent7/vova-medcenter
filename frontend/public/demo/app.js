@@ -9073,6 +9073,15 @@ function getChairmanNumberedCertificateSeries(printType) {
   return CHAIRMAN_NUMBERED_CERTIFICATE_SERIES.get(String(printType || "").toLowerCase()) || "";
 }
 
+// Общая кнопка «Печать» ведёт справки 086у/095у во второе окно печати: там
+// выбирают серию и номер бланка. Из окна «Печать результатов» справку вызывают
+// именной кнопкой, а серия и номер уже указаны в этом же окне, поэтому второе
+// окно с теми же полями не открываем — сразу печатаем справку.
+function opensNumberedCertificatePrintWindow(printType, printKind) {
+  if (String(printKind || "").endsWith("_certificate")) return false;
+  return Boolean(getChairmanNumberedCertificateSeries(printType));
+}
+
 const CHAIRMAN_CERTIFICATE_PRINT_FLOWS = new Map([
   ["sport", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "sport" }],
   ["gto", { preselectedSeries: "40", certificateTypes: ["sport", "gto"], selectedCertificateType: "gto" }],
@@ -12938,8 +12947,10 @@ function bindContentEvents() {
         return;
       }
 
-      const numberedCertificateSeries = getChairmanNumberedCertificateSeries(printType);
       const isExplicitCertificateTemplate = String(printKind || "").endsWith("_certificate");
+      const numberedCertificateSeries = opensNumberedCertificatePrintWindow(printType, printKind)
+        ? getChairmanNumberedCertificateSeries(printType)
+        : "";
       const certificatePrintFlowOptions = isExplicitCertificateTemplate ? null : getChairmanCertificatePrintFlowOptions(printType);
 
       if (numberedCertificateSeries || certificatePrintFlowOptions) {
@@ -12973,8 +12984,20 @@ function bindContentEvents() {
               : certificateType
                 ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
                 : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
+          // 086у печатается со сквозной автонумерацией — номер ей можно
+          // присвоить прямо при печати. 095у выдаётся на типографском бланке,
+          // поэтому её номер по-прежнему подбирают кнопкой «Найти номер».
+          const autoNumberedCertificate =
+            Boolean(certificateType) &&
+            isNumberedCertificatePrintType(certificateType) &&
+            !certificateRequiresPreenteredBlank(certificateType);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
+            if (!autoNumberedDocument && autoNumberedCertificate && !selectedBlank?.id) {
+              selectedBlank = await chairmanPrintBlankState.findBlank(requiredBlankSeries, null, {
+                silent: true,
+              });
+            }
             if (autoNumberedDocument) {
               const previousDocument = findLatestCertificateDocumentForVisit(directPrintType, visit, client);
               if (previousDocument?.blankFormId) {
@@ -12993,7 +13016,7 @@ function bindContentEvents() {
               }
             }
             if (!selectedBlank?.id) {
-              const message = autoNumberedDocument
+              const message = autoNumberedDocument || autoNumberedCertificate
                 ? `Не удалось присвоить автоматический номер серии ${requiredBlankSeries}.`
                 : `Сначала нажмите «Найти номер» для серии ${requiredBlankSeries}.`;
               showDocumentTargetError(targetWindow, message);
