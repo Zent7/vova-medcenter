@@ -95,6 +95,29 @@ CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
 )
 CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES = frozenset({"082у_шаблон.docx"})
 
+# Справка 086у печатается из шаблонов, где фамилии врачей набраны обычным текстом,
+# без маркеров. Строки узнаём по началу абзаца и подставляем врача из осмотра.
+CERTIFICATE_086_DOCUMENT_MARKER = "врача выдавшего медицинскую справку"
+CERTIFICATE_086_DOCTOR_ROWS: tuple[tuple[str, str], ...] = (
+    ("врач-терапевт", "Certificate086TherapistDoctor"),
+    ("врач-хирург", "Certificate086SurgeonDoctor"),
+    ("врач-невролог", "Certificate086NeurologistDoctor"),
+    ("врач-офтальмолог", "Certificate086OphthalmologistDoctor"),
+    ("врач-оториноларинголог", "Certificate086OtolaryngologistDoctor"),
+    ("гинеколог", "Certificate086GynecologistDoctor"),
+    ("ф.и.о. врача выдавшего", "Certificate086IssuerDoctor"),
+)
+CERTIFICATE_086_PARAGRAPH_PATTERN = re.compile(
+    r"<w:p(?![\w:])(?:\s[^>]*?)?(?<!/)>.*?</w:p>",
+    re.S,
+)
+CERTIFICATE_086_TEXT_NODE_PATTERN = re.compile(r"(<w:t\b[^>]*>)(.*?)(</w:t>)", re.S)
+CERTIFICATE_086_DOCTOR_NAME_PATTERN = re.compile(
+    r"[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s*[А-ЯЁ]\.\s*(?:[А-ЯЁ]\.?)?"
+)
+CERTIFICATE_086_NAME_TAIL_PATTERN = re.compile(r"[\s_.\-]*")
+CERTIFICATE_086_NAME_INDENT = " " * 12
+
 ET.register_namespace("soapenv", SOAP_NS)
 ET.register_namespace("mb", MIAC_NS)
 
@@ -267,6 +290,73 @@ def _replace_prof_29n_static_doctor_names(xml_text: str, context: dict[str, str]
             count=1,
         )
     return xml_text
+
+
+def _append_paragraph_name(paragraph_xml: str, node: re.Match[str], replacement: str) -> str:
+    open_tag = node.group(1)
+    if "xml:space" not in open_tag:
+        open_tag = f'{open_tag[:-1]} xml:space="preserve">'
+    node_text = f"{node.group(2)}{CERTIFICATE_086_NAME_INDENT}{replacement}"
+    return paragraph_xml[: node.start()] + open_tag + node_text + node.group(3) + paragraph_xml[node.end() :]
+
+
+def _replace_paragraph_trailing_name(paragraph_xml: str, replacement: str) -> str:
+    text_nodes = list(CERTIFICATE_086_TEXT_NODE_PATTERN.finditer(paragraph_xml))
+    if not text_nodes:
+        return paragraph_xml
+
+    paragraph_text = "".join(node.group(2) for node in text_nodes)
+    name_match = None
+    for candidate in CERTIFICATE_086_DOCTOR_NAME_PATTERN.finditer(paragraph_text):
+        name_match = candidate
+    if name_match is None:
+        # В женском шаблоне строка хирурга идёт без фамилии — дописываем её в конец.
+        return _append_paragraph_name(paragraph_xml, text_nodes[-1], replacement)
+    if not CERTIFICATE_086_NAME_TAIL_PATTERN.fullmatch(paragraph_text[name_match.end() :]):
+        return paragraph_xml
+
+    edits: list[tuple[int, int, str]] = []
+    consumed = 0
+    inserted = False
+    for node in text_nodes:
+        node_text = node.group(2)
+        node_start = consumed
+        node_end = consumed + len(node_text)
+        consumed = node_end
+        if node_end <= name_match.start() or node_start >= name_match.end():
+            continue
+        prefix = node_text[: max(0, name_match.start() - node_start)]
+        suffix = node_text[name_match.end() - node_start :] if name_match.end() <= node_end else ""
+        edits.append((node.start(2), node.end(2), prefix + ("" if inserted else replacement) + suffix))
+        inserted = True
+
+    for start, end, node_text in reversed(edits):
+        paragraph_xml = paragraph_xml[:start] + node_text + paragraph_xml[end:]
+    return paragraph_xml
+
+
+def _replace_certificate_086_static_doctor_names(xml_text: str, context: dict[str, str]) -> str:
+    if CERTIFICATE_086_DOCUMENT_MARKER not in xml_text:
+        return xml_text
+
+    def replace_paragraph(match: re.Match[str]) -> str:
+        paragraph_xml = match.group(0)
+        if "<w:txbxContent" in paragraph_xml:
+            # Абзацы внутри надписей (шапка бланка) строк врачей не содержат.
+            return paragraph_xml
+        paragraph_text = "".join(
+            node.group(2) for node in CERTIFICATE_086_TEXT_NODE_PATTERN.finditer(paragraph_xml)
+        ).strip().casefold()
+        for marker, context_key in CERTIFICATE_086_DOCTOR_ROWS:
+            if not paragraph_text.startswith(marker):
+                continue
+            doctor_name = str(context.get(context_key, "") or "").strip()
+            if not doctor_name:
+                return paragraph_xml
+            return _replace_paragraph_trailing_name(paragraph_xml, escape_xml_text(doctor_name))
+        return paragraph_xml
+
+    return CERTIFICATE_086_PARAGRAPH_PATTERN.sub(replace_paragraph, xml_text)
 
 
 def _normalize_token_key(value: str) -> str:
@@ -583,6 +673,7 @@ def _generate_docx(
                     xml_text = _replace_chairman_082_static_country(template_path, xml_text, context)
                     xml_text = _replace_chairman_082_static_doctor(template_path, xml_text, context)
                     xml_text = _replace_prof_29n_static_doctor_names(xml_text, context)
+                    xml_text = _replace_certificate_086_static_doctor_names(xml_text, context)
                     if cleanup_xml:
                         xml_text = _cleanup_contract_xml(xml_text)
                     needs_tree_pass = (
@@ -4860,6 +4951,26 @@ def _prof_29n_doctor_context_overrides(client: Client, exams: list[DoctorExam]) 
     }
 
 
+def _certificate_086_doctor_context_overrides(client: Client, exams: list[DoctorExam]) -> dict[str, str]:
+    exams_by_role = _exam_map(exams)
+
+    def role_doctor(role_id: str) -> str:
+        data = _exam_export_with_client_doctor(exams_by_role.get(role_id), client, role_id)
+        return str(data.get("doctor") or "").strip()
+
+    therapist_doctor = role_doctor("therapist")
+    chairman_doctor = str(_build_exam_export(exams_by_role.get("chairman")).get("doctor") or "").strip()
+    return {
+        "Certificate086TherapistDoctor": therapist_doctor,
+        "Certificate086SurgeonDoctor": role_doctor("surgeon"),
+        "Certificate086NeurologistDoctor": role_doctor("neurologist"),
+        "Certificate086OphthalmologistDoctor": role_doctor("ophthalmologist"),
+        "Certificate086OtolaryngologistDoctor": role_doctor("otolaryngologist"),
+        "Certificate086GynecologistDoctor": role_doctor("gynecologist"),
+        "Certificate086IssuerDoctor": _first_non_empty(chairman_doctor, therapist_doctor),
+    }
+
+
 def _document_doctor_name_for_context(exams: list[DoctorExam]) -> str:
     doctor_names: list[str] = []
     chairman_doctor = ""
@@ -4896,6 +5007,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         ).scalars().first()
         context_overrides = _medical_record_context_overrides(medical_record)
         context_overrides.update(_prof_29n_doctor_context_overrides(client, []))
+        context_overrides.update(_certificate_086_doctor_context_overrides(client, []))
         return {
             "service_names": service_names,
             "service_rows": service_rows,
@@ -5023,6 +5135,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         }
     )
     context_overrides.update(_prof_29n_doctor_context_overrides(client, exams))
+    context_overrides.update(_certificate_086_doctor_context_overrides(client, exams))
 
     return {
         "service_names": service_names,
