@@ -200,7 +200,7 @@ def get_next_form(
     if form is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Свободные бланки по выбранной серии не найдены",
+            detail="Свободные бланки не найдены. Заведите диапазон номеров в разделе «Бланки»",
         )
     return BlankFormRead.model_validate(enrich_form_for_read(db, form))
 

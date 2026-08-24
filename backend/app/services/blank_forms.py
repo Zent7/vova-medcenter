@@ -84,6 +84,22 @@ def resolve_blank_type_for_series(blank_type: str, series: str | None) -> str:
     return blank_type
 
 
+def normalize_lookup_series(blank_type: str, series: str | None) -> str | None:
+    """Убирает из поиска «серию», которая на самом деле называет тип бланка.
+
+    На типографских бланках ЛМК серия не печатается — там только номер, а
+    слово «ЛМК» в окне печати означает тип документа. Партии таких бланков
+    заводятся без серии, поэтому фильтр `series = 'ЛМК'` не совпал бы ни с
+    одним заведённым номером и «Найти номер» ничего не находил.
+    """
+
+    if str(blank_type or "").strip() != BLANK_TYPE_LMK_MEDICAL_CERTIFICATE:
+        return series
+    if str(series or "").strip().casefold().startswith(("лмк", "lmk")):
+        return None
+    return series
+
+
 @dataclass
 class IssueRequest:
     blank_type: str
@@ -485,8 +501,9 @@ def get_next_free_form(
     )
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
-    series_clean = (series or "").strip()
-    if series is not None:
+    lookup_series = normalize_lookup_series(blank_type, series)
+    series_clean = (lookup_series or "").strip()
+    if lookup_series is not None:
         query = query.where(BlankForm.series == (series_clean or None))
     return db.execute(query).scalar_one_or_none()
 
