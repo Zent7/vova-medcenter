@@ -44,36 +44,70 @@ LEGACY_DATA_PATHS = [
     ROOT_DIR / "frontend" / "public" / "demo" / "legacy-data.js",
 ]
 
+# Заголовки клиентского шаблона «Шаблон для загрузки клиентов».
+# Первый вариант в списке — то, как колонка названа в выдаваемом файле;
+# остальные — синонимы, чтобы принимать и старые файлы, и ручные переделки.
 CLIENT_IMPORT_HEADERS = OrderedDict(
     [
-        ("patient_number", "№ пациента"),
-        ("last_name", "Фамилия"),
-        ("first_name", "Имя"),
-        ("middle_name", "Отчество"),
-        ("birth_date", "Дата рождения"),
-        ("sex", "Пол"),
-        ("phone", "Телефон"),
-        ("email", "E-mail"),
-        ("document_type", "Тип документа"),
-        ("document_series", "Серия документа"),
-        ("document_number", "Номер документа"),
-        ("document_issued_by", "Кем выдан"),
-        ("document_issued_date", "Дата выдачи"),
-        ("snils", "СНИЛС"),
-        ("registration_text", "Регистрация"),
-        ("address_text", "Адрес проживания"),
-        ("organization", "Организация"),
-        ("service", "Услуга"),
-        ("encounter_date", "Дата обращения"),
-        ("admission_category", "Категория допуска"),
-        ("reference_number", "№ справки"),
-        ("notes", "Примечание"),
+        ("service", ["Тип документа", "Услуга"]),
+        ("last_name", ["Фамилия"]),
+        ("first_name", ["Имя"]),
+        ("middle_name", ["Отчество"]),
+        ("birth_date", ["Дата рождения"]),
+        ("sex", ["Пол"]),
+        ("reg_region", ["Адрес Регистрация-ОБЛОСТЬ", "Адрес Регистрация-ОБЛАСТЬ", "Область"]),
+        ("reg_city", ["Адрес Регистрация-ГОРОД", "Город"]),
+        ("reg_street", ["Адрес Регистрация-УЛИЦА", "Улица"]),
+        ("reg_house", ["Адрес Регистрация-НОМЕР ДОМА", "Номер дома", "Дом"]),
+        ("reg_building", ["корпус, литер, строение", "Корпус"]),
+        ("reg_flat", ["квартира"]),
+        ("organization", ["Название Организация", "Название организации", "Организация"]),
+        ("profession", ["Должность"]),
+        ("indications", ["Вредные произв. Факторы", "Вредные производственные факторы", "Вредные факторы"]),
+        ("snils", ["СНИЛС"]),
+        ("flg", ["ФЛГ от", "ФЛГ"]),
+        ("notes", ["Примечание"]),
+        ("patient_number", ["№ пациента"]),
+        ("phone", ["Телефон"]),
+        ("email", ["E-mail"]),
+        ("document_type", ["Вид документа", "Тип удостоверения"]),
+        ("document_series", ["Серия документа"]),
+        ("document_number", ["Номер документа"]),
+        ("document_issued_by", ["Кем выдан"]),
+        ("document_issued_date", ["Дата выдачи"]),
+        ("registration_text", ["Регистрация", "Адрес регистрации"]),
+        ("address_text", ["Адрес проживания"]),
+        ("encounter_date", ["Дата обращения"]),
+        ("admission_category", ["Категория допуска"]),
+        ("reference_number", ["№ справки", "Номер справки"]),
     ]
 )
-HEADER_TO_FIELD = {
-    re.sub(r"\s+", " ", header.strip().lower()): field
-    for field, header in CLIENT_IMPORT_HEADERS.items()
-}
+# Части адреса склеиваются в одно поле «Регистрация»: карточка клиента и
+# шаблоны документов работают с адресом одной строкой.
+# Сокращение подставляем сами, но только если человек его ещё не написал —
+# иначе получится «ул. ул. Ленина». Проверяем именно known-сокращения:
+# «Большая Морская» — это улица, а не улица с приставкой.
+REGISTRATION_PART_FIELDS = (
+    ("reg_region", "", None),
+    (
+        "reg_city",
+        "г.",
+        r"(г|гор|город|пгт|рп|п|пос|посёлок|поселок|с|село|д|деревня|ст|станица|х|хутор)",
+    ),
+    (
+        "reg_street",
+        "ул.",
+        r"(ул|улица|пр|пр-кт|просп|проспект|пер|переулок|наб|набережная|ш|шоссе"
+        r"|б-р|бул|бульвар|аллея|тракт|линия|мкр|микрорайон|кв-л|квартал|проезд"
+        r"|туп|тупик|пл|площадь)",
+    ),
+    ("reg_house", "д.", r"(д|дом|вл|владение)"),
+    ("reg_building", "корп.", r"(корп|корпус|к|стр|строение|лит|литер)"),
+    ("reg_flat", "кв.", r"(кв|квартира|оф|офис|комн|комната)"),
+)
+# Под таблицей шаблона перечислены допустимые значения колонки «Тип документа».
+# В такой строке заполнена только эта колонка — пациента в ней нет.
+LEGEND_ONLY_FIELDS = frozenset({"service"})
 XLSX_NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -157,7 +191,23 @@ def normalize_text(value: Any) -> str | None:
 
 
 def normalize_header(value: str | None) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+    """Приводит заголовок колонки к виду, устойчивому к оформлению.
+
+    Завод правит шапку под себя: дописывает подсказку в скобках, меняет дефис
+    на тире, ставит точку после сокращения. Для сопоставления это всё шум.
+    """
+
+    text = str(value or "").replace(chr(0xA0), " ").strip().lower().replace("ё", "е")
+    text = re.sub(r"\([^)]*\)", " ", text)
+    text = re.sub(r"[^0-9a-zа-я№]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+HEADER_TO_FIELD = {
+    normalize_header(header): field
+    for field, headers in CLIENT_IMPORT_HEADERS.items()
+    for header in headers
+}
 
 
 def parse_int(value: Any) -> int | None:
@@ -190,6 +240,52 @@ def read_xlsx_shared_strings(archive: zipfile.ZipFile) -> list[str]:
     return values
 
 
+# Встроенные форматы Excel, означающие дату или дату со временем.
+BUILTIN_DATE_NUMBER_FORMATS = set(range(14, 23)) | set(range(45, 48)) | {27, 30, 36, 50, 57, 58}
+EXCEL_EPOCH = datetime(1899, 12, 30)
+
+
+def read_xlsx_date_style_ids(archive: zipfile.ZipFile) -> set[int]:
+    """Стили ячеек, отформатированных как дата.
+
+    Excel хранит такую ячейку числом (15.04.1987 — это 31882), поэтому без
+    разбора форматов дата рождения приезжает в загрузчик как «31882».
+    """
+
+    if "xl/styles.xml" not in archive.namelist():
+        return set()
+    root = ET.fromstring(archive.read("xl/styles.xml"))
+    date_format_ids = set(BUILTIN_DATE_NUMBER_FORMATS)
+    for number_format in root.findall("main:numFmts/main:numFmt", XLSX_NS):
+        code = number_format.attrib.get("formatCode", "")
+        stripped_code = re.sub(r"\[[^\]]*\]|\"[^\"]*\"", "", code)
+        if re.search(r"[dmyhs]", stripped_code, re.IGNORECASE):
+            try:
+                date_format_ids.add(int(number_format.attrib["numFmtId"]))
+            except (KeyError, ValueError):
+                continue
+
+    style_ids: set[int] = set()
+    for index, cell_format in enumerate(root.findall("main:cellXfs/main:xf", XLSX_NS)):
+        try:
+            number_format_id = int(cell_format.attrib.get("numFmtId", "0"))
+        except ValueError:
+            continue
+        if number_format_id in date_format_ids:
+            style_ids.add(index)
+    return style_ids
+
+
+def excel_serial_to_text(value: str) -> str | None:
+    try:
+        serial = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= serial < 2958466:
+        return None
+    return (EXCEL_EPOCH + timedelta(days=serial)).strftime("%d.%m.%Y")
+
+
 def resolve_first_sheet_path(archive: zipfile.ZipFile) -> str:
     workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
     workbook_rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
@@ -211,6 +307,7 @@ def resolve_first_sheet_path(archive: zipfile.ZipFile) -> str:
 def read_xlsx_rows(content: bytes) -> list[dict[str, Any]]:
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         shared_strings = read_xlsx_shared_strings(archive)
+        date_style_ids = read_xlsx_date_style_ids(archive)
         sheet_path = resolve_first_sheet_path(archive)
         root = ET.fromstring(archive.read(sheet_path))
 
@@ -231,6 +328,8 @@ def read_xlsx_rows(content: bytes) -> list[dict[str, Any]]:
                 value = "".join(texts)
             else:
                 value = cell.findtext("main:v", default=None, namespaces=XLSX_NS)
+                if value is not None and parse_int(cell.attrib.get("s", "0")) in date_style_ids:
+                    value = excel_serial_to_text(value) or value
             cells[column_index] = normalize_text(value)
         rows.append(cells)
 
@@ -258,6 +357,53 @@ def read_xls_rows(content: bytes) -> list[dict[str, Any]]:
     return rows_to_client_records(rows)
 
 
+LEGACY_DOCUMENT_TYPE_HEADER = normalize_header("Тип документа")
+SERVICE_HEADER = normalize_header("Услуга")
+
+
+def resolve_legacy_document_type_column(
+    columns: dict[int, str],
+    header_row: dict[int, str | None],
+) -> dict[int, str]:
+    """Разводит два смысла колонки «Тип документа».
+
+    В шаблоне, который заполняет завод, это услуга («ЛМК», «ГИМС»). В файлах,
+    скачанных по старому шаблону, так называлось удостоверение личности, и
+    услуга лежала в отдельной колонке «Услуга». Если в файле есть обе колонки,
+    значит он старый — тогда «Тип документа» относится к паспорту.
+    """
+
+    headers = {index: normalize_header(value) for index, value in header_row.items()}
+    if SERVICE_HEADER not in headers.values():
+        return columns
+    return {
+        index: "document_type" if headers.get(index) == LEGACY_DOCUMENT_TYPE_HEADER else field
+        for index, field in columns.items()
+    }
+
+
+def merge_registration_text(payload: dict[str, Any]) -> str | None:
+    """Собирает адрес регистрации из отдельных колонок шаблона.
+
+    Приставки «г.», «ул.», «д.» ставим сами: по ним построитель документов
+    потом разбирает адрес обратно на город, улицу и дом.
+    """
+
+    existing = normalize_text(payload.get("registration_text"))
+    if existing:
+        return existing
+
+    parts: list[str] = []
+    for field, prefix, marker in REGISTRATION_PART_FIELDS:
+        value = normalize_text(payload.get(field))
+        if not value:
+            continue
+        if prefix and not re.match(rf"^{marker}\b\.?\s*", value, re.IGNORECASE):
+            value = f"{prefix} {value}"
+        parts.append(value)
+    return ", ".join(parts) or None
+
+
 def rows_to_client_records(rows: list[dict[int, str | None]]) -> list[dict[str, Any]]:
     if not rows:
         return []
@@ -268,6 +414,7 @@ def rows_to_client_records(rows: list[dict[int, str | None]]) -> list[dict[str, 
         field_name = HEADER_TO_FIELD.get(normalize_header(value))
         if field_name:
             columns[index] = field_name
+    columns = resolve_legacy_document_type_column(columns, header_row)
 
     if "last_name" not in columns.values() or "first_name" not in columns.values():
         raise ValueError("В Excel-шаблоне не хватает обязательных колонок Фамилия и Имя")
@@ -275,16 +422,24 @@ def rows_to_client_records(rows: list[dict[int, str | None]]) -> list[dict[str, 
     records: list[dict[str, Any]] = []
     for row_number, row in enumerate(rows[1:], start=2):
         payload: dict[str, Any] = {"row_number": row_number}
-        has_any_value = False
+        filled_fields: set[str] = set()
         for column_index, field_name in columns.items():
             value = normalize_text(row.get(column_index))
             if value:
-                has_any_value = True
+                filled_fields.add(field_name)
+            # Одному полю может соответствовать несколько колонок-синонимов.
+            # Пустая колонка не должна затирать то, что нашлось в соседней.
+            if value is None and payload.get(field_name) is not None:
+                continue
             payload[field_name] = value
 
-        if not has_any_value:
+        # Пропускаем только пустые строки и строку-легенду. Строку, где есть
+        # хоть что-то ещё, отдаём проверке: пусть скажет оператору, чего в ней
+        # не хватает, вместо того чтобы тихо потерять человека.
+        if not filled_fields or filled_fields <= LEGEND_ONLY_FIELDS:
             continue
 
+        payload["registration_text"] = merge_registration_text(payload)
         payload["patient_number"] = parse_int(payload.get("patient_number"))
         for field_name in ("birth_date", "document_issued_date", "encounter_date"):
             raw_value = payload.get(field_name)
@@ -356,8 +511,19 @@ def json_safe_import_row(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# Колонка «Тип документа» в шаблоне заполняется сокращениями, а в справочнике
+# услуги названы полностью. Сопоставляем только однозначные сокращения;
+# неоднозначные («Водительская» — две «Медицинские комиссии» с разной ценой)
+# намеренно оставляем кассиру.
+SERVICE_VALUE_ALIASES = {
+    "проф": "профосмотр",
+    "водительская": "медицинская комиссия",
+}
+
+
 def normalize_service_lookup(value: object) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+    normalized = re.sub(r"\s+", " ", str(value or "").strip().lower().replace("ё", "е"))
+    return SERVICE_VALUE_ALIASES.get(normalized, normalized)
 
 
 def service_import_label(service: Service) -> str:
@@ -554,6 +720,9 @@ def build_client_payload(row: dict[str, Any], patient_number: int) -> dict[str, 
         "registration_text": normalize_text(row.get("registration_text")),
         "address_text": normalize_text(row.get("address_text")) or normalize_text(row.get("registration_text")),
         "organization": normalize_text(row.get("organization")),
+        "profession": normalize_text(row.get("profession")),
+        "indications": normalize_text(row.get("indications")),
+        "flg": normalize_text(row.get("flg")),
         "admission_category": normalize_text(row.get("admission_category")),
         "reference_number": normalize_text(row.get("reference_number")),
         "notes": normalize_text(row.get("notes")),

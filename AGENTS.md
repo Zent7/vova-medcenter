@@ -204,6 +204,7 @@ Located in `backend/scripts/`, run directly with Python (not as package modules)
 - `audit_all_document_templates.py` — scan all templates for unknown tokens
 - `scan_document_tokens.py` — extract all tokens from a template file
 - `runtime_api_smoke_check.py` — quick health check against a running backend
+- `build_client_import_template.py` — rebuild `frontend/public/demo/client-import-template.xlsx`, the Excel file employers fill in for the client import; its headers must stay in sync with `CLIENT_IMPORT_HEADERS` in `app/api/v1/routes/imports.py`
 
 ## Domain Model Key Relationships
 
