@@ -2163,6 +2163,36 @@
       field.addEventListener("change", saveDraftFromCurrentForm);
     });
 
+    // Enter в однострочном поле раньше отправлял форму: карточка врача
+    // сохранялась и закрывалась прямо во время заполнения, и врач видел вместо
+    // своих данных пустой экран. Теперь Enter переводит курсор в следующее поле,
+    // как в старой программе, а сохраняет карточку только кнопка «Сохранить».
+    const getFormFieldsInOrder = () =>
+      Array.from(form.querySelectorAll("input, select, textarea")).filter(
+        (field) =>
+          !field.disabled &&
+          field.type !== "hidden" &&
+          !field.readOnly &&
+          field.offsetParent !== null,
+      );
+
+    form.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+
+      const field = event.target;
+      const tagName = field?.tagName;
+      if (tagName !== "INPUT" && tagName !== "SELECT") return;
+      if (["submit", "button", "reset"].includes(field.type)) return;
+
+      event.preventDefault();
+
+      const fields = getFormFieldsInOrder();
+      const currentIndex = fields.indexOf(field);
+      if (currentIndex < 0) return;
+      fields[currentIndex + 1]?.focus();
+    });
+
     form.querySelectorAll('button[type="submit"]').forEach((button) => {
       button.addEventListener("click", (event) => {
         event.preventDefault();
