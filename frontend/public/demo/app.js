@@ -191,6 +191,13 @@ const DEMO_STORAGE_KEY = "vova-medcenter-demo-state-v2";
 const COLUMN_WIDTHS_STORAGE_KEY = "vova-medcenter-column-widths-v1";
 const SELECTION_STORAGE_KEY = "vova-medcenter-selection-v1";
 const AUTH_STORAGE_KEY = "vova-medcenter-auth-v1";
+const AUTH_HEARTBEAT_KEY = "vova-medcenter-auth-seen-v1";
+// Пока вкладка с программой открыта, она каждые 2 секунды отмечается "жива".
+// При загрузке сессия принимается только если отметка свежая: перезагрузка
+// страницы укладывается в пару секунд, а закрытый браузер такую отметку не
+// обновляет, поэтому после его закрытия программа снова спросит логин.
+const AUTH_HEARTBEAT_INTERVAL_MS = 2000;
+const AUTH_RESUME_WINDOW_MS = 10000;
 const MEDICAL_RECORD_PANEL_HEIGHT_KEY = "vova-medcenter-medical-record-height-v1";
 
 // navItems объявляется ниже по файлу, а applyPersistedDemoState() вызывается раньше,
@@ -421,6 +428,7 @@ function ensureGuardCertificateService() {
 loadColumnWidths();
 initializeFallbackServiceCatalog();
 applyPersistedDemoState();
+startAuthHeartbeat();
 ensureGuardCertificateService();
 
 const pageTitle = document.getElementById("page-title");
@@ -1089,14 +1097,43 @@ function loadPersistedDemoState() {
   }
 }
 
-// Сессия живет в sessionStorage: переживает обновление страницы, но пропадает
-// вместе с вкладкой. Логин и пароль в браузере по-прежнему не хранятся, а при
-// открытии сайта в новой вкладке снова показывается стартовый экран.
+// Сессия живет в sessionStorage и переживает обновление страницы. Одного
+// sessionStorage мало: браузер восстанавливает его вместе с вкладками
+// ("продолжить с того же места", Ctrl+Shift+T, перезапуск после перезагрузки
+// Windows), поэтому закрытие браузера само по себе из программы не выводило.
+// Ключом служит отметка времени: пока вкладка открыта, она обновляется, а
+// закрытый браузер обновлять ее не может. Логин и пароль в браузере
+// по-прежнему не хранятся.
+function markAuthAlive() {
+  try {
+    window.sessionStorage?.setItem(AUTH_HEARTBEAT_KEY, String(Date.now()));
+  } catch (error) {
+    // sessionStorage может быть недоступен: тогда сессия просто не переживет перезагрузку.
+  }
+}
+
+function clearPersistedAuth() {
+  try {
+    window.sessionStorage?.removeItem(AUTH_STORAGE_KEY);
+    window.sessionStorage?.removeItem(AUTH_HEARTBEAT_KEY);
+  } catch (error) {
+    console.warn("Не удалось очистить сохраненную сессию", error);
+  }
+}
+
 function loadPersistedAuth() {
   try {
     const raw = window.sessionStorage?.getItem(AUTH_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const lastSeenAt = Number(window.sessionStorage?.getItem(AUTH_HEARTBEAT_KEY) || 0);
+    const idleMs = Date.now() - lastSeenAt;
+    if (!Number.isFinite(lastSeenAt) || !lastSeenAt || idleMs < 0 || idleMs > AUTH_RESUME_WINDOW_MS) {
+      clearPersistedAuth();
+      return null;
+    }
+    return parsed;
   } catch (error) {
     console.warn("Не удалось прочитать сохраненную сессию", error);
     return null;
@@ -1104,6 +1141,10 @@ function loadPersistedAuth() {
 }
 
 function persistAuth() {
+  if (!appState.auth.accessToken) {
+    clearPersistedAuth();
+    return;
+  }
   try {
     window.sessionStorage?.setItem(
       AUTH_STORAGE_KEY,
@@ -1114,9 +1155,22 @@ function persistAuth() {
         roleName: appState.auth.roleName || "",
       }),
     );
+    markAuthAlive();
   } catch (error) {
     console.warn("Не удалось сохранить сессию", error);
   }
+}
+
+// Отметку обновляем и по таймеру, и перед уходом со страницы: при F5 пауза
+// считается от момента выгрузки, а не от последнего тика таймера.
+function startAuthHeartbeat() {
+  const beat = () => {
+    if (appState.auth?.accessToken) markAuthAlive();
+  };
+  beat();
+  window.setInterval(beat, AUTH_HEARTBEAT_INTERVAL_MS);
+  window.addEventListener("pagehide", beat);
+  document.addEventListener("visibilitychange", beat);
 }
 
 function applyPersistedAuth() {
