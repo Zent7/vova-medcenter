@@ -14,9 +14,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 The script will:
 
+- stop stale `vova-medcenter-*` preview containers so an old Docker image cannot keep serving the UI/API;
+- stop previous backend/frontend dev processes from this checkout on ports `8000` and `5173`;
 - create/start PostgreSQL with `docker compose -p medcenters up -d db`;
 - use PostgreSQL on `127.0.0.1:5434`;
-- create `backend\.venv` and install Python dependencies if missing;
+- create `backend\.venv` with Python 3.12 or 3.11 and reinstall dependencies when `requirements.txt` changes;
 - install frontend dependencies if `frontend\node_modules` is missing;
 - run Alembic migrations;
 - start the FastAPI backend on `http://127.0.0.1:8000`;

@@ -85,6 +85,19 @@ DOCTOR_ROLES = [
     (13, "chairman", "Председатель", 130),
 ]
 
+DEFAULT_DOCTOR_FULL_NAMES = {
+    "therapist": "Казаков И.В.",
+    "chairman": "Казаков И.В.",
+    "psychiatrist": "Аносов И.Е.",
+    "psychiatrist-narcologist": "Аносов И.Е.",
+    "neurologist": "Казаков И.В.",
+    "otolaryngologist": "Барсуков А.Ф.",
+    "surgeon": "Конюк М.В.",
+    "ophthalmologist": "Дадалина Т.В.",
+    "dermatologist": "Мехдиева Н.Ш.К.",
+    "dentist": "Шадрикова Ю.А.",
+}
+
 SERVICE_DOCTOR_ROLE_IDS = {
     35: [4],
     36: [4],
@@ -630,6 +643,8 @@ def _ensure_service_catalog(db: Session) -> None:
             role.name = name
             role.sort_order = sort_order
             role.is_active = True
+        if hasattr(role, "full_name") and not str(role.full_name or "").strip():
+            role.full_name = DEFAULT_DOCTOR_FULL_NAMES.get(code)
         role_by_legacy_id[legacy_id] = role.id
 
     category_by_group_id: dict[int, int] = {}
