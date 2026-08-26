@@ -38,6 +38,7 @@ from app.services.template_catalog import (
     get_template_override_path,
     get_templates_root,
     sync_document_template_catalog,
+    template_display_position,
     template_has_override,
     template_supports_layout_editing,
 )
@@ -158,10 +159,19 @@ def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
     )
 
 
+def _ordered_template_responses(db: Session) -> list[DocumentTemplateRead]:
+    """List active templates in the order of the customer's service list."""
+    templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
+    ordered = sorted(
+        templates,
+        key=lambda item: (template_display_position(item.file_name), (item.name or "").lower()),
+    )
+    return [_template_response(item) for item in ordered]
+
+
 @router.get("/templates", response_model=list[DocumentTemplateRead])
 def list_document_templates(db: Session = Depends(get_db)) -> list[DocumentTemplateRead]:
-    templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
-    return [_template_response(item) for item in templates]
+    return _ordered_template_responses(db)
 
 
 @router.post("/templates/refresh", response_model=list[DocumentTemplateRead])
@@ -171,8 +181,7 @@ def refresh_document_templates(
 ) -> list[DocumentTemplateRead]:
     sync_document_template_catalog(db)
     db.commit()
-    templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
-    return [_template_response(item) for item in templates]
+    return _ordered_template_responses(db)
 
 
 @router.get("/templates/{template_id}/file")

@@ -1,10 +1,13 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter()]
     [string]$TemplatesDir,
 
     [Parameter()]
-    [string]$SourceDir
+    [string]$SourceDir,
+
+    [Parameter()]
+    [string[]]$Only
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,8 +39,14 @@ $manifest = @(
     @{ FileName = "ВУ.xls"; Sheets = @("Водительская Лицевая", "Водительская Оборотная") },
     @{ FileName = "АМБ_карты_профосмотр_шаблон.xls"; Sheets = @("Амб") },
     @{ FileName = "Выписка из Амб карты (профа).xls"; Sheets = @("ПЗ2") },
-    @{ FileName = "Справка_342н_псих_освид.xls"; Sheets = @("Проф2") }
+    @{ FileName = "Справка_342н_псих_освид.xls"; Sheets = @("Проф2") },
+    @{ FileName = "ПРОФОСМОТР 29Н.xls"; SourceFileName = "ПРОФОСМОТР.xls"; Sheets = @("ПРОФОСМОТР") }
 )
+
+if ($Only) {
+    $manifest = @($manifest | Where-Object { $Only -contains [string]$_.FileName })
+    if ($manifest.Count -eq 0) { throw "Ни один шаблон не совпал с -Only: $([string]::Join(', ', $Only))" }
+}
 
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vova-legacy-xls-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
@@ -50,11 +59,12 @@ try {
     $excel.EnableEvents = $false
 
     foreach ($item in $manifest) {
-        $sourcePath = Join-Path $SourceDir $item.FileName
+        $sourceFileName = if ($item.ContainsKey("SourceFileName")) { [string]$item.SourceFileName } else { [string]$item.FileName }
+        $sourcePath = Join-Path $SourceDir $sourceFileName
         if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
             throw "Не найден исходный шаблон: $sourcePath"
         }
-        $sourceCopy = Join-Path $temporaryRoot $item.FileName
+        $sourceCopy = Join-Path $temporaryRoot $sourceFileName
         Copy-Item -LiteralPath $sourcePath -Destination $sourceCopy
         Unblock-File -LiteralPath $sourceCopy -ErrorAction SilentlyContinue
 

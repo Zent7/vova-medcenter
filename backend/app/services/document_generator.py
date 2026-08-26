@@ -2121,6 +2121,55 @@ def _fill_prof2_xls_sheet(
     )
 
 
+def _fill_prof_conclusion_29n_sheet(
+    source_sheet,
+    target_sheet,
+    context: dict[str, str],
+    client: Client,
+    encounter: Encounter | None,
+    exams_by_role: dict[str, DoctorExam],
+) -> None:
+    """Fill the customer's own 29н conclusion sheet, kept as it is in his folder."""
+    issue_date = encounter.encounter_date if encounter else date.today()
+    position = _first_non_empty(context.get("Post"), context.get("PositionApplied"))
+    if position == "не указано":
+        position = ""
+    harmfulness = context.get("Harmfulness", "")
+    if harmfulness == "не указано":
+        harmfulness = ""
+    chairman = _build_exam_export(exams_by_role.get("chairman"))
+    therapist = _exam_export_with_client_doctor(exams_by_role.get("therapist"), client, "therapist")
+    psychiatrist = _exam_export_with_client_doctor(
+        exams_by_role.get("psychiatrist"), client, "psychiatrist"
+    )
+    narcologist = _exam_export_with_client_doctor(
+        exams_by_role.get("psychiatrist-narcologist"), client, "psychiatrist-narcologist"
+    )
+    signer = _first_non_empty(chairman.get("doctor"), therapist.get("doctor"), context.get("Doctor"))
+    _write_xls_pairs(
+        target_sheet,
+        source_sheet,
+        [
+            ((10, 26), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
+            ((12, 42), str(narcologist.get("doctor") or "")),
+            ((20, 5), context.get("ClientCalc", "")),
+            ((21, 6), _first_non_empty(context.get("SexFull"), context.get("SexCalc"))),
+            ((21, 15), _xls_excel_date(client.birth_date)),
+            ((22, 6), _xls_blank_or_dash(context.get("WorkPlace"))),
+            ((23, 9), _first_non_empty(context.get("CompanyName"), context.get("WorkPlace"))),
+            ((25, 6), _first_non_empty(context.get("Department"), context.get("Subdivision"))),
+            ((27, 13), position),
+            ((27, 42), str(psychiatrist.get("doctor") or "")),
+            ((30, 2), harmfulness),
+            ((33, 14), ""),
+            ((38, 18), signer),
+            ((41, 1), position),
+            ((42, 18), signer),
+            ((44, 3), _xls_excel_date(issue_date)),
+        ],
+    )
+
+
 def _restriction_text(value: object) -> str:
     text = str(value or "").strip().lower()
     if not text or text in {"0", "нет", "false", "no", "не установлено"}:
@@ -4381,6 +4430,12 @@ def _generate_unpreserved_runtime_xls(
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "Проф2")
     if source_sheet and target_sheet:
         _fill_prof2_xls_sheet(source_sheet, target_sheet, context, client, encounter)
+
+    source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "ПРОФОСМОТР")
+    if source_sheet and target_sheet:
+        _fill_prof_conclusion_29n_sheet(
+            source_sheet, target_sheet, context, client, encounter, exams_by_role
+        )
 
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if source_sheet and target_sheet:

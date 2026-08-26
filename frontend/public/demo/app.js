@@ -8776,7 +8776,6 @@ function getDocumentTitle(type) {
   if (type === "lmk_title") return "Личная медицинская книжка";
   if (type === "lmk") return "Печать справки";
   if (type === "prof") return "Заключение 29Н";
-  if (type === "prof_extract") return "Выписка профосмотра";
   if (type === "prof_ambulatory") return "Амбулаторная карта";
   return "Медицинская справка";
 }
@@ -8968,9 +8967,6 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "chod" || normalizedType === "guard") {
     return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   }
-  if (normalizedType === "prof_extract") {
-    return findDocxSafely(["профосмотрвыписка_шаблон", "профосмотр выписка шаблон"], ["профосмотрвыписка", "выписка"], []);
-  }
   if (normalizedType === "prof_ambulatory") {
     return findProfAmbulatoryTemplate() || findDocxSafely(
       ["амб_карты_профосмотр_шаблон", "амб карты профосмотр шаблон", "мед карта профосмотр"],
@@ -8978,7 +8974,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
       [],
     );
   }
-  if (normalizedType === "prof") return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр", "29н"], []);
+  if (normalizedType === "prof") return findNewXls(["профосмотр 29н"]);
   if (normalizedType === "marine") return findDocxSafely(["серт морская шаблон"], ["морская", "marine", "seafarer"], ["драг"]);
   if (normalizedType === "13082") return findDocxSafely(["13082"], ["13082"], []);
   if (normalizedType === "13098") return findDocxSafely(["13098"], ["13098"], []);
@@ -9000,11 +8996,11 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
   if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findNewXls(["гс новый формат"]);
   if (serviceText.includes("охран") || serviceText.includes("чод")) return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
-  if (serviceText.includes("трактор")) return findDocx(["трактроная", "трактор"]) || null;
+  if (serviceText.includes("трактор")) return findNewXls(["трактор лиц ст"]) || null;
   if (serviceText.includes("спорт")) return findNewXls(["спорт"]);
   if (serviceText.includes("экг")) return findStandaloneEkgTemplate();
   if (serviceText.includes("лмк")) return findDocxSafely(["лмк_справка_шаблон", "лмк_шаблон_2"], ["лмк"], []);
-  if (serviceText.includes("профосмотр") || serviceText.includes("29н")) return findDocxSafely(["заключение29н_шаблон"], ["заключение29н", "профосмотр"], ["выписка"]);
+  if (serviceText.includes("профосмотр") || serviceText.includes("29н")) return findNewXls(["профосмотр 29н"]);
   if (serviceText.includes("санатор")) {
     return findNewXls(["скк 72 новый формат"]);
   }
@@ -9051,7 +9047,7 @@ function getChairmanTemplatePrintType(visit, printKind = "conclusion") {
     prof_ambulatory: "prof_ambulatory",
   };
   if (fixedPrintTypes[printKind]) return fixedPrintTypes[printKind];
-  if (config.type === "prof" && printKind === "extract") return "prof_extract";
+  if (config.type === "prof" && printKind === "extract") return "ambulatory_extract";
   return config.printTemplateType || config.templateType;
 }
 

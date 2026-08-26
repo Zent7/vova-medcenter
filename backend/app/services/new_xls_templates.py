@@ -439,11 +439,25 @@ _PROF2_FIELDS = _legacy_fields(
     ),
 )
 
+_PROF_CONCLUSION_29N_FIELDS = _legacy_fields(
+    "ПРОФОСМОТР",
+    (
+        ("blank_number", (10, 26)), ("narcologist", (12, 42)),
+        ("patient_name", (20, 5)), ("sex", (21, 6)), ("birth_date", (21, 15)),
+        ("workplace", (22, 6)), ("company", (23, 9)), ("department", (25, 6)),
+        ("position", (27, 13)), ("psychiatrist", (27, 42)),
+        ("harmfulness", (30, 2)), ("health_group", (33, 14)),
+        ("chairman", (38, 18)), ("position_repeat", (41, 1)),
+        ("occupational_doctor", (42, 18)), ("issue_date", (44, 3)),
+    ),
+)
+
 LEGACY_XLS_TEMPLATE_SPECS: tuple[LegacyXlsTemplateSpec, ...] = (
     LegacyXlsTemplateSpec("ВУ.xls", ("Водительская Лицевая", "Водительская Оборотная"), _DRIVER_FRONT_FIELDS + _DRIVER_BACK_FIELDS),
     LegacyXlsTemplateSpec("АМБ_карты_профосмотр_шаблон.xls", ("Амб",), _AMB_HEADER_FIELDS + _AMB_BLOCK_FIELDS),
     LegacyXlsTemplateSpec("Выписка из Амб карты (профа).xls", ("ПЗ2",), _PZ2_HEADER_FIELDS + _PZ2_DOCTOR_FIELDS),
     LegacyXlsTemplateSpec("Справка_342н_псих_освид.xls", ("Проф2",), _PROF2_FIELDS),
+    LegacyXlsTemplateSpec("ПРОФОСМОТР 29Н.xls", ("ПРОФОСМОТР",), _PROF_CONCLUSION_29N_FIELDS),
 )
 LEGACY_XLS_TEMPLATE_BY_FILE = {spec.file_name.casefold(): spec for spec in LEGACY_XLS_TEMPLATE_SPECS}
 
