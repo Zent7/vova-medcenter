@@ -19,6 +19,7 @@ from app.services.document_generator import (  # noqa: E402
     _chairman_certificate_date_context_overrides,
     _document_doctor_name_for_context,
     _generate_docx,
+    _pool_doctor_context_overrides,
 )
 
 
@@ -196,6 +197,9 @@ class ChairmanCertificateDateTests(unittest.TestCase):
                         "Doctor": "Петров П.П.",
                         **_chairman_certificate_date_context_overrides(template, [self.exam]),
                     }
+                    context.update(
+                        _pool_doctor_context_overrides(template, [self.exam], context)
+                    )
                     output_path = output_dir / template_name
 
                     _generate_docx(TEMPLATES_DIR / template_name, output_path, context)
@@ -232,6 +236,7 @@ class ChairmanCertificateDateTests(unittest.TestCase):
                         self.assertIn("практически здоров", text)
                         self.assertIn("Справка действительна до 05.01.2027", text)
                         self.assertEqual(text.count("Петров П.П."), 3)
+                        self.assertNotIn("[Pool", text)
 
 
 if __name__ == "__main__":

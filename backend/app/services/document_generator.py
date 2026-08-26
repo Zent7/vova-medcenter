@@ -95,6 +95,10 @@ CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
 )
 CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES = frozenset({"082у_шаблон.docx"})
 
+# Справка в бассейн печатает три подписи: строку дерматолога, строку терапевта
+# и итоговую строку «Врач». Каждая берёт фамилию из своего осмотра.
+POOL_CERTIFICATE_TEMPLATE_FILES = frozenset({"cправкабассейн_шаблон.docx"})
+
 # Справка 086у печатается из шаблонов, где фамилии врачей набраны обычным текстом,
 # без маркеров. Строки узнаём по началу абзаца и подставляем врача из осмотра.
 CERTIFICATE_086_DOCUMENT_MARKER = "врача выдавшего медицинскую справку"
@@ -1885,6 +1889,10 @@ def _exam_map(exams: list[DoctorExam]) -> dict[str, DoctorExam]:
     return result
 
 
+def _exam_doctor_name(exam: DoctorExam | None) -> str:
+    return str(getattr(exam, "doctor_name", "") or "").strip()
+
+
 def _first_non_empty(*values: object) -> str:
     for value in values:
         text = str(value or "").strip()
@@ -2636,7 +2644,7 @@ def _new_xls_exam_value(exam: DoctorExam | None, *field_names: str) -> str:
 
 
 def _new_xls_exam_doctor(exam: DoctorExam | None) -> str:
-    return str(getattr(exam, "doctor_name", "") or "").strip()
+    return _exam_doctor_name(exam)
 
 
 def _new_xls_gsu_secondary_page_text(value: str) -> str:
@@ -4632,19 +4640,42 @@ def _chairman_exam_date_context_overrides(exams: list[DoctorExam]) -> dict[str, 
     }
 
 
-def _chairman_certificate_date_context_overrides(
-    template: DocumentTemplate,
-    exams: list[DoctorExam],
-) -> dict[str, str]:
+def _template_file_names(template: DocumentTemplate) -> set[str]:
     candidates = [getattr(template, "file_name", None), getattr(template, "file_path", None)]
-    file_names = {
+    return {
         Path(str(candidate)).name.casefold()
         for candidate in candidates
         if str(candidate or "").strip()
     }
-    if not file_names.intersection(CHAIRMAN_EXAM_DATE_TEMPLATE_FILES):
+
+
+def _chairman_certificate_date_context_overrides(
+    template: DocumentTemplate,
+    exams: list[DoctorExam],
+) -> dict[str, str]:
+    if not _template_file_names(template).intersection(CHAIRMAN_EXAM_DATE_TEMPLATE_FILES):
         return {}
     return _chairman_exam_date_context_overrides(exams)
+
+
+def _pool_doctor_context_overrides(
+    template: DocumentTemplate,
+    exams: list[DoctorExam],
+    context: dict[str, str],
+) -> dict[str, str]:
+    if not _template_file_names(template).intersection(POOL_CERTIFICATE_TEMPLATE_FILES):
+        return {}
+
+    exam_map = _exam_map(exams)
+    dermatologist = _exam_doctor_name(exam_map.get("dermatologist"))
+    therapist = _exam_doctor_name(exam_map.get("therapist"))
+    chairman = _exam_doctor_name(exam_map.get("chairman"))
+    issuer = _first_non_empty(chairman, therapist, context.get("Doctor"))
+    return {
+        "PoolDermatologistDoctor": _first_non_empty(dermatologist, issuer),
+        "PoolTherapistDoctor": _first_non_empty(therapist, issuer),
+        "PoolIssuerDoctor": issuer,
+    }
 
 
 def _chairman_082_context_overrides(
@@ -4652,13 +4683,7 @@ def _chairman_082_context_overrides(
     exams: list[DoctorExam],
     blank_form: BlankForm | None,
 ) -> dict[str, str]:
-    candidates = [getattr(template, "file_name", None), getattr(template, "file_path", None)]
-    file_names = {
-        Path(str(candidate)).name.casefold()
-        for candidate in candidates
-        if str(candidate or "").strip()
-    }
-    if not file_names.intersection(CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES):
+    if not _template_file_names(template).intersection(CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES):
         return {}
 
     chairman = _exam_map(exams).get("chairman")
@@ -5431,6 +5456,7 @@ def generate_document(
             }
         )
         context.update(_chairman_certificate_date_context_overrides(template, document_exams))
+        context.update(_pool_doctor_context_overrides(template, document_exams, context))
         context.setdefault("CertificateNumber", "")
         sequential_number = ""
         if blank_form is not None:
