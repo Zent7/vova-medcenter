@@ -223,6 +223,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
             "АМБ_карты_профосмотр_шаблон.xls": ["Амб"],
             "Выписка из Амб карты (профа).xls": ["ПЗ2"],
             "Справка_342н_псих_освид.xls": ["Проф2"],
+            "ПРОФОСМОТР 29Н.xls": ["ПРОФОСМОТР"],
         }
         for file_name, sheet_names in expected_sheets.items():
             with self.subTest(template=file_name):

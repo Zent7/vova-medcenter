@@ -80,10 +80,8 @@ FOLDER_TEMPLATE_SOURCE_NAMES = {
     "ЛМК_справка_шаблон.docx": "лмк спр (3).docx",
     "ПРОФОСМОТР 29Н.xls": "ПРОФОСМОТР.xls",
     "Охрана_шаблон.docx": "ОХРАНА ВОРД.docx",
-    "Псих. осв.docx": "Псих.docx",
     "Справка_342н_псих_освид.xls": "псих освид.xls",
     "трактор лиц ст.xls": "Для трактора.xls",
-    "Трактроная_новый-шаблон.docx": "тракт лицевая.xls",
 }
 ACTIVE_TEMPLATE_FILE_NAMES = frozenset(TEMPLATE_DISPLAY_NAMES)
 
