@@ -63,9 +63,9 @@ from app.services.new_xls_templates import (
     PLACEHOLDER_LENGTH,
     LegacyXlsTemplateSpec,
     NewXlsTemplateSpec,
-    legacy_xls_placeholder,
+    legacy_xls_markers,
     legacy_xls_marker_locations,
-    new_xls_placeholder,
+    new_xls_markers,
 )
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -4016,9 +4016,11 @@ def _patch_new_xls_placeholders(
     spans = _new_xls_sst_payload_spans(workbook_stream)
     replacements: list[tuple[int, bytes]] = []
     for coordinate in spec.dynamic_cells:
-        placeholder = new_xls_placeholder(spec, coordinate)
-        marker = placeholder[:6].encode("utf-16le")
-        marker_offsets = _new_xls_marker_offsets(workbook_stream, spans, marker)
+        marker_offsets = [
+            offset
+            for marker in new_xls_markers(spec, coordinate)
+            for offset in _new_xls_marker_offsets(workbook_stream, spans, marker.encode("utf-16le"))
+        ]
         if not marker_offsets:
             raise ValueError(
                 f"В {spec.file_name} не найден скрытый маркер ячейки "
@@ -4099,8 +4101,11 @@ def _patch_legacy_xls_placeholders(
     spans = _new_xls_sst_payload_spans(workbook_stream)
     replacements: list[tuple[int, bytes]] = []
     for field in spec.fields:
-        marker = legacy_xls_placeholder(spec, field)[:6].encode("utf-16le")
-        marker_offsets = _new_xls_marker_offsets(workbook_stream, spans, marker)
+        marker_offsets = [
+            offset
+            for marker in legacy_xls_markers(spec, field)
+            for offset in _new_xls_marker_offsets(workbook_stream, spans, marker.encode("utf-16le"))
+        ]
         if not marker_offsets:
             raise ValueError(f"В {spec.file_name} не найден скрытый маркер поля «{field.field_id}»")
         if len(marker_offsets) != 1:

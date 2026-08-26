@@ -24,6 +24,7 @@ from app.services.new_xls_templates import (  # noqa: E402
     NEW_XLS_TEMPLATE_SPECS,
     legacy_xls_placeholder,
     new_xls_placeholder,
+    old_legacy_xls_placeholder,
     strip_new_xls_placeholder_padding,
     validate_editable_xls_template,
     validate_legacy_editable_xls_template,
@@ -227,6 +228,33 @@ class NewXlsTemplatesTests(unittest.TestCase):
             with self.subTest(template=file_name):
                 book = xlrd.open_workbook(str(TEMPLATES_DIR / file_name), formatting_info=True)
                 self.assertEqual(book.sheet_names(), sheet_names)
+
+    def test_hidden_xls_markers_do_not_use_visible_variation_selectors(self):
+        for spec in NEW_XLS_TEMPLATE_SPECS:
+            with self.subTest(template=spec.file_name):
+                for coordinate in spec.dynamic_cells:
+                    placeholder = new_xls_placeholder(spec, coordinate)
+                    self.assertFalse(any(0xFE00 <= ord(character) <= 0xFE0F for character in placeholder))
+
+        for spec in LEGACY_XLS_TEMPLATE_SPECS:
+            with self.subTest(template=spec.file_name):
+                for field in spec.fields:
+                    placeholder = legacy_xls_placeholder(spec, field)
+                    self.assertFalse(any(0xFE00 <= ord(character) <= 0xFE0F for character in placeholder))
+
+    def test_legacy_validation_accepts_previous_hidden_marker_encoding(self):
+        spec = next(item for item in LEGACY_XLS_TEMPLATE_SPECS if item.file_name == "ВУ.xls")
+        field = spec.fields[0]
+
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            edited_path = Path(temporary_dir) / spec.file_name
+            source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+            edited_book = copy_xls_workbook(source_book)
+            sheet_index = source_book.sheet_names().index(field.sheet_name)
+            edited_book.get_sheet(sheet_index).write(*field.source_cell, old_legacy_xls_placeholder(spec, field))
+            edited_book.save(str(edited_path))
+
+            validate_legacy_editable_xls_template(edited_path, spec)
 
     def test_legacy_fields_generate_after_being_moved(self):
         legacy_client = SimpleNamespace(

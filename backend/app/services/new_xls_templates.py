@@ -8,9 +8,14 @@ import xlrd
 
 Cell = tuple[int, int]
 PLACEHOLDER_LENGTH = 240
-PLACEHOLDER_START = "\u2060"
-PLACEHOLDER_END = "\u2063"
-PLACEHOLDER_FILL = "\u200b"
+PLACEHOLDER_ZERO = "\u200b"
+PLACEHOLDER_ONE = "\u200c"
+PLACEHOLDER_JOIN = "\u200d"
+PLACEHOLDER_START = f"{PLACEHOLDER_ZERO}{PLACEHOLDER_ONE}{PLACEHOLDER_JOIN}{PLACEHOLDER_ONE}"
+PLACEHOLDER_END = f"{PLACEHOLDER_ONE}{PLACEHOLDER_JOIN}{PLACEHOLDER_ONE}{PLACEHOLDER_ZERO}"
+PLACEHOLDER_FILL = PLACEHOLDER_ZERO
+OLD_PLACEHOLDER_START = "\u2060"
+OLD_PLACEHOLDER_END = "\u2063"
 
 
 def _row_cells(row: int, start_col: int, end_col: int) -> tuple[Cell, ...]:
@@ -443,22 +448,61 @@ LEGACY_XLS_TEMPLATE_SPECS: tuple[LegacyXlsTemplateSpec, ...] = (
 LEGACY_XLS_TEMPLATE_BY_FILE = {spec.file_name.casefold(): spec for spec in LEGACY_XLS_TEMPLATE_SPECS}
 
 
-def legacy_xls_placeholder(spec: LegacyXlsTemplateSpec, field: LegacyXlsField) -> str:
-    field_index = spec.fields.index(field) + 1
-    identity = "".join(chr(0xFE00 + int(digit, 16)) for digit in f"{field_index:04X}")
+def _placeholder_identity(index: int) -> str:
+    return "".join(
+        PLACEHOLDER_ONE if bit == "1" else PLACEHOLDER_ZERO
+        for digit in f"{index:04X}"
+        for bit in f"{int(digit, 16):04b}"
+    )
+
+
+def _old_placeholder_identity(index: int) -> str:
+    return "".join(chr(0xFE00 + int(digit, 16)) for digit in f"{index:04X}")
+
+
+def _fixed_placeholder(identity: str) -> str:
     marker = f"{PLACEHOLDER_START}{identity}{PLACEHOLDER_END}"
     return marker + PLACEHOLDER_FILL * (PLACEHOLDER_LENGTH - len(marker))
+
+
+def _old_fixed_placeholder(identity: str) -> str:
+    marker = f"{OLD_PLACEHOLDER_START}{identity}{OLD_PLACEHOLDER_END}"
+    return marker + PLACEHOLDER_FILL * (PLACEHOLDER_LENGTH - len(marker))
+
+
+def legacy_xls_placeholder(spec: LegacyXlsTemplateSpec, field: LegacyXlsField) -> str:
+    field_index = spec.fields.index(field) + 1
+    return _fixed_placeholder(_placeholder_identity(field_index))
+
+
+def old_legacy_xls_placeholder(spec: LegacyXlsTemplateSpec, field: LegacyXlsField) -> str:
+    field_index = spec.fields.index(field) + 1
+    return _old_fixed_placeholder(_old_placeholder_identity(field_index))
+
+
+def legacy_xls_markers(spec: LegacyXlsTemplateSpec, field: LegacyXlsField) -> tuple[str, ...]:
+    return (
+        legacy_xls_placeholder(spec, field)[: len(PLACEHOLDER_START) + 16 + len(PLACEHOLDER_END)],
+        old_legacy_xls_placeholder(spec, field)[:6],
+    )
 
 
 def new_xls_placeholder(spec: NewXlsTemplateSpec, coordinate: Cell) -> str:
     cell_index = spec.dynamic_cells.index(coordinate) + 1
-    identity = "".join(chr(0xFE00 + int(digit, 16)) for digit in f"{cell_index:04X}")
-    marker = f"{PLACEHOLDER_START}{identity}{PLACEHOLDER_END}"
-    return marker + PLACEHOLDER_FILL * (PLACEHOLDER_LENGTH - len(marker))
+    return _fixed_placeholder(_placeholder_identity(cell_index))
+
+
+def old_new_xls_placeholder(spec: NewXlsTemplateSpec, coordinate: Cell) -> str:
+    cell_index = spec.dynamic_cells.index(coordinate) + 1
+    return _old_fixed_placeholder(_old_placeholder_identity(cell_index))
 
 
 def new_xls_marker(spec: NewXlsTemplateSpec, coordinate: Cell) -> str:
-    return new_xls_placeholder(spec, coordinate)[:6]
+    return new_xls_placeholder(spec, coordinate)[: len(PLACEHOLDER_START) + 16 + len(PLACEHOLDER_END)]
+
+
+def new_xls_markers(spec: NewXlsTemplateSpec, coordinate: Cell) -> tuple[str, ...]:
+    return (new_xls_marker(spec, coordinate), old_new_xls_placeholder(spec, coordinate)[:6])
 
 
 def validate_editable_xls_template(path: Path, spec: NewXlsTemplateSpec) -> None:
@@ -478,21 +522,19 @@ def validate_editable_xls_template(path: Path, spec: NewXlsTemplateSpec) -> None
         )
 
     sheet = book.sheet_by_name(spec.sheet_name)
-    locations: dict[str, list[Cell]] = {
-        new_xls_marker(spec, coordinate): [] for coordinate in spec.dynamic_cells
-    }
+    locations: dict[Cell, list[Cell]] = {coordinate: [] for coordinate in spec.dynamic_cells}
     for row_index in range(sheet.nrows):
         for col_index in range(sheet.ncols):
             value = sheet.cell_value(row_index, col_index)
             if not isinstance(value, str):
                 continue
-            for marker in locations:
-                if marker in value:
-                    locations[marker].append((row_index, col_index))
+            for coordinate in spec.dynamic_cells:
+                markers = new_xls_markers(spec, coordinate)
+                if any(marker in value for marker in markers):
+                    locations[coordinate].append((row_index, col_index))
 
     for coordinate in spec.dynamic_cells:
-        marker = new_xls_marker(spec, coordinate)
-        marker_locations = locations[marker]
+        marker_locations = locations[coordinate]
         if not marker_locations:
             raise ValueError(
                 f"Удалён скрытый маркер поля {spec.dynamic_cells.index(coordinate) + 1}. "
@@ -517,23 +559,21 @@ def legacy_xls_marker_locations(
     book,
     spec: LegacyXlsTemplateSpec,
 ) -> dict[str, tuple[str, int, int]]:
-    locations: dict[str, list[tuple[str, int, int]]] = {
-        legacy_xls_placeholder(spec, field)[:6]: [] for field in spec.fields
-    }
+    locations: dict[str, list[tuple[str, int, int]]] = {field.field_id: [] for field in spec.fields}
     for sheet in book.sheets():
         for row_index in range(sheet.nrows):
             for col_index in range(sheet.ncols):
                 value = sheet.cell_value(row_index, col_index)
                 if not isinstance(value, str):
                     continue
-                for marker in locations:
-                    if marker in value:
-                        locations[marker].append((sheet.name, row_index, col_index))
+                for field in spec.fields:
+                    markers = legacy_xls_markers(spec, field)
+                    if any(marker in value for marker in markers):
+                        locations[field.field_id].append((sheet.name, row_index, col_index))
 
     result: dict[str, tuple[str, int, int]] = {}
     for field in spec.fields:
-        marker = legacy_xls_placeholder(spec, field)[:6]
-        marker_locations = locations[marker]
+        marker_locations = locations[field.field_id]
         if not marker_locations:
             raise ValueError(f"Удалён скрытый маркер поля «{field.field_id}»")
         if len(marker_locations) != 1:
@@ -567,9 +607,11 @@ def validate_legacy_editable_xls_template(path: Path, spec: LegacyXlsTemplateSpe
 def strip_new_xls_placeholder_padding(value: object) -> str:
     return (
         str(value or "")
-        .replace(PLACEHOLDER_START, "")
-        .replace(PLACEHOLDER_END, "")
+        .replace(OLD_PLACEHOLDER_START, "")
+        .replace(OLD_PLACEHOLDER_END, "")
         .replace(PLACEHOLDER_FILL, "")
+        .replace(PLACEHOLDER_ONE, "")
+        .replace(PLACEHOLDER_JOIN, "")
         .replace("\x00", "")
         .strip()
     )
