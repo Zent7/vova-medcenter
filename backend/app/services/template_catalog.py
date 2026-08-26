@@ -59,6 +59,14 @@ def template_display_position(file_name: str) -> int:
     return TEMPLATE_DISPLAY_POSITION.get(file_name, len(TEMPLATE_ORDER))
 
 
+SERVICE_LIST_TEMPLATE_FILE_NAMES = frozenset(file_name for file_name, _ in SERVICE_LIST_TEMPLATE_ORDER)
+
+
+def template_is_in_service_list(file_name: str) -> bool:
+    """True for the blanks the customer listed; the rest stay printable but unlisted."""
+    return file_name in SERVICE_LIST_TEMPLATE_FILE_NAMES
+
+
 FOLDER_TEMPLATE_SOURCE_NAMES = {
     "082у_шаблон.docx": "18)082 у.docx",
     "086у.жен_шаблон.docx": "Медицинская справка 086 мед авто.docx",

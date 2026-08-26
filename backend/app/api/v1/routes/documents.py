@@ -40,6 +40,7 @@ from app.services.template_catalog import (
     sync_document_template_catalog,
     template_display_position,
     template_has_override,
+    template_is_in_service_list,
     template_supports_layout_editing,
 )
 
@@ -155,6 +156,7 @@ def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
         update={
             "supports_layout_editing": template_supports_layout_editing(template.file_name),
             "has_override": template_has_override(template.file_name),
+            "in_service_list": template_is_in_service_list(template.file_name),
         }
     )
 

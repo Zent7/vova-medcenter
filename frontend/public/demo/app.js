@@ -7517,7 +7517,11 @@ function renderVisitPanel(selectedClient) {
 
 function renderTemplatesPage() {
   const doctorTemplates = getDoctorTemplates();
-  const documentTemplates = Array.isArray(data.documentTemplates) ? data.documentTemplates : [];
+  // Печать берёт шаблоны из того же списка, поэтому лишние строки прячем здесь,
+  // а не выключаем в каталоге — иначе договор и XML-выгрузки останутся без шаблона.
+  const documentTemplates = (Array.isArray(data.documentTemplates) ? data.documentTemplates : []).filter(
+    (template) => template.in_service_list !== false,
+  );
   const canManageTemplates = ["admin", "chairman"].includes(appState.auth.roleCode);
 
   return `
