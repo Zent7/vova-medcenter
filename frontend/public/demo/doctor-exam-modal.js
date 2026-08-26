@@ -2151,11 +2151,7 @@
     window.attachDateMask?.(form);
 
     const saveDraftFromCurrentForm = () => {
-      const examId = form.dataset.examId;
-      const template = window.getDoctorTemplate(form.dataset.doctorRoleId);
-      if (!examId || !template) return;
-      const values = collectFormData(form, template);
-      window.saveDoctorExamDraft?.(examId, values);
+      captureDoctorExamDraftFromDom();
     };
 
     form.querySelectorAll("input, textarea, select").forEach((field) => {
@@ -2352,5 +2348,22 @@
     return renderDefaultModal(template, exam, client);
   }
 
+  // Забирает в черновик осмотра все, что сейчас набрано в открытой карточке
+  // врача. Вызывается на каждый ввод и перед перерисовкой страницы: карточка
+  // всегда собирается заново из полей осмотра, поэтому несохраненный ввод
+  // должен попасть туда раньше, чем страница перерисуется.
+  function captureDoctorExamDraftFromDom() {
+    const form = document.querySelector("[data-doctor-exam-form]");
+    if (!form) return false;
+
+    const doctorRoleId = form.dataset.doctorRoleId;
+    const template = window.getDoctorTemplate?.(doctorRoleId);
+    if (!template) return false;
+
+    const values = collectFormData(form, template);
+    return Boolean(window.saveDoctorExamDraft?.(form.dataset.examId, values, { doctorRoleId }));
+  }
+
+  window.captureDoctorExamDraftFromDom = captureDoctorExamDraftFromDom;
   window.renderDoctorExamModal = renderDoctorExamModal;
 })();

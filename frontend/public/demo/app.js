@@ -5023,10 +5023,26 @@ async function saveDoctorExam(examId, updatedFields, options = {}) {
   }
 }
 
-function saveDoctorExamDraft(examId, updatedFields) {
+// Идентификатор осмотра в открытой карточке устаревает, когда осмотры
+// перезагружаются с сервера. Раньше черновик в этот момент было некуда
+// записать, и все набранное молча пропадало при следующей перерисовке.
+// Подстраховываемся поиском по открытой карточке, но только если это карточка
+// того же врача, иначе данные попали бы в чужой осмотр.
+function findDoctorExamForDraft(examId, doctorRoleId = "") {
+  const byId = data.doctorExams.find((item) => String(item.id) === String(examId));
+  if (byId) return byId;
+
+  const modalState = appState.doctorExamModal;
+  if (!modalState?.isOpen || !doctorRoleId) return null;
+  if (String(modalState.doctorRoleId) !== String(doctorRoleId)) return null;
+
+  return getDoctorExam(modalState.clientId, modalState.visitId, modalState.doctorRoleId);
+}
+
+function saveDoctorExamDraft(examId, updatedFields, options = {}) {
   ensureVisitsStore();
 
-  const exam = data.doctorExams.find((item) => item.id === examId);
+  const exam = findDoctorExamForDraft(examId, options.doctorRoleId);
   if (!exam) return false;
 
   exam.fields = {
@@ -13195,6 +13211,10 @@ function renderApp() {
   let contentWasRendered = false;
 
   if (contentRoot && !preserveFocusedDoctorForm) {
+    // Карточка врача собирается заново из сохраненных полей осмотра. Все, что
+    // врач успел набрать, но еще не сохранил, сначала забираем из формы в
+    // черновик - иначе перерисовка очистила бы карточку прямо во время ввода.
+    window.captureDoctorExamDraftFromDom?.();
     contentRoot.innerHTML = repairDemoText(`
       ${renderContent()}
       ${window.renderDoctorExamModal ? window.renderDoctorExamModal() : ""}
