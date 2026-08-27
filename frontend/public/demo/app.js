@@ -8874,8 +8874,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     findTemplateSafely(docxTemplates, preferredKeys, fallbackKeywords, excludedKeywords);
   const findNewXls = (preferredKeys) =>
     findTemplateSafely(xlsTemplates, preferredKeys, [], []);
-  const findChodXlsTemplate = () =>
-    findTemplateSafely(xlsTemplates, ["ву"], ["чод"], []);
+  const findChodXlsTemplate = () => findTemplateSafely(xlsTemplates, [], ["чод"], []);
   const findStandaloneEkgTemplate = () => findDocxSafely(["экг_шаблон", "экг шаблон"], ["экг"], ["спорт"]);
   const getClientSexKey = () => {
     const sex = String(client?.sex || client?.rawApiClient?.sex || client?.gender || client?.rawApiClient?.gender || "").toLowerCase();
@@ -8984,7 +8983,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "13098") return findDocxSafely(["13098"], ["13098"], []);
 
   if (normalizedType === "driver" || (normalizedType !== "medical" && serviceText.includes("водител"))) {
-    return findTemplateSafely(xlsTemplates, ["ву"], ["водительская"], ["тракторная"]) || null;
+    return findNewXls(["водительская лицевая"]) || null;
   }
 
   if (serviceText.includes("082") || serviceText.includes("границ")) return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
@@ -9534,6 +9533,8 @@ const DRIVER_PRINT_VARIANTS = [
   { id: "tractor_front", label: "Лицевая трактора", errorLabel: "лицевую сторону тракторной справки" },
   { id: "tractor_back", label: "Оборот трактора", errorLabel: "оборот тракторной справки" },
 ];
+const DRIVER_FRONT_TEMPLATE_FILE_NAME = "водительская лицевая.xls";
+const DRIVER_BACK_TEMPLATE_FILE_NAME = "водительская обратн ст.xls";
 const TRACTOR_FRONT_TEMPLATE_FILE_NAME = "трактор лиц ст.xls";
 const TRACTOR_BACK_TEMPLATE_FILE_NAME = "трактор об ст.xls";
 
@@ -10413,11 +10414,15 @@ async function openDriverPrintFlow(options = {}) {
     const skipConfirmation = Boolean(options.skipConfirmation);
     const variant = DRIVER_PRINT_VARIANTS.find((item) => item.id === variantId);
     if (!variant || !flowState.currentBlank?.id) return;
-    const variantTemplate = variant.id === "tractor_front"
-      ? findDocumentTemplateByExactFileName(TRACTOR_FRONT_TEMPLATE_FILE_NAME)
-      : variant.id === "tractor_back"
-        ? findDocumentTemplateByExactFileName(TRACTOR_BACK_TEMPLATE_FILE_NAME)
-        : flowState.template;
+    const variantTemplateFileName = {
+      driver_front: DRIVER_FRONT_TEMPLATE_FILE_NAME,
+      driver_back: DRIVER_BACK_TEMPLATE_FILE_NAME,
+      tractor_front: TRACTOR_FRONT_TEMPLATE_FILE_NAME,
+      tractor_back: TRACTOR_BACK_TEMPLATE_FILE_NAME,
+    }[variant.id];
+    const variantTemplate = variantTemplateFileName
+      ? findDocumentTemplateByExactFileName(variantTemplateFileName) || flowState.template
+      : flowState.template;
     if (!variantTemplate) {
       flowState.error = variant.id === "tractor_front"
         ? "Не найден шаблон лицевой стороны тракторной справки"

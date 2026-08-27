@@ -453,7 +453,8 @@ _PROF_CONCLUSION_29N_FIELDS = _legacy_fields(
 )
 
 LEGACY_XLS_TEMPLATE_SPECS: tuple[LegacyXlsTemplateSpec, ...] = (
-    LegacyXlsTemplateSpec("ВУ.xls", ("Водительская Лицевая", "Водительская Оборотная"), _DRIVER_FRONT_FIELDS + _DRIVER_BACK_FIELDS),
+    LegacyXlsTemplateSpec("водительская лицевая.xls", ("Водительская Лицевая",), _DRIVER_FRONT_FIELDS),
+    LegacyXlsTemplateSpec("водительская обратн ст.xls", ("Водительская Оборотная",), _DRIVER_BACK_FIELDS),
     LegacyXlsTemplateSpec("АМБ_карты_профосмотр_шаблон.xls", ("Амб",), _AMB_HEADER_FIELDS + _AMB_BLOCK_FIELDS),
     LegacyXlsTemplateSpec("Выписка из Амб карты (профа).xls", ("ПЗ2",), _PZ2_HEADER_FIELDS + _PZ2_DOCTOR_FIELDS),
     LegacyXlsTemplateSpec("Справка_342н_псих_освид.xls", ("Проф2",), _PROF2_FIELDS),

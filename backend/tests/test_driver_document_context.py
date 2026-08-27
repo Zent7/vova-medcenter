@@ -258,7 +258,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             self.assertEqual(back_sheet.cell_value(row_index, 62), "")
 
     def test_driver_xls_front_sheet_writes_issue_date_as_text(self):
-        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская лицевая.xls"
         source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
         target_book = copy_xls_workbook(source_book)
         test_client = client()
@@ -302,7 +302,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertTrue(all(front_sheet.colinfo_map[col].hidden for col in range(27, 66)))
 
     def test_driver_xls_back_sheet_marks_operator_selected_categories_only(self):
-        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"
         source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
         target_book = copy_xls_workbook(source_book)
         test_client = client(admission_category="A, B, C, BE, M")
@@ -332,10 +332,9 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
 
     def test_driver_print_variants_keep_only_selected_side(self):
-        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
-        for variant, expected_sheet in [
-            ("driver_front", "Водительская Лицевая"),
-            ("driver_back", "Водительская Оборотная"),
+        for variant, expected_sheet, template_path in [
+            ("driver_front", "Водительская Лицевая", Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская лицевая.xls"),
+            ("driver_back", "Водительская Оборотная", Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"),
         ]:
             source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
             target_book = copy_xls_workbook(source_book)
@@ -349,7 +348,6 @@ class DriverDocumentContextTests(unittest.TestCase):
             self.assertEqual(result_book.sheet_names(), [expected_sheet])
 
     def test_driver_runtime_xls_print_variant_keeps_only_selected_side(self):
-        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
         context = {
             "ClientCalc": "Иванов Иван Иванович",
             "BirthDateCalc_DAY": "11",
@@ -368,9 +366,9 @@ class DriverDocumentContextTests(unittest.TestCase):
         }
         runtime_values = {"exams": [], "service_names": []}
 
-        for variant, expected_sheet in [
-            ("driver_front", "Водительская Лицевая"),
-            ("driver_back", "Водительская Оборотная"),
+        for variant, expected_sheet, template_path in [
+            ("driver_front", "Водительская Лицевая", Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская лицевая.xls"),
+            ("driver_back", "Водительская Оборотная", Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"),
         ]:
             output_path = Path(tempfile.gettempdir()) / f"driver_runtime_{variant}_single_side_test.xls"
             _generate_runtime_xls(
@@ -396,23 +394,25 @@ class DriverDocumentContextTests(unittest.TestCase):
         """Без print_variant файл собирается другим путём: xlwt склеивает колонки
         одинаковой ширины в диапазоны COLINFO, и хвост листа уходит за 65-ю колонку."""
 
-        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "ВУ.xls"
-        output_path = Path(tempfile.gettempdir()) / "driver_runtime_no_variant_columns_test.xls"
-
-        _generate_runtime_xls(
-            template_path,
-            output_path,
-            {"ClientCalc": "Иванов Иван Иванович"},
-            client(admission_category="B"),
-            SimpleNamespace(encounter_date=date(2026, 7, 31)),
-            {"exams": [], "service_names": []},
-        )
-
-        result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
-        for sheet_name, first_hidden_col in [
-            ("Водительская Лицевая", 27),
-            ("Водительская Оборотная", 34),
+        for sheet_name, first_hidden_col, template_name in [
+            ("Водительская Лицевая", 27, "водительская лицевая.xls"),
+            ("Водительская Оборотная", 34, "водительская обратн ст.xls"),
         ]:
+            template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / template_name
+            output_path = (
+                Path(tempfile.gettempdir()) / f"driver_runtime_no_variant_columns_{first_hidden_col}_test.xls"
+            )
+
+            _generate_runtime_xls(
+                template_path,
+                output_path,
+                {"ClientCalc": "Иванов Иван Иванович"},
+                client(admission_category="B"),
+                SimpleNamespace(encounter_date=date(2026, 7, 31)),
+                {"exams": [], "service_names": []},
+            )
+
+            result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
             with self.subTest(sheet=sheet_name):
                 colinfo = result_book.sheet_by_name(sheet_name).colinfo_map
                 duplicate_cols = [col for col in range(first_hidden_col, 66) if col in colinfo]

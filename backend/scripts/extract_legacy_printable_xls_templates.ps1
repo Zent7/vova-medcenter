@@ -36,7 +36,8 @@ finally {
 }
 
 $manifest = @(
-    @{ FileName = "ВУ.xls"; Sheets = @("Водительская Лицевая", "Водительская Оборотная") },
+    @{ FileName = "водительская лицевая.xls"; SourceFileName = "ВУ.xls"; Sheets = @("Водительская Лицевая") },
+    @{ FileName = "водительская обратн ст.xls"; SourceFileName = "ВУ.xls"; Sheets = @("Водительская Оборотная") },
     @{ FileName = "АМБ_карты_профосмотр_шаблон.xls"; Sheets = @("Амб") },
     @{ FileName = "Выписка из Амб карты (профа).xls"; Sheets = @("ПЗ2") },
     @{ FileName = "Справка_342н_псих_освид.xls"; Sheets = @("Проф2") },

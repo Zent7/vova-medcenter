@@ -67,7 +67,7 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
         return next(
             path
             for path in self._templates_dir().glob("*.xls")
-            if path.name == "ВУ.xls" or path.name.startswith("ВСЕ")
+            if path.name == "водительская лицевая.xls" or path.name.startswith("ВСЕ")
         )
 
     def _client(self):

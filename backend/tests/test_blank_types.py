@@ -140,7 +140,7 @@ class BlankTypeTests(unittest.TestCase):
                 DocumentTemplate.file_name == "ЛМК_справка_шаблон.docx"
             ).one()
             driver_template = db.query(DocumentTemplate).filter(
-                DocumentTemplate.file_name == "ВУ.xls"
+                DocumentTemplate.file_name == "водительская лицевая.xls"
             ).one()
 
             self.assertEqual(gims_template.blank_type, BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE)

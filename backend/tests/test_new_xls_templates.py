@@ -219,7 +219,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
 
     def test_legacy_workbooks_contain_only_the_printable_sheets(self):
         expected_sheets = {
-            "ВУ.xls": ["Водительская Лицевая", "Водительская Оборотная"],
+            "водительская лицевая.xls": ["Водительская Лицевая"],
+            "водительская обратн ст.xls": ["Водительская Оборотная"],
             "АМБ_карты_профосмотр_шаблон.xls": ["Амб"],
             "Выписка из Амб карты (профа).xls": ["ПЗ2"],
             "Справка_342н_псих_освид.xls": ["Проф2"],
@@ -244,7 +245,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
                     self.assertFalse(any(0xFE00 <= ord(character) <= 0xFE0F for character in placeholder))
 
     def test_legacy_validation_accepts_previous_hidden_marker_encoding(self):
-        spec = next(item for item in LEGACY_XLS_TEMPLATE_SPECS if item.file_name == "ВУ.xls")
+        spec = next(item for item in LEGACY_XLS_TEMPLATE_SPECS if item.file_name == "водительская лицевая.xls")
         field = spec.fields[0]
 
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -732,7 +733,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 settings.document_template_overrides_dir = original_override_dir
 
     def test_invalid_legacy_upload_is_atomic(self):
-        spec = next(item for item in LEGACY_XLS_TEMPLATE_SPECS if item.file_name == "ВУ.xls")
+        spec = next(item for item in LEGACY_XLS_TEMPLATE_SPECS if item.file_name == "водительская лицевая.xls")
         template = DocumentTemplate(
             id=702,
             code="driver-editable-test",
