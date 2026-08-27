@@ -17,7 +17,7 @@
   --excel-col-birth: clamp(82px, 5.2vw, 104px);
   --excel-col-registration: clamp(150px, 11vw, 230px);
   --excel-col-category: clamp(96px, 6.6vw, 138px);
-  --excel-col-reference: clamp(66px, 4.4vw, 84px);
+  --excel-col-reference: clamp(96px, 6vw, 124px);
   --excel-col-gynecologist: clamp(34px, 2.4vw, 46px);
   --excel-col-stomatologist: clamp(34px, 2.4vw, 46px);
   --excel-col-dermatologist: clamp(34px, 2.4vw, 46px);
@@ -33,7 +33,6 @@
   --excel-col-chairman: clamp(34px, 2.4vw, 46px);
   --excel-col-glasses: clamp(34px, 2.4vw, 46px);
   --excel-col-note: clamp(140px, 9vw, 190px);
-  --excel-col-cardNumber: clamp(78px, 5vw, 104px);
   --excel-col-organization: clamp(116px, 7.4vw, 160px);
   --excel-col-agent: clamp(110px, 7vw, 150px);
   --dashboard-shell-sticky-top: 44px;
@@ -2447,7 +2446,6 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
     var(--excel-col-chairman)
     var(--excel-col-glasses)
     var(--excel-col-note)
-    var(--excel-col-cardNumber)
     var(--excel-col-organization)
     var(--excel-col-agent);
   align-items: stretch;

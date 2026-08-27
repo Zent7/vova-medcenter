@@ -488,7 +488,6 @@ const columnKeys = [
   "chairman",
   "glasses",
   "note",
-  "cardNumber",
   "organization",
   "agent",
 ];
@@ -5679,7 +5678,6 @@ function buildExcelRows(clients) {
       stamp: "",
       note: client.note || "",
       encounterDate: client.encounterDate || "",
-      blankNumber: getDashboardBlankNumber(client, status),
       organization: client.organization || "",
       agent: client.agent || "",
     };
@@ -6042,7 +6040,6 @@ function renderSketchHome() {
     "Председатель",
     "Очки",
     "Примечания",
-    "Номер бланка",
     "Организация",
     "Агент",
   ];
@@ -6194,7 +6191,6 @@ function renderSketchHome() {
                           ${renderExcelDoctorCell(row, "chairman")}
                           ${renderExcelMarkCell(row.glasses)}
                           <span>${escapeHtml(row.note)}</span>
-                          <span>${escapeHtml(row.blankNumber)}</span>
                           <span>${escapeHtml(row.organization)}</span>
                           <span>${escapeHtml(row.agent)}</span>
                         </button>
