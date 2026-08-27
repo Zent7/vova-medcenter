@@ -2121,6 +2121,16 @@ def _fill_prof2_xls_sheet(
     )
 
 
+def _health_group_mark(value: object) -> str:
+    """29н отводит под группу здоровья одну узкую клетку, поэтому из записи
+    вида "II группа здоровья" берём только номер, а свободный текст оставляем."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.match(r"^(IV|III|II|I|V)(?![A-Za-z])", text, re.IGNORECASE)
+    return match.group(1).upper() if match else text
+
+
 def _fill_prof_conclusion_29n_sheet(
     source_sheet,
     target_sheet,
@@ -2161,7 +2171,7 @@ def _fill_prof_conclusion_29n_sheet(
             ((27, 13), position),
             ((27, 42), str(psychiatrist.get("doctor") or "")),
             ((30, 2), harmfulness),
-            ((33, 14), ""),
+            ((33, 14), _health_group_mark(context.get("HealthGroup"))),
             ((38, 18), signer),
             ((41, 1), position),
             ((42, 18), signer),
