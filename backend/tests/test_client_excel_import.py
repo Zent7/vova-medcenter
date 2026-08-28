@@ -18,6 +18,7 @@ import app.models  # noqa: E402,F401
 from app.api.v1.routes.imports import (  # noqa: E402
     build_client_payload,
     commit_client_excel_import,
+    find_existing_client_for_import,
     parse_optional_date,
     preview_client_excel_import,
     merge_registration_text,
@@ -171,6 +172,34 @@ class ClientExcelImportTests(unittest.TestCase):
         self.db.refresh(deleted)
         self.assertIsNotNone(deleted.deleted_at)
         self.assertEqual(deleted.last_name, "Удалённый")
+
+    def test_same_snils_with_different_birth_date_creates_a_new_client(self):
+        existing = Client(
+            patient_number=9,
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            birth_date=date(1990, 5, 20),
+            snils="999-888-777 66",
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        row = self._row(
+            snils="999-888-777 66",
+            birth_date=date(1991, 5, 20),
+            service=None,
+        )
+        self.assertEqual(find_existing_client_for_import(self.db, row), (None, None))
+        with patch(
+            "app.api.v1.routes.imports.read_client_excel_rows",
+            return_value=[row],
+        ):
+            result = commit_client_excel_import(self.request, db=self.db)
+
+        self.assertEqual(result.created, 1)
+        self.assertEqual(result.updated, 0)
+        self.assertEqual(self.db.scalar(select(func.count(Client.id))), 2)
 
     def test_service_warning_rows_counts_every_row_not_only_shown(self):
         rows = [
@@ -363,8 +392,30 @@ class ServiceValueAliasTests(unittest.TestCase):
             Service(id=2, code="s2", name="Продление ЛМК", price=Decimal("3500.00"), is_active=True),
             Service(id=3, code="s3", name="ГИМС", price=Decimal("3500.00"), is_active=True),
             Service(id=4, code="s4", name="Профосмотр", price=Decimal("3500.00"), is_active=True),
-            Service(id=5, code="s5", name="Медицинская комиссия", price=Decimal("4000.00"), is_active=True),
-            Service(id=6, code="s6", name="Медицинская комиссия", price=Decimal("3500.00"), is_active=True),
+            Service(
+                id=5,
+                legacy_source_id=8,
+                code="s5",
+                name="Медицинская комиссия",
+                price=Decimal("4000.00"),
+                is_active=True,
+            ),
+            Service(
+                id=6,
+                legacy_source_id=29,
+                code="s6",
+                name="Медицинская комиссия",
+                price=Decimal("3500.00"),
+                is_active=True,
+            ),
+            Service(
+                id=7,
+                legacy_source_id=7,
+                code="s7",
+                name="071У",
+                price=Decimal("4000.00"),
+                is_active=True,
+            ),
         ]
         self.lookup = build_service_lookup(self.services)
 
@@ -377,6 +428,8 @@ class ServiceValueAliasTests(unittest.TestCase):
             ("Продление ЛМК", "Продление ЛМК"),
             ("ГИМС", "ГИМС"),
             ("Проф", "Профосмотр"),
+            ("Водительская", "Медицинская комиссия"),
+            ("Тракторная", "071У"),
         ]:
             with self.subTest(value=value):
                 service, warning = self._resolve(value)
@@ -384,8 +437,12 @@ class ServiceValueAliasTests(unittest.TestCase):
                 self.assertEqual(service.name, expected)
                 self.assertIsNone(warning)
 
+        driver, driver_warning = self._resolve("Водительская")
+        self.assertEqual(driver.id, 5)
+        self.assertIsNone(driver_warning)
+
     def test_ambiguous_and_unknown_values_are_left_to_the_operator(self):
-        for value in ("Водительская", "Тракторная"):
+        for value in ("Медицинская комиссия", "Несуществующая услуга"):
             with self.subTest(value=value):
                 service, warning = self._resolve(value)
                 self.assertIsNone(service)

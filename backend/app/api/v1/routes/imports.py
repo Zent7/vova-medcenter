@@ -511,13 +511,19 @@ def json_safe_import_row(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-# Колонка «Тип документа» в шаблоне заполняется сокращениями, а в справочнике
-# услуги названы полностью. Сопоставляем только однозначные сокращения;
-# неоднозначные («Водительская» — две «Медицинские комиссии» с разной ценой)
-# намеренно оставляем кассиру.
+# Колонка «Тип документа» в заводском шаблоне на самом деле содержит тип
+# медкомиссии. Два значения нельзя подобрать по имени услуги: в каталоге
+# водительская комиссия названа «Медицинская комиссия» и представлена двумя
+# ценами, а тракторная — «071У». Номера в legacy-каталоге стабильны, поэтому
+# для значений именно этого шаблона выбираем заданную позицию каталога.
+TEMPLATE_SERVICE_LEGACY_IDS = {
+    "водительская": 8,
+    "тракторная": 7,
+}
+
+# Остальные сокращения из шаблона можно безопасно сопоставить по названию.
 SERVICE_VALUE_ALIASES = {
     "проф": "профосмотр",
-    "водительская": "медицинская комиссия",
 }
 
 
@@ -539,6 +545,16 @@ def build_service_lookup(services: list[Service]) -> dict[str, list[Service]]:
             key = normalize_service_lookup(value)
             if key:
                 lookup.setdefault(key, []).append(service)
+
+    services_by_legacy_id = {
+        service.legacy_source_id: service
+        for service in services
+        if service.legacy_source_id is not None
+    }
+    for template_value, legacy_source_id in TEMPLATE_SERVICE_LEGACY_IDS.items():
+        service = services_by_legacy_id.get(legacy_source_id)
+        if service is not None:
+            lookup[normalize_service_lookup(template_value)] = [service]
     return lookup
 
 
@@ -656,10 +672,11 @@ def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[C
             return client, "по № пациента"
 
     snils = normalize_text(row.get("snils"))
-    if snils:
-        client = find_first_client(db, Client.snils == snils)
+    birth_date = row.get("birth_date")
+    if snils and birth_date:
+        client = find_first_client(db, Client.snils == snils, Client.birth_date == birth_date)
         if client is not None:
-            return client, "по СНИЛС"
+            return client, "по СНИЛС и дате рождения"
 
     document_series = normalize_text(row.get("document_series"))
     document_number = normalize_text(row.get("document_number"))
@@ -675,7 +692,6 @@ def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[C
     last_name = normalize_text(row.get("last_name"))
     first_name = normalize_text(row.get("first_name"))
     middle_name = normalize_text(row.get("middle_name"))
-    birth_date = row.get("birth_date")
     if last_name and first_name and birth_date:
         client = find_first_client(
             db,
