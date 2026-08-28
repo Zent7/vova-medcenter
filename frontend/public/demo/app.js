@@ -190,14 +190,13 @@ const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
 const DEMO_STORAGE_KEY = "vova-medcenter-demo-state-v2";
 const COLUMN_WIDTHS_STORAGE_KEY = "vova-medcenter-column-widths-v1";
 const SELECTION_STORAGE_KEY = "vova-medcenter-selection-v1";
-const AUTH_STORAGE_KEY = "vova-medcenter-auth-v1";
-const AUTH_HEARTBEAT_KEY = "vova-medcenter-auth-seen-v1";
-// Пока вкладка с программой открыта, она каждые 2 секунды отмечается "жива".
-// При загрузке сессия принимается только если отметка свежая: перезагрузка
-// страницы укладывается в пару секунд, а закрытый браузер такую отметку не
-// обновляет, поэтому после его закрытия программа снова спросит логин.
-const AUTH_HEARTBEAT_INTERVAL_MS = 2000;
-const AUTH_RESUME_WINDOW_MS = 10000;
+// Ключи, под которыми сессию хранили прошлые версии программы. Сейчас она живет
+// только в памяти открытой страницы, а эти записи при загрузке вычищаются.
+const LEGACY_AUTH_STORAGE_KEYS = ["vova-medcenter-auth-v1", "vova-medcenter-auth-seen-v1"];
+// Два часа без единого действия - и сессия заканчивается сама: программу,
+// оставленную открытой на ночь, утром встречает экран входа.
+const AUTH_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const AUTH_IDLE_CHECK_INTERVAL_MS = 30000;
 const MEDICAL_RECORD_PANEL_HEIGHT_KEY = "vova-medcenter-medical-record-height-v1";
 
 // navItems объявляется ниже по файлу, а applyPersistedDemoState() вызывается раньше,
@@ -428,7 +427,7 @@ function ensureGuardCertificateService() {
 loadColumnWidths();
 initializeFallbackServiceCatalog();
 applyPersistedDemoState();
-startAuthHeartbeat();
+startAuthIdleWatch();
 ensureGuardCertificateService();
 
 const pageTitle = document.getElementById("page-title");
@@ -436,6 +435,8 @@ const navRoot = document.getElementById("nav");
 const contentRoot = document.getElementById("content");
 const loginModal = document.getElementById("loginModal");
 const authStatusLabel = document.getElementById("authStatusLabel");
+const showLoginButton = document.getElementById("showLogin");
+const signOutButton = document.getElementById("signOut");
 const actionModal = document.getElementById("actionModal");
 const actionModalTitle = document.getElementById("actionModalTitle");
 const actionModalContent = document.getElementById("actionModalContent");
@@ -1096,116 +1097,61 @@ function loadPersistedDemoState() {
   }
 }
 
-// Сессия живет в sessionStorage и переживает обновление страницы. Одного
-// sessionStorage мало: браузер восстанавливает его вместе с вкладками
+// Сессия живет только в памяти открытой страницы: ни localStorage, ни
+// sessionStorage. Браузер восстанавливает sessionStorage вместе с вкладками
 // ("продолжить с того же места", Ctrl+Shift+T, перезапуск после перезагрузки
-// Windows), поэтому закрытие браузера само по себе из программы не выводило.
-// Ключом служит отметка времени: пока вкладка открыта, она обновляется, а
-// закрытый браузер обновлять ее не может. Логин и пароль в браузере
-// по-прежнему не хранятся.
-function markAuthAlive() {
-  try {
-    window.sessionStorage?.setItem(AUTH_HEARTBEAT_KEY, String(Date.now()));
-  } catch (error) {
-    // sessionStorage может быть недоступен: тогда сессия просто не переживет перезагрузку.
-  }
+// Windows), поэтому закрытие браузера из программы не выводило. Отметка "вкладка
+// жива" тоже не спасала: закрыть и тут же открыть браузер укладывается в те же
+// секунды, что и обычная перезагрузка страницы, а отличить одно от другого
+// браузер не дает. Теперь любая загрузка страницы начинается с экрана входа, а
+// сохраненные данные и выбранный клиент остаются на месте.
+function createEmptyAuth() {
+  return { accessToken: "", userName: "", roleCode: "", roleName: "" };
 }
 
 function clearPersistedAuth() {
   try {
-    window.sessionStorage?.removeItem(AUTH_STORAGE_KEY);
-    window.sessionStorage?.removeItem(AUTH_HEARTBEAT_KEY);
+    LEGACY_AUTH_STORAGE_KEYS.forEach((key) => {
+      window.sessionStorage?.removeItem(key);
+      window.localStorage?.removeItem(key);
+    });
   } catch (error) {
     console.warn("Не удалось очистить сохраненную сессию", error);
   }
 }
 
-function loadPersistedAuth() {
-  try {
-    const raw = window.sessionStorage?.getItem(AUTH_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (!parsed || typeof parsed !== "object") return null;
+function resetAuthForNewPageLoad() {
+  clearPersistedAuth();
+  appState.auth = createEmptyAuth();
+}
 
-    const lastSeenAt = Number(window.sessionStorage?.getItem(AUTH_HEARTBEAT_KEY) || 0);
-    const idleMs = Date.now() - lastSeenAt;
-    if (!Number.isFinite(lastSeenAt) || !lastSeenAt || idleMs < 0 || idleMs > AUTH_RESUME_WINDOW_MS) {
-      clearPersistedAuth();
-      return null;
+let lastAuthActivityAt = Date.now();
+
+function markAuthActivity() {
+  lastAuthActivityAt = Date.now();
+}
+
+// Простой считаем по часам, а не по тикам таймера: у спящего компьютера и у
+// свернутой вкладки таймеры замирают, а время идет.
+function startAuthIdleWatch() {
+  ["pointerdown", "keydown", "wheel", "touchstart"].forEach((eventName) => {
+    window.addEventListener(eventName, markAuthActivity, { capture: true, passive: true });
+  });
+  window.setInterval(() => {
+    if (!appState.auth?.accessToken) {
+      markAuthActivity();
+      return;
     }
-    return parsed;
-  } catch (error) {
-    console.warn("Не удалось прочитать сохраненную сессию", error);
-    return null;
-  }
-}
-
-function persistAuth() {
-  if (!appState.auth.accessToken) {
-    clearPersistedAuth();
-    return;
-  }
-  try {
-    window.sessionStorage?.setItem(
-      AUTH_STORAGE_KEY,
-      JSON.stringify({
-        accessToken: appState.auth.accessToken || "",
-        userName: appState.auth.userName || "",
-        roleCode: appState.auth.roleCode || "",
-        roleName: appState.auth.roleName || "",
-      }),
-    );
-    markAuthAlive();
-  } catch (error) {
-    console.warn("Не удалось сохранить сессию", error);
-  }
-}
-
-// Отметку обновляем и по таймеру, и перед уходом со страницы: при F5 пауза
-// считается от момента выгрузки, а не от последнего тика таймера.
-function startAuthHeartbeat() {
-  const beat = () => {
-    if (appState.auth?.accessToken) markAuthAlive();
-  };
-  beat();
-  window.setInterval(beat, AUTH_HEARTBEAT_INTERVAL_MS);
-  window.addEventListener("pagehide", beat);
-  document.addEventListener("visibilitychange", beat);
-}
-
-function applyPersistedAuth() {
-  const savedAuth = loadPersistedAuth() || {};
-  appState.auth = {
-    accessToken: typeof savedAuth.accessToken === "string" ? savedAuth.accessToken : "",
-    userName: typeof savedAuth.userName === "string" ? savedAuth.userName : "",
-    roleCode: typeof savedAuth.roleCode === "string" ? savedAuth.roleCode : "",
-    roleName: typeof savedAuth.roleName === "string" ? savedAuth.roleName : "",
-  };
-}
-
-// Выход из режима сотрудника: и по кнопке «Выйти», и когда сервер сообщил, что
-// сеанс больше не действует — например, после кнопки «Выйти у всех».
-function signOutDemoSession(message = "") {
-  appState.auth = {
-    accessToken: "",
-    userName: "",
-    roleCode: "",
-    roleName: "",
-  };
-  data.staffUsers = [];
-  data.staffRoles = [];
-  data.staffError = "";
-  data.staffCreateError = "";
-  appState.page = "start";
-  renderApp();
-  persistDemoState();
-  if (message) showToast(message);
+    if (Date.now() - lastAuthActivityAt < AUTH_IDLE_TIMEOUT_MS) return;
+    signOutDemoStaff({ message: "Программа два часа была без работы. Войдите заново." });
+  }, AUTH_IDLE_CHECK_INTERVAL_MS);
 }
 
 // Сервер отвечает 401, когда токен обесценен завершением всех сеансов. Без этой
 // обработки сотрудник остался бы на рабочем экране и видел только ошибки запросов.
 function handleSessionEndedByServer() {
   if (!appState.auth.accessToken) return;
-  signOutDemoSession("Сеанс завершен администратором. Войдите заново.");
+  signOutDemoStaff({ message: "Сеанс завершен администратором. Войдите заново." });
 }
 
 function applyDefaultDoctorDirectory() {
@@ -1220,7 +1166,7 @@ function applyDefaultDoctorDirectory() {
 }
 
 function applyPersistedDemoState() {
-  applyPersistedAuth();
+  resetAuthForNewPageLoad();
 
   const saved = loadPersistedDemoState();
   if (!saved || typeof saved !== "object") {
@@ -1358,7 +1304,6 @@ function applyPersistedDemoState() {
 }
 
 function persistDemoState() {
-  persistAuth();
   try {
     const selectedClient = getSelectedClient();
     const activeVisit = selectedClient ? getCurrentVisitForClient(selectedClient.id) : null;
@@ -3038,11 +2983,34 @@ async function loginDemoStaff(login, password) {
 async function endAllDemoSessions() {
   const result = await apiRequest("/auth/logout-all", { method: "POST", headers: {} });
   const endedSessions = Number(result?.ended_sessions || 0);
-  signOutDemoSession(
-    endedSessions
+  signOutDemoStaff({
+    message: endedSessions
       ? `Сеансы завершены: ${endedSessions}. Все сотрудники войдут заново.`
       : "Все сеансы завершены. Сотрудники войдут заново.",
-  );
+  });
+}
+
+// Один выход на всю программу: и для кнопки в шапке, и для кнопки на странице
+// сотрудника, и для кнопки «Выйти у всех», и для автовыхода по простою.
+function signOutDemoStaff({ message = "Вы вышли из программы" } = {}) {
+  appState.auth = createEmptyAuth();
+  clearPersistedAuth();
+  data.staffUsers = [];
+  data.staffRoles = [];
+  data.staffError = "";
+  data.staffCreateError = "";
+  appState.page = "start";
+  appState.doctorExamModal = {
+    isOpen: false,
+    clientId: null,
+    visitId: null,
+    doctorRoleId: null,
+  };
+  loginModal?.classList.add("hidden");
+  actionModal?.classList.add("hidden");
+  renderApp();
+  persistDemoState();
+  showToast(message);
 }
 
 async function loadStaffWorkspace() {
@@ -12329,7 +12297,7 @@ function bindContentEvents() {
   const employeeSignOutButton = document.getElementById("employeeSignOut");
   if (employeeSignOutButton) {
     employeeSignOutButton.addEventListener("click", () => {
-      signOutDemoSession("Вы вышли из режима сотрудника");
+      signOutDemoStaff({ message: "Вы вышли из режима сотрудника" });
     });
   }
 
@@ -13265,13 +13233,20 @@ function renderApp() {
     appState.activeVisitId = null;
   }
 
+  const isSignedIn = Boolean(appState.auth.accessToken);
+
   if (authStatusLabel) {
     authStatusLabel.textContent = repairDemoText(
-      appState.auth.accessToken
+      isSignedIn
         ? `${appState.auth.userName || "Сотрудник"} · ${appState.auth.roleName || "Без роли"}`
         : "Гость",
     );
   }
+
+  // Кнопки входа и выхода стоят в шапке, а она общая для всех разделов, поэтому
+  // "Выйти" доступна на любой странице и любой роли.
+  showLoginButton?.classList.toggle("hidden", isSignedIn);
+  signOutButton?.classList.toggle("hidden", !isSignedIn);
 
   if (pageTitle) {
     pageTitle.textContent = repairDemoText(getPageTitle());
@@ -13350,10 +13325,15 @@ if (centerSelect) {
   });
 }
 
-const showLoginButton = document.getElementById("showLogin");
 if (showLoginButton) {
   showLoginButton.addEventListener("click", () => {
     loginModal?.classList.remove("hidden");
+  });
+}
+
+if (signOutButton) {
+  signOutButton.addEventListener("click", () => {
+    signOutDemoStaff();
   });
 }
 
@@ -13363,6 +13343,7 @@ document.getElementById("performLogin")?.addEventListener("click", async () => {
 
   try {
     await loginDemoStaff(login, password);
+    markAuthActivity();
     loginModal?.classList.add("hidden");
     showToast(`Вход выполнен: ${appState.auth.userName || login}`);
     if (appState.auth.roleCode === "admin" || appState.auth.roleCode === "chairman") {
