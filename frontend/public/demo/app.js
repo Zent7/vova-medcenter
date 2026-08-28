@@ -3006,6 +3006,10 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
     visitId: null,
     doctorRoleId: null,
   };
+  // Спортивная карточка и заглушка услуги живут в отдельном модуле и рисуются
+  // поверх любой страницы. Без этого осмотр предыдущего пациента остался бы
+  // висеть поверх экрана входа - с фамилией, диагнозом и кнопкой «Сохранить».
+  window.closeServiceCardOverlays?.();
   loginModal?.classList.add("hidden");
   actionModal?.classList.add("hidden");
   renderApp();
