@@ -301,7 +301,8 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   line-height: 1.1;
 }
 
-.topbar-actions .primary-button {
+.topbar-actions .primary-button,
+.topbar-actions .ghost-button {
   border-radius: 11px;
   padding: 7px 10px;
   font-size: 13px;
@@ -6311,7 +6312,8 @@ body[data-page="dashboard"] .workspace-center__label {
   white-space: nowrap;
 }
 
-body[data-page="dashboard"] .topbar-actions .primary-button {
+body[data-page="dashboard"] .topbar-actions .primary-button,
+body[data-page="dashboard"] .topbar-actions .ghost-button {
   flex: 0 0 auto;
 }
 
