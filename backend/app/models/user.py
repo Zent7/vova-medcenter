@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.security import generate_session_epoch
 from app.db.base import Base
 from app.models.mixins import TimestampMixin
 
@@ -28,6 +29,7 @@ class User(TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    session_epoch: Mapped[str] = mapped_column(String(32), default=generate_session_epoch)
 
     center: Mapped["Center | None"] = relationship("Center")
     role: Mapped[Role] = relationship(Role)

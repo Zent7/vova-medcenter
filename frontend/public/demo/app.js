@@ -1182,6 +1182,32 @@ function applyPersistedAuth() {
   };
 }
 
+// Выход из режима сотрудника: и по кнопке «Выйти», и когда сервер сообщил, что
+// сеанс больше не действует — например, после кнопки «Выйти у всех».
+function signOutDemoSession(message = "") {
+  appState.auth = {
+    accessToken: "",
+    userName: "",
+    roleCode: "",
+    roleName: "",
+  };
+  data.staffUsers = [];
+  data.staffRoles = [];
+  data.staffError = "";
+  data.staffCreateError = "";
+  appState.page = "start";
+  renderApp();
+  persistDemoState();
+  if (message) showToast(message);
+}
+
+// Сервер отвечает 401, когда токен обесценен завершением всех сеансов. Без этой
+// обработки сотрудник остался бы на рабочем экране и видел только ошибки запросов.
+function handleSessionEndedByServer() {
+  if (!appState.auth.accessToken) return;
+  signOutDemoSession("Сеанс завершен администратором. Войдите заново.");
+}
+
 function applyDefaultDoctorDirectory() {
   if (!data.doctorDirectory || typeof data.doctorDirectory !== "object") {
     data.doctorDirectory = {};
@@ -2750,6 +2776,9 @@ async function apiRequest(path, options = {}) {
       } else {
         detail = errorText;
       }
+      if (response.status === 401 && !path.startsWith("/auth/login")) {
+        window.setTimeout(handleSessionEndedByServer, 0);
+      }
       throw new Error(detail || `HTTP ${response.status}`);
     }
 
@@ -2946,14 +2975,41 @@ async function resolveCenterIdForVisit(visit, client) {
   throw new Error(`Не удалось определить центр для обращения: ${candidateNames.join(", ") || "центр не указан"}`);
 }
 
+// Раньше председатель входил по зашитому в код токену, минуя сервер. Теперь токен
+// выдает только сервер: в нем есть метка сеанса, без которой «Выйти у всех» не
+// смогло бы обесценить чужие сеансы. Локальный вход остается лишь на случай, когда
+// backend вообще не отвечает.
+const OFFLINE_CHAIRMAN_SESSION = {
+  accessToken: "demo-offline-chairman",
+  userName: "Председатель комиссии",
+  roleCode: "chairman",
+  roleName: "Председатель",
+};
+
+function isBackendUnreachableError(error) {
+  const message = error?.message || String(error || "");
+  return (
+    message.includes("Failed to fetch") ||
+    message.includes("NetworkError") ||
+    message.includes("Backend недоступен") ||
+    message.includes("Сервер не ответил")
+  );
+}
+
 async function loginDemoStaff(login, password) {
-  if (String(login).trim() === "chairman" && String(password).trim() === "chairman123") {
-    appState.auth = {
-      accessToken: "demo-token-2",
-      userName: "Председатель комиссии",
-      roleCode: "chairman",
-      roleName: "Председатель",
-    };
+  const isOfflineChairman =
+    String(login).trim() === "chairman" && String(password).trim() === "chairman123";
+
+  let response;
+  try {
+    response = await apiRequest("/auth/login", {
+      method: "POST",
+      body: { login, password },
+      headers: {},
+    });
+  } catch (error) {
+    if (!isOfflineChairman || !isBackendUnreachableError(error)) throw error;
+    appState.auth = { ...OFFLINE_CHAIRMAN_SESSION };
     persistDemoState();
     return {
       access_token: appState.auth.accessToken,
@@ -2963,12 +3019,6 @@ async function loginDemoStaff(login, password) {
     };
   }
 
-  const response = await apiRequest("/auth/login", {
-    method: "POST",
-    body: { login, password },
-    headers: {},
-  });
-
   appState.auth = {
     accessToken: response.access_token || "",
     userName: response.user_name || "",
@@ -2977,6 +3027,17 @@ async function loginDemoStaff(login, password) {
   };
   persistDemoState();
   return response;
+}
+
+// Завершает сеансы всех сотрудников, включая того, кто нажал кнопку.
+async function endAllDemoSessions() {
+  const result = await apiRequest("/auth/logout-all", { method: "POST", headers: {} });
+  const endedSessions = Number(result?.ended_sessions || 0);
+  signOutDemoSession(
+    endedSessions
+      ? `Сеансы завершены: ${endedSessions}. Все сотрудники войдут заново.`
+      : "Все сеансы завершены. Сотрудники войдут заново.",
+  );
 }
 
 async function loadStaffWorkspace() {
@@ -6449,6 +6510,7 @@ function renderStubPage(title) {
 function renderEmployeePage() {
   const isChairman = canManageEmployeeWorkspace();
   const isAdmin = appState.auth.roleCode === "admin";
+  const canEndAllSessions = isChairman || isAdmin;
   const userName = appState.auth.userName || "Не авторизован";
   const roleName = appState.auth.roleName || "Нет роли";
 
@@ -6476,6 +6538,11 @@ function renderEmployeePage() {
         <button class="primary-button" id="openEmployeeLogin">${appState.auth.accessToken ? "Сменить пользователя" : "Войти по логину"}</button>
         <button class="ghost-button" id="refreshEmployeeStaff" ${isChairman ? "" : "disabled"}>Обновить список</button>
         <button class="ghost-button" id="employeeSignOut" ${appState.auth.accessToken ? "" : "disabled"}>Выйти</button>
+        ${
+          canEndAllSessions
+            ? `<button class="ghost-button danger-button" id="employeeSignOutEveryone" ${appState.auth.accessToken ? "" : "disabled"}>Выйти у всех</button>`
+            : ""
+        }
       </div>
 
       ${data.staffError ? `<div class="note employee-note employee-note--error">${escapeHtml(data.staffError)}</div>` : ""}
@@ -12257,20 +12324,25 @@ function bindContentEvents() {
   const employeeSignOutButton = document.getElementById("employeeSignOut");
   if (employeeSignOutButton) {
     employeeSignOutButton.addEventListener("click", () => {
-      appState.auth = {
-        accessToken: "",
-        userName: "",
-        roleCode: "",
-        roleName: "",
-      };
-      data.staffUsers = [];
-      data.staffRoles = [];
-      data.staffError = "";
-      data.staffCreateError = "";
-      appState.page = "start";
-      renderApp();
-      persistDemoState();
-      showToast("Вы вышли из режима сотрудника");
+      signOutDemoSession("Вы вышли из режима сотрудника");
+    });
+  }
+
+  const employeeSignOutEveryoneButton = document.getElementById("employeeSignOutEveryone");
+  if (employeeSignOutEveryoneButton) {
+    employeeSignOutEveryoneButton.addEventListener("click", async () => {
+      const confirmed = window.confirm(
+        "Завершить сеансы всех сотрудников? Все, включая вас, вернутся на экран входа.",
+      );
+      if (!confirmed) return;
+      employeeSignOutEveryoneButton.disabled = true;
+      try {
+        await endAllDemoSessions();
+      } catch (error) {
+        employeeSignOutEveryoneButton.disabled = false;
+        data.staffError = humanizeApiError(error, "Не удалось завершить сеансы");
+        renderApp();
+      }
     });
   }
 

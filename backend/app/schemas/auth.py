@@ -26,3 +26,7 @@ class LoginResponse(BaseModel):
     user_name: str
     role_code: str
     role_name: str
+
+
+class LogoutAllResponse(BaseModel):
+    ended_sessions: int
