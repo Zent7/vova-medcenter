@@ -22,9 +22,15 @@ from app.services.document_generator import (  # noqa: E402
 from app.services.new_xls_templates import (  # noqa: E402
     LEGACY_XLS_TEMPLATE_SPECS,
     NEW_XLS_TEMPLATE_SPECS,
+    hidden_legacy_xls_placeholder,
+    hidden_new_xls_placeholder,
+    legacy_xls_marker_locations,
+    legacy_xls_markers,
     legacy_xls_placeholder,
+    new_xls_marker,
     new_xls_placeholder,
     old_legacy_xls_placeholder,
+    old_new_xls_placeholder,
     strip_new_xls_placeholder_padding,
     validate_editable_xls_template,
     validate_legacy_editable_xls_template,
@@ -244,19 +250,88 @@ class NewXlsTemplatesTests(unittest.TestCase):
                     placeholder = legacy_xls_placeholder(spec, field)
                     self.assertFalse(any(0xFE00 <= ord(character) <= 0xFE0F for character in placeholder))
 
-    def test_legacy_validation_accepts_previous_hidden_marker_encoding(self):
-        spec = next(item for item in LEGACY_XLS_TEMPLATE_SPECS if item.file_name == "водительская лицевая.xls")
-        field = spec.fields[0]
+    def test_templates_expose_readable_field_labels(self):
+        """The customer edits the layout, so every field shows «[Метка]»."""
+        for spec in NEW_XLS_TEMPLATE_SPECS:
+            with self.subTest(template=spec.file_name):
+                book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+                sheet = book.sheet_by_name(spec.sheet_name)
+                markers = set()
+                for coordinate in spec.dynamic_cells:
+                    marker = new_xls_marker(spec, coordinate)
+                    self.assertRegex(marker, r"^\[[^\[\]]+\]$")
+                    self.assertNotIn(marker, markers)
+                    markers.add(marker)
+                    self.assertEqual(
+                        strip_new_xls_placeholder_padding(sheet.cell_value(*coordinate)),
+                        marker,
+                    )
 
+        for spec in LEGACY_XLS_TEMPLATE_SPECS:
+            with self.subTest(template=spec.file_name):
+                book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+                locations = legacy_xls_marker_locations(book, spec)
+                markers = set()
+                for field in spec.fields:
+                    marker = legacy_xls_markers(spec, field)[0]
+                    self.assertRegex(marker, r"^\[[^\[\]]+\]$")
+                    self.assertNotIn(marker, markers)
+                    markers.add(marker)
+                    sheet_name, row_index, col_index = locations[field.field_id]
+                    self.assertEqual(
+                        strip_new_xls_placeholder_padding(
+                            book.sheet_by_name(sheet_name).cell_value(row_index, col_index)
+                        ),
+                        marker,
+                    )
+
+    def test_validation_rejects_a_hand_typed_label(self):
+        """A retyped «[ФИО]» has no padding, so patching it would corrupt the file."""
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
+        coordinate = spec.dynamic_cells[0]
         with tempfile.TemporaryDirectory() as temporary_dir:
             edited_path = Path(temporary_dir) / spec.file_name
             source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
             edited_book = copy_xls_workbook(source_book)
-            sheet_index = source_book.sheet_names().index(field.sheet_name)
-            edited_book.get_sheet(sheet_index).write(*field.source_cell, old_legacy_xls_placeholder(spec, field))
+            edited_book.get_sheet(0).write(*coordinate, new_xls_marker(spec, coordinate))
             edited_book.save(str(edited_path))
 
-            validate_legacy_editable_xls_template(edited_path, spec)
+            with self.assertRaisesRegex(ValueError, "нельзя вводить вручную"):
+                validate_editable_xls_template(edited_path, spec)
+
+    def test_legacy_validation_accepts_previous_hidden_marker_encoding(self):
+        """A template downloaded before the labels shipped still uploads."""
+        spec = next(item for item in LEGACY_XLS_TEMPLATE_SPECS if item.file_name == "водительская лицевая.xls")
+        field = spec.fields[0]
+
+        for build_placeholder in (old_legacy_xls_placeholder, hidden_legacy_xls_placeholder):
+            with self.subTest(encoding=build_placeholder.__name__):
+                with tempfile.TemporaryDirectory() as temporary_dir:
+                    edited_path = Path(temporary_dir) / spec.file_name
+                    source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+                    edited_book = copy_xls_workbook(source_book)
+                    sheet_index = source_book.sheet_names().index(field.sheet_name)
+                    edited_book.get_sheet(sheet_index).write(
+                        *field.source_cell, build_placeholder(spec, field)
+                    )
+                    edited_book.save(str(edited_path))
+
+                    validate_legacy_editable_xls_template(edited_path, spec)
+
+    def test_validation_accepts_previous_hidden_marker_encoding(self):
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
+        coordinate = spec.dynamic_cells[0]
+
+        for build_placeholder in (old_new_xls_placeholder, hidden_new_xls_placeholder):
+            with self.subTest(encoding=build_placeholder.__name__):
+                with tempfile.TemporaryDirectory() as temporary_dir:
+                    edited_path = Path(temporary_dir) / spec.file_name
+                    source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+                    edited_book = copy_xls_workbook(source_book)
+                    edited_book.get_sheet(0).write(*coordinate, build_placeholder(spec, coordinate))
+                    edited_book.save(str(edited_path))
+
+                    validate_editable_xls_template(edited_path, spec)
 
     def test_legacy_fields_generate_after_being_moved(self):
         legacy_client = SimpleNamespace(
@@ -395,7 +470,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
             missing_book = copy_xls_workbook(source_book)
             missing_book.get_sheet(0).write(*field.source_cell, "")
             missing_book.save(str(missing_path))
-            with self.assertRaisesRegex(ValueError, "Удалён скрытый маркер"):
+            with self.assertRaisesRegex(ValueError, "Удалена метка поля"):
                 validate_legacy_editable_xls_template(missing_path, spec)
 
             duplicate_path = temporary_path / "duplicate.xls"
@@ -644,7 +719,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
             missing_book = copy_xls_workbook(source_book)
             missing_book.get_sheet(0).write(*coordinate, "")
             missing_book.save(str(missing_path))
-            with self.assertRaisesRegex(ValueError, "Удалён скрытый маркер"):
+            with self.assertRaisesRegex(ValueError, "Удалена метка поля"):
                 validate_editable_xls_template(missing_path, spec)
 
             duplicate_path = temporary_path / "duplicate.xls"

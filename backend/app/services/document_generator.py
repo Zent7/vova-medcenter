@@ -65,7 +65,9 @@ from app.services.new_xls_templates import (
     NewXlsTemplateSpec,
     legacy_xls_markers,
     legacy_xls_marker_locations,
+    new_xls_marker,
     new_xls_markers,
+    strip_new_xls_placeholder_padding,
 )
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -3845,6 +3847,17 @@ def _new_xls_display_value(book, sheet, row_index: int, col_index: int) -> str:
     return str(cell.value or "")
 
 
+def _new_xls_generated_value(value: str, markers: frozenset[str]) -> str:
+    """Drop a placeholder the generator never overwrote.
+
+    A readable «[Метка]» left in the intermediate workbook means the field had
+    no value, so the printed document must show an empty cell instead of the
+    label itself.
+    """
+
+    return "" if strip_new_xls_placeholder_padding(value) in markers else value
+
+
 def _new_xls_workbook_stream(
     file_bytes: bytes,
 ) -> tuple[bytes, list[tuple[int, int, int]]]:
@@ -4082,13 +4095,13 @@ def _patch_new_xls_placeholders(
         ]
         if not marker_offsets:
             raise ValueError(
-                f"В {spec.file_name} не найден скрытый маркер ячейки "
-                f"R{coordinate[0] + 1}C{coordinate[1] + 1}"
+                f"В {spec.file_name} не найдена метка поля "
+                f"«{new_xls_marker(spec, coordinate)}»"
             )
         if len(marker_offsets) != 1:
             raise ValueError(
-                f"В {spec.file_name} скрытый маркер ячейки "
-                f"R{coordinate[0] + 1}C{coordinate[1] + 1} не уникален"
+                f"В {spec.file_name} метка поля "
+                f"«{new_xls_marker(spec, coordinate)}» не уникальна"
             )
 
         marker_offset = marker_offsets[0]
@@ -4101,7 +4114,7 @@ def _patch_new_xls_placeholders(
             None,
         )
         if span_index is None:
-            raise ValueError("Скрытый маркер XLS находится вне SST payload")
+            raise ValueError("Метка поля XLS находится вне SST payload")
         replacements.append(
             (marker_offset, _new_xls_fixed_utf16_value(values.get(coordinate, "")))
         )
@@ -4120,7 +4133,7 @@ def _patch_new_xls_placeholders(
         while replacement_offset < len(replacement):
             span_start, span_end = spans[span_index]
             if logical_offset < span_start or logical_offset >= span_end:
-                raise ValueError("Скрытый маркер XLS поврежден")
+                raise ValueError("Метка поля XLS повреждена")
             writable = min(len(replacement) - replacement_offset, span_end - logical_offset)
             writable -= writable % 2
             if writable:
@@ -4136,14 +4149,14 @@ def _patch_new_xls_placeholders(
                 break
             span_index += 1
             if span_index >= len(spans):
-                raise ValueError("Скрытый маркер XLS обрывается в таблице строк")
+                raise ValueError("Метка поля XLS обрывается в таблице строк")
             logical_offset = spans[span_index][0]
             # A CONTINUE record that splits a Unicode character array starts
             # with the compression flag. Marker strings always remain Unicode.
             if workbook_stream[logical_offset] not in (0x00, 0x01):
-                raise ValueError("Скрытый маркер XLS имеет неверное продолжение")
+                raise ValueError("Метка поля XLS имеет неверное продолжение")
             if workbook_stream[logical_offset] != 0x01:
-                raise ValueError("Скрытый маркер XLS неожиданно сжат")
+                raise ValueError("Метка поля XLS неожиданно сжата")
             logical_offset += 1
 
     output_path.write_bytes(file_bytes)
@@ -4166,12 +4179,12 @@ def _patch_legacy_xls_placeholders(
             for offset in _new_xls_marker_offsets(workbook_stream, spans, marker.encode("utf-16le"))
         ]
         if not marker_offsets:
-            raise ValueError(f"В {spec.file_name} не найден скрытый маркер поля «{field.field_id}»")
+            raise ValueError(f"В {spec.file_name} не найдена метка поля «{legacy_xls_markers(spec, field)[0]}»")
         if len(marker_offsets) != 1:
-            raise ValueError(f"В {spec.file_name} скрытый маркер поля «{field.field_id}» не уникален")
+            raise ValueError(f"В {spec.file_name} метка поля «{legacy_xls_markers(spec, field)[0]}» не уникальна")
         marker_offset = marker_offsets[0]
         if not any(start <= marker_offset < end for start, end in spans):
-            raise ValueError("Скрытый маркер XLS находится вне SST payload")
+            raise ValueError("Метка поля XLS находится вне SST payload")
         replacements.append((marker_offset, _new_xls_fixed_utf16_value(values.get(field.field_id, ""))))
 
     for marker_offset, replacement in replacements:
@@ -4184,7 +4197,7 @@ def _patch_legacy_xls_placeholders(
         while replacement_offset < len(replacement):
             span_start, span_end = spans[span_index]
             if logical_offset < span_start or logical_offset >= span_end:
-                raise ValueError("Скрытый маркер XLS поврежден")
+                raise ValueError("Метка поля XLS повреждена")
             writable = min(len(replacement) - replacement_offset, span_end - logical_offset)
             writable -= writable % 2
             if writable:
@@ -4200,10 +4213,10 @@ def _patch_legacy_xls_placeholders(
                 break
             span_index += 1
             if span_index >= len(spans):
-                raise ValueError("Скрытый маркер XLS обрывается в таблице строк")
+                raise ValueError("Метка поля XLS обрывается в таблице строк")
             logical_offset = spans[span_index][0]
             if workbook_stream[logical_offset] != 0x01:
-                raise ValueError("Скрытый маркер XLS неожиданно сжат")
+                raise ValueError("Метка поля XLS неожиданно сжата")
             logical_offset += 1
     output_path.write_bytes(file_bytes)
 
@@ -4376,12 +4389,16 @@ def _generate_preserved_new_xls(
             formatting_info=True,
         )
         values_sheet = values_book.sheet_by_name(spec.sheet_name)
+        labels = frozenset(new_xls_marker(spec, cell) for cell in spec.dynamic_cells)
         values = {
-            coordinate: _new_xls_display_value(
-                values_book,
-                values_sheet,
-                coordinate[0],
-                coordinate[1],
+            coordinate: _new_xls_generated_value(
+                _new_xls_display_value(
+                    values_book,
+                    values_sheet,
+                    coordinate[0],
+                    coordinate[1],
+                ),
+                labels,
             )
             for coordinate in spec.dynamic_cells
         }
@@ -4496,12 +4513,16 @@ def _generate_preserved_legacy_xls(
             file_contents=temporary_path.read_bytes(),
             formatting_info=True,
         )
+        labels = frozenset(legacy_xls_markers(spec, item)[0] for item in spec.fields)
         values = {
-            field.field_id: _new_xls_display_value(
-                values_book,
-                values_book.sheet_by_name(field.sheet_name),
-                field.source_cell[0],
-                field.source_cell[1],
+            field.field_id: _new_xls_generated_value(
+                _new_xls_display_value(
+                    values_book,
+                    values_book.sheet_by_name(field.sheet_name),
+                    field.source_cell[0],
+                    field.source_cell[1],
+                ),
+                labels,
             )
             for field in spec.fields
         }
