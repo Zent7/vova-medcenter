@@ -14,7 +14,8 @@ ACTIVE_XML_TEMPLATE_NAMES = {
 }
 # Порядок и названия строк на странице «Шаблоны» — ровно как в списке услуг,
 # который прислал заказчик. Первый блок — его список, второй — документы,
-# которых в списке нет, но приложение их печатает или выгружает.
+# которых в списке нет, но приложение их печатает или выгружает. На странице
+# показываем первый блок и договор: остальное заказчик не правит.
 SERVICE_LIST_TEMPLATE_ORDER: tuple[tuple[str, str], ...] = (
     ("ПРОФОСМОТР 29Н.xls", "Проф"),
     ("Выписка из Амб карты (профа).xls", "Проф с выпиской"),
@@ -61,11 +62,22 @@ def template_display_position(file_name: str) -> int:
 
 
 SERVICE_LIST_TEMPLATE_FILE_NAMES = frozenset(file_name for file_name, _ in SERVICE_LIST_TEMPLATE_ORDER)
+# Договора нет в списке услуг, но заказчик правит его сам, поэтому строка
+# на странице «Шаблоны» ему нужна.
+TEMPLATES_PAGE_EXTRA_FILE_NAMES = frozenset({"Договор_шаблон_2.docx"})
 
 
 def template_is_in_service_list(file_name: str) -> bool:
-    """True for the blanks the customer listed; the rest stay printable but unlisted."""
+    """True for the blanks the customer listed. Kept for app tabs opened before the last deploy."""
     return file_name in SERVICE_LIST_TEMPLATE_FILE_NAMES
+
+
+def template_is_listed_on_templates_page(file_name: str) -> bool:
+    """True for the blanks the customer listed plus the contract; the rest stay printable but unlisted."""
+    return (
+        file_name in SERVICE_LIST_TEMPLATE_FILE_NAMES
+        or file_name in TEMPLATES_PAGE_EXTRA_FILE_NAMES
+    )
 
 
 FOLDER_TEMPLATE_SOURCE_NAMES = {

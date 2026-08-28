@@ -41,6 +41,7 @@ from app.services.template_catalog import (
     template_display_position,
     template_has_override,
     template_is_in_service_list,
+    template_is_listed_on_templates_page,
     template_supports_layout_editing,
 )
 
@@ -156,7 +157,9 @@ def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
         update={
             "supports_layout_editing": template_supports_layout_editing(template.file_name),
             "has_override": template_has_override(template.file_name),
+            # Вкладка, открытая до деплоя, читает старое поле из кэша — отдаём оба.
             "in_service_list": template_is_in_service_list(template.file_name),
+            "listed_on_templates_page": template_is_listed_on_templates_page(template.file_name),
         }
     )
 

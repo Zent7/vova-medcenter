@@ -17,5 +17,6 @@ class DocumentTemplateRead(BaseModel):
     supports_layout_editing: bool = False
     has_override: bool = False
     in_service_list: bool = True
+    listed_on_templates_page: bool = True
 
     model_config = {"from_attributes": True}
