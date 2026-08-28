@@ -2828,6 +2828,11 @@ async function fetchAuthorizedFileObjectUrl(url) {
     headers: getDemoAuthHeaders(),
   });
   if (!response.ok) {
+    // Файлы качаются мимо apiRequest, поэтому завершенный сеанс отслеживаем и здесь:
+    // иначе сотрудник со старым токеном остался бы на рабочем экране с ошибкой.
+    if (response.status === 401) {
+      window.setTimeout(handleSessionEndedByServer, 0);
+    }
     throw new Error((await getApiErrorMessage(response)) || `HTTP ${response.status}`);
   }
 
