@@ -287,8 +287,17 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   text-transform: uppercase;
 }
 
+.workspace-center[data-center="center-3"] {
+  border-color: #b06d15;
+  background: #fdf1de;
+}
+
 .workspace-center[data-center="center-2"] .workspace-center__label {
   color: #56387f;
+}
+
+.workspace-center[data-center="center-3"] .workspace-center__label {
+  color: #7d4c07;
 }
 
 .center-pill {

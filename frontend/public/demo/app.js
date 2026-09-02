@@ -11,7 +11,9 @@ function getLocalDateInputValue(value = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2"];
+// Список должен совпадать с WORKSPACE_CENTERS в backend/app/services/seed.py и
+// с вариантами #centerSelect в index.html: центр подбирается по названию.
+const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2", "Медцентр 3"];
 
 const appState = {
   page: "start",
@@ -2285,7 +2287,9 @@ function mapApiClient(client) {
     gender: client.sex || "",
     phone: client.phone || "",
     centerId: client.center_id ?? null,
-    center: client.center_name || client.center || "Медцентр 1",
+    // У строки без обращения центра нет. Раньше здесь подставлялся «Медцентр 1»,
+    // и такой клиент пропадал из журнала всех остальных медцентров.
+    center: client.center_name || client.center || "",
     document: joinDocument(client),
     documentType: client.document_type || "",
     documentSeries: client.document_series || "",
@@ -2893,7 +2897,10 @@ async function resolveCenterIdForVisit(visit, client) {
     throw new Error("Не удалось загрузить список центров");
   }
 
-  const explicitCenterId = Number(visit?.centerId || client?.centerId || 0);
+  // Идентификатор берём только у самого обращения. У клиента поле centerId
+  // хранит центр строки журнала, то есть прошлого обращения, и новое обращение
+  // из-за него уезжало бы в чужой медцентр.
+  const explicitCenterId = Number(visit?.centerId || 0);
   if (explicitCenterId && centers.some((center) => Number(center?.id) === explicitCenterId)) {
     return explicitCenterId;
   }
@@ -4004,7 +4011,10 @@ function createVisitForClient(clientId, options = {}) {
     serviceIds: Array.isArray(options.serviceIds) ? options.serviceIds.map((id) => String(id)) : [],
     serviceDetails: options.serviceDetails || {},
     clientSex: options.clientSex || getClientSexKey(client) || "",
-    center: client.center || "Медцентр 1",
+    // Новое обращение всегда принадлежит медцентру, в котором сейчас работает
+    // оператор, а не центру прошлого обращения клиента.
+    centerId: null,
+    center: getWorkspaceCenterName(),
     paymentType: options.paymentType || "Наличные",
     amount: Number(options.amount ?? calculateVisitAmount(serviceNames)),
     comment: options.comment || "",
@@ -4028,7 +4038,7 @@ async function createVisitsForClientByServices(client, serviceDrafts = []) {
   const drafts = Array.isArray(serviceDrafts) ? serviceDrafts.filter((item) => item?.serviceId) : [];
   if (!client || !drafts.length) return [];
 
-  const centerId = await resolveCenterIdForVisit({ center: client.center, centerId: client.centerId }, client);
+  const centerId = await resolveWorkspaceCenterId();
   const encounterDate = getLocalDateInputValue();
   const savedItems = await apiRequest("/encounters/by-services", {
     method: "POST",
@@ -4236,6 +4246,14 @@ async function loadEncountersForClient(client) {
   if (!client?.backendId && !client?.id) return;
   const clientId = client.backendId || client.id;
   try {
+    // Справочник центров нужен, чтобы подписать обращение его собственным
+    // медцентром. Если он не загрузился, подпись возьмётся из запасных значений,
+    // поэтому историю обращений из-за него ронять нельзя.
+    try {
+      await ensureCentersLoaded();
+    } catch (centersError) {
+      console.warn("Failed to load centers", centersError);
+    }
     const encounters = await apiRequest(`/encounters?client_id=${encodeURIComponent(clientId)}`);
     const existingVisitsByBackendId = new Map(
       data.visits
@@ -4265,7 +4283,10 @@ async function loadEncountersForClient(client) {
         serviceNames,
         serviceIds,
         serviceDetails,
-        center: client.center || "Медцентр 1",
+        // Центр берём у самого обращения: клиент общий для всех медцентров, а
+        // журнал и касса фильтруются именно по центру обращения.
+        centerId: encounter.center_id ?? null,
+        center: getCenterNameForContext(encounter.center_id, existingVisit, client),
         paymentType: encounter.payment_type || "cash",
         amount: Number(encounter.total_amount || 0),
         comment: encounter.comment || "",
@@ -4521,7 +4542,7 @@ function mergeFullClientWithDashboardRow(client, fullClient) {
     encounterId: hasEncounter ? client.encounterId : fullClient?.encounterId ?? null,
     encounterStatus: hasEncounter ? client.encounterStatus : fullClient?.encounterStatus || "",
     centerId: client?.centerId ?? fullClient?.centerId ?? null,
-    center: client?.center || fullClient?.center || "Медцентр 1",
+    center: client?.center || fullClient?.center || "",
     services: hasEncounter && Array.isArray(client?.services) ? client.services.slice() : fullClient?.services || [],
     note: hasEncounter ? client?.note || "" : fullClient?.note || "",
     lastVisit: hasEncounter ? client?.lastVisit || "" : fullClient?.lastVisit || "",
@@ -5311,7 +5332,13 @@ function getDoctorExamStatusTitle(status) {
 }
 
 function matchesCenter(center) {
-  return appState.centerFilter === "all" || center === appState.centerFilter;
+  if (appState.centerFilter === "all") return true;
+  // База клиентов общая для всех медцентров: к центру привязано обращение, а не
+  // клиент. Строку без центра прячем только по фильтру «все», иначе регистратор
+  // второго или третьего медцентра не нашёл бы ни одного заведённого клиента.
+  const centerName = String(center || "").trim();
+  if (!centerName) return true;
+  return centerName === appState.centerFilter;
 }
 
 function normalizeEncounterDateFilterValue(value) {
@@ -5526,8 +5553,9 @@ function findDuplicateCandidates(searchValue) {
   const searchParts = normalizedSearch.split(/\s+/).filter(Boolean);
   if (searchParts.length < 2) return [];
 
+  // Дубли ищем по всей базе: один и тот же человек может прийти в разные
+  // медцентры, и фильтр по текущему центру прятал бы такую карточку.
   return getClientPool()
-    .filter((client) => matchesCenter(client.center))
     .map((client) => {
       const haystack = normalizeSearchValue(client.fullName);
       const score = searchParts.reduce((total, part) => total + (haystack.includes(part) ? 1 : 0), 0);
@@ -5885,7 +5913,7 @@ function renderAmbulatoryCardPage() {
             <div><span>Телефон</span><strong>${escapeHtml(selectedClient.phone || "не указан")}</strong></div>
             <div><span>Документ</span><strong>${escapeHtml(selectedClient.document || "не указан")}</strong></div>
             <div><span>СНИЛС</span><strong>${escapeHtml(selectedClient.snils || "не указан")}</strong></div>
-            <div><span>Центр</span><strong>${escapeHtml(selectedClient.center || "не указан")}</strong></div>
+            <div><span>Центр</span><strong>${escapeHtml(selectedClient.center || getWorkspaceCenterName())}</strong></div>
             <div><span>Регистрация</span>${renderCopyableValue(selectedClient.registration, "регистрацию", { fallback: "не указана", copyMessage: "Регистрация скопирована" })}</div>
             <div><span>Профессия</span><strong>${escapeHtml(selectedClient.profession || "не указана")}</strong></div>
             <div><span>Место работы</span><strong>${escapeHtml(selectedClient.workPlace || "не указано")}</strong></div>
@@ -7988,7 +8016,7 @@ function renderMedicalRecordBackendBlock(selectedClient, exams = []) {
   const bloodGroup = chairmanMedicalRecordData.bloodGroup || draft.bloodGroup;
   const rhFactor = chairmanMedicalRecordData.rhFactor || draft.rhFactor;
   const jobLine = [draft.workPlace, draft.position].map((item) => String(item || "").trim()).filter(Boolean).join(", ");
-  const clinicName = normalizeSheetValue(selectedClient?.center || "Медцентр");
+  const clinicName = normalizeSheetValue(selectedClient?.center || getWorkspaceCenterName());
   const clinicDetails = [
     selectedClient?.organization,
     selectedClient?.registration,
@@ -13220,7 +13248,10 @@ function renderApp() {
   }
   document.body.dataset.page = appState.page;
   const workspaceCenterName = getWorkspaceCenterName();
-  document.body.dataset.center = workspaceCenterName === "Медцентр 2" ? "center-2" : "center-1";
+  // Цветовая метка медцентра. Раньше здесь была развилка на два центра, и
+  // третий красился как первый — оператор не видел, где он работает.
+  const workspaceCenterSlot = WORKSPACE_CENTER_NAMES.indexOf(workspaceCenterName);
+  document.body.dataset.center = `center-${workspaceCenterSlot >= 0 ? workspaceCenterSlot + 1 : 1}`;
 
   if (centerSelect) {
     centerSelect.value = workspaceCenterName;
@@ -13230,12 +13261,11 @@ function renderApp() {
     workspaceCenter.title = `Текущая работа: ${workspaceCenterName}`;
   }
 
-  const selectedWorkspaceClient = getSelectedClient();
-  if (selectedWorkspaceClient && !matchesCenter(selectedWorkspaceClient.center)) {
-    appState.selectedClientId = null;
-    appState.selectedEncounterId = null;
-    appState.activeVisitId = null;
-  }
+  // Раньше здесь снимался выбор клиента из чужого медцентра. База клиентов
+  // общая, поэтому карточку пациента, который раньше обслуживался в другом
+  // центре, нужно уметь открыть и переиспользовать: иначе панель «Возможные
+  // дубли» приводила в никуда, а регистратор заводил дубль. Выбор всё равно
+  // сбрасывается при переключении медцентра — этим занимается сам переключатель.
 
   const isSignedIn = Boolean(appState.auth.accessToken);
 

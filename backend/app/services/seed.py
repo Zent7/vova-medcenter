@@ -24,6 +24,17 @@ from app.models.visit_type import VisitType, VisitTypeService
 from app.services.template_catalog import sync_document_template_catalog, template_visit_type_code
 
 
+# Рабочие медцентры. Справочник ведётся здесь, потому что переключатель центров
+# в интерфейсе подбирает центр по названию: добавлять центр нужно и сюда, и в
+# WORKSPACE_CENTER_NAMES во frontend/public/demo/app.js. Новый центр дописывается
+# в конец списка, коды уже заведённых центров менять нельзя.
+WORKSPACE_CENTERS = [
+    ("center-a", "Медцентр 1"),
+    ("center-b", "Медцентр 2"),
+    ("center-c", "Медцентр 3"),
+]
+
+
 SERVICE_GROUPS = [
     ("legacy-group-1", "Анализы", 10),
     ("legacy-group-2", "ВУ", 20),
@@ -404,6 +415,8 @@ def _ensure_user_roles_and_staff(db: Session, default_center_id: int | None = No
 def seed_reference_data(db: Session) -> None:
     center_exists = db.execute(select(Center.id).limit(1)).scalar_one_or_none()
     if center_exists is not None:
+        _ensure_workspace_centers(db)
+        db.commit()
         _ensure_user_roles_and_staff(db)
         _ensure_center_details(db)
         _ensure_service_catalog(db)
@@ -414,11 +427,7 @@ def seed_reference_data(db: Session) -> None:
             _backfill_related_records(db)
         return
 
-    centers = [
-        Center(code="center-a", name="Медцентр 1"),
-        Center(code="center-b", name="Медцентр 2"),
-    ]
-    db.add_all(centers)
+    centers = _ensure_workspace_centers(db)
 
     roles = [
         Role(code="admin", name="Администратор", description="Полный доступ"),
@@ -511,6 +520,32 @@ def seed_reference_data(db: Session) -> None:
 
     db.commit()
     _backfill_related_records(db)
+
+
+def _ensure_workspace_centers(db: Session) -> list[Center]:
+    """Заводит недостающие медцентры из WORKSPACE_CENTERS.
+
+    Раньше центры создавались только на пустой базе, поэтому новый медцентр не
+    появлялся у уже работающей установки. Функция вызывается на каждом старте и
+    добавляет только отсутствующие коды: имена и реквизиты уже заведённых
+    центров она не трогает, чтобы не затереть правки заказчика.
+    """
+
+    centers_by_code = {
+        center.code: center
+        for center in db.execute(select(Center)).scalars().all()
+    }
+    for code, name in WORKSPACE_CENTERS:
+        if code in centers_by_code:
+            continue
+        center = Center(code=code, name=name)
+        db.add(center)
+        centers_by_code[code] = center
+
+    # flush, а не commit: на пустой базе центры должны попасть в общую
+    # транзакцию сида вместе с админом и демо-данными.
+    db.flush()
+    return [centers_by_code[code] for code, _ in WORKSPACE_CENTERS]
 
 
 def _ensure_center_details(db: Session) -> None:
