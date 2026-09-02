@@ -3032,7 +3032,7 @@ def _fill_new_sport_xls_sheet(
         source_sheet,
         [
             (
-                (1, 13),
+                (1, 15),
                 _first_non_empty(
                     context.get("BlankFullNumber"),
                     context.get("BlankNumber"),

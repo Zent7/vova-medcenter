@@ -155,7 +155,7 @@ NEW_XLS_TEMPLATE_SPECS: tuple[NewXlsTemplateSpec, ...] = (
         print_variant="sport",
         print_pages_tall=1,
         dynamic_cells=(
-            (1, 13),
+            (1, 15),
             (12, 8),
             (13, 3),
             (13, 13),
@@ -424,7 +424,7 @@ NEW_XLS_FIELD_LABELS: dict[str, dict[Cell, str]] = {
         (90, 28): "Подписант",
     },
     "СПОРТ.xls": {
-        (1, 13): "Номер бланка",
+        (1, 15): "Номер бланка",
         (12, 8): "Дата выдачи",
         (13, 3): "ФИО",
         (13, 13): "Дата рождения",
