@@ -4413,39 +4413,112 @@ def _patch_xls_cell_styles(output_path: Path, *, sheet_index: int, styles: dict[
         output_path.write_bytes(file_bytes)
 
 
+def _driver_category_border_xf_index(book, source_xf_index: int, *, ticked: bool) -> int | None:
+    """Стиль клетки категории: галочка из границ или Z-образный прочерк.
+
+    В шаблоне заказчика отметку рисуют границами клетки, а не текстом: у
+    закрытой категории клетка перечёркнута сверху вниз (Z), у открытой
+    остаются левая грань и диагональ — во всю клетку выходит галочка.
+    """
+
+    if source_xf_index >= len(book.xf_list):
+        return None
+    source = book.xf_list[source_xf_index]
+
+    def matches(xf) -> bool:
+        border = xf.border
+        if not border.diag_line_style or not border.diag_up:
+            return False
+        crossed = bool(border.top_line_style and border.bottom_line_style)
+        if ticked:
+            return not crossed and bool(border.left_line_style)
+        return crossed
+
+    candidates = [index for index, xf in enumerate(book.xf_list) if xf.font_index == source.font_index and matches(xf)]
+    if not candidates:
+        return None
+
+    def rank(index: int) -> tuple[bool, ...]:
+        xf = book.xf_list[index]
+        return (
+            xf.alignment.vert_align == source.alignment.vert_align,
+            xf.alignment.hor_align == source.alignment.hor_align,
+            xf.format_key == source.format_key,
+        )
+
+    return max(candidates, key=rank)
+
+
+def _driver_category_mark_plan(
+    book,
+    marker_locations: dict[str, tuple[str, int, int]],
+    values: dict[str, str],
+) -> dict[str, bool]:
+    """Какие клетки категорий рисуются границами: поле -> категория открыта.
+
+    Пустой план означает, что шаблон не несёт обеих заготовок стиля — тогда
+    отметка остаётся текстовой галочкой.
+    """
+
+    plan: dict[str, bool] = {}
+    for field_id, (sheet_name, row_index, col_index) in marker_locations.items():
+        if not field_id.startswith("category_"):
+            continue
+        try:
+            sheet = book.sheet_by_name(sheet_name)
+        except Exception:
+            return {}
+        if row_index >= sheet.nrows or col_index >= sheet.ncols:
+            return {}
+        ticked = bool(str(values.get(field_id) or "").strip())
+        source_xf_index = sheet.cell_xf_index(row_index, col_index)
+        if _driver_category_border_xf_index(book, source_xf_index, ticked=ticked) is None:
+            return {}
+        plan[field_id] = ticked
+    return plan
+
+
 def _patch_driver_saved_xls_category_marks(
     output_path: Path,
     marker_locations: dict[str, tuple[str, int, int]],
     values: dict[str, str],
+    plan: dict[str, bool],
 ) -> None:
-    """Убирает Z-образный прочерк из клеток отмеченных категорий.
+    """Проставляет отметки категорий в уже сохранённом файле.
 
-    Пустая клетка остаётся перечёркнутой — так заказчик закрывает категории,
-    которые водителю не открыты.
+    С планом клетка перерисовывается границами: открытая категория получает
+    галочку, закрытая — прочерк, и в шаблоне не остаётся чужих отметок.
+    Без плана у отмеченных клеток только снимается прочерк, а саму галочку
+    печатает текст.
     """
 
-    marked = [
-        location
-        for field_id, location in marker_locations.items()
-        if field_id.startswith("category_") and str(values.get(field_id) or "").strip()
-    ]
-    if not marked:
+    targets: list[tuple[str, int, int, bool]] = []
+    for field_id, (sheet_name, row_index, col_index) in marker_locations.items():
+        if not field_id.startswith("category_"):
+            continue
+        if plan:
+            targets.append((sheet_name, row_index, col_index, plan[field_id]))
+        elif str(values.get(field_id) or "").strip():
+            targets.append((sheet_name, row_index, col_index, True))
+    if not targets:
         return
     try:
         workbook = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
     except Exception:
         return
-    sheet_names = workbook.sheet_names()
-    for sheet_index, sheet_name in enumerate(sheet_names):
+    for sheet_index, sheet_name in enumerate(workbook.sheet_names()):
+        sheet = workbook.sheet_by_index(sheet_index)
         styles: dict[tuple[int, int], int] = {}
-        for location_sheet, row_index, col_index in marked:
-            if location_sheet != sheet_name or row_index >= workbook.sheet_by_index(sheet_index).nrows:
+        for target_sheet, row_index, col_index, ticked in targets:
+            if target_sheet != sheet_name or row_index >= sheet.nrows or col_index >= sheet.ncols:
                 continue
-            sheet = workbook.sheet_by_index(sheet_index)
-            if col_index >= sheet.ncols:
-                continue
-            mark_xf = _xls_borderless_xf_index(workbook, sheet.cell_xf_index(row_index, col_index))
-            if mark_xf is not None:
+            source_xf_index = sheet.cell_xf_index(row_index, col_index)
+            mark_xf = (
+                _driver_category_border_xf_index(workbook, source_xf_index, ticked=ticked)
+                if plan
+                else _xls_borderless_xf_index(workbook, source_xf_index)
+            )
+            if mark_xf is not None and mark_xf != source_xf_index:
                 styles[(row_index, col_index)] = mark_xf
         if styles:
             _patch_xls_cell_styles(output_path, sheet_index=sheet_index, styles=styles)
@@ -4639,6 +4712,9 @@ def _generate_preserved_legacy_xls(
             )
             for field in spec.fields
         }
+        category_mark_plan = _driver_category_mark_plan(marker_book, marker_locations, values)
+        if category_mark_plan:
+            values = {**values, **{field_id: "" for field_id in category_mark_plan}}
         shutil.copy2(template_path, output_path)
         _patch_legacy_xls_placeholders(output_path, spec, values)
         if spec.file_name == "АМБ_карты_профосмотр_шаблон.xls":
@@ -4668,7 +4744,7 @@ def _generate_preserved_legacy_xls(
             )
         _apply_print_variant_to_saved_xls_file(output_path, print_variant)
         _patch_driver_saved_xls_layout(output_path)
-        _patch_driver_saved_xls_category_marks(output_path, marker_locations, values)
+        _patch_driver_saved_xls_category_marks(output_path, marker_locations, values, category_mark_plan)
     finally:
         temporary_path.unlink(missing_ok=True)
 

@@ -362,11 +362,13 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
 
-    def test_driver_xls_back_sheet_clears_the_crossing_out_on_marked_categories(self):
+    def test_driver_xls_back_sheet_draws_a_tick_only_on_marked_categories(self):
         """Отмеченная категория печатается галочкой вместо Z-образного прочерка.
 
-        Прочерк рисуют границы клетки в шаблоне заказчика, поэтому у выбранной
-        категории он снимается вместе со стилем, а у остальных остаётся."""
+        И прочерк, и галочку рисуют границы клетки в шаблоне заказчика: у
+        закрытой категории клетка перечёркнута сверху донизу, у открытой
+        остаются левая грань и диагональ. Чужие отметки шаблона (в нём
+        отмечены B, M и B1) при этом снимаются."""
 
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"
         output_path = Path(tempfile.gettempdir()) / "driver_back_marked_categories_test.xls"
@@ -391,14 +393,18 @@ class DriverDocumentContextTests(unittest.TestCase):
             re.sub("[​‌‍]", "", str(sheet.cell_value(10, col)))
             for col in range(2, 34, 2)
         ]
-        self.assertEqual(marks, ["", "✓"] + [""] * 14)
+        self.assertEqual(marks, [""] * 16, "отметку рисуют границы, а не текст")
 
-        crossings = [
-            book.xf_list[sheet.cell_xf_index(10, col)].border.diag_line_style
-            for col in range(2, 34, 2)
-        ]
-        self.assertEqual(crossings[1], 0)
-        self.assertTrue(all(crossings[index] for index in range(16) if index != 1))
+        def shape(col_index):
+            border = book.xf_list[sheet.cell_xf_index(10, col_index)].border
+            if not border.diag_line_style:
+                return "пусто"
+            if border.top_line_style and border.bottom_line_style:
+                return "прочерк"
+            return "галочка" if border.left_line_style else "?"
+
+        shapes = [shape(col) for col in range(2, 34, 2)]
+        self.assertEqual(shapes, ["прочерк", "галочка"] + ["прочерк"] * 14)
 
     def test_driver_print_variants_keep_only_selected_side(self):
         for variant, expected_sheet, template_path in [
