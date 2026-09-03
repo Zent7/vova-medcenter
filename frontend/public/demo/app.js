@@ -11,9 +11,12 @@ function getLocalDateInputValue(value = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-// Список должен совпадать с WORKSPACE_CENTERS в backend/app/services/seed.py и
-// с вариантами #centerSelect в index.html: центр подбирается по названию.
-const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2", "Медцентр 3"];
+// Медцентры, доступные в переключателе. Это начало списка WORKSPACE_CENTERS из
+// backend/app/services/seed.py: центр подбирается по названию, поэтому имена и
+// порядок обязаны совпадать, а варианты #centerSelect в index.html — этому
+// списку. «Медцентр 3» в базе заведён, но в работу пока не введён и скрыт;
+// чтобы открыть его, достаточно дописать сюда и в index.html.
+const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2"];
 
 const appState = {
   page: "start",

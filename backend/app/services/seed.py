@@ -26,10 +26,11 @@ from app.services.doctor_directory import set_center_doctor_name
 from app.services.template_catalog import sync_document_template_catalog, template_visit_type_code
 
 
-# Рабочие медцентры. Справочник ведётся здесь, потому что переключатель центров
-# в интерфейсе подбирает центр по названию: добавлять центр нужно и сюда, и в
-# WORKSPACE_CENTER_NAMES во frontend/public/demo/app.js. Новый центр дописывается
-# в конец списка, коды уже заведённых центров менять нельзя.
+# Медцентры, которые заводятся в базе. Переключатель в интерфейсе подбирает центр
+# по названию, поэтому имена и порядок должны совпадать с WORKSPACE_CENTER_NAMES
+# во frontend/public/demo/app.js. Тот список может быть короче: центр бывает уже
+# заведён, но ещё не введён в работу и скрыт от оператора — так сейчас с третьим.
+# Новый центр дописывается в конец, коды уже заведённых менять нельзя.
 WORKSPACE_CENTERS = [
     ("center-a", "Медцентр 1"),
     ("center-b", "Медцентр 2"),

@@ -79,18 +79,37 @@ class WorkspaceCentersTests(unittest.TestCase):
 
             self.assertEqual(self._codes_and_names(db), WORKSPACE_CENTERS)
 
-    def test_demo_ui_offers_the_same_centers_as_the_backend(self):
-        expected_names = [name for _, name in WORKSPACE_CENTERS]
+    def test_demo_ui_offers_the_centers_the_backend_creates(self):
+        """Список в интерфейсе — начало списка центров базы, имя в имя.
+
+        Он может быть короче: центр бывает заведён, но ещё не введён в работу и
+        скрыт от оператора. А вот разойтись в названии или порядке они не имеют
+        права — центр подбирается по названию, и переключатель просто перестал бы
+        находить его в базе.
+        """
+
+        known_names = [name for _, name in WORKSPACE_CENTERS]
 
         app_js = (DEMO_DIR / "app.js").read_text(encoding="utf-8")
         names_line = re.search(r"const WORKSPACE_CENTER_NAMES = \[(.*?)\];", app_js, re.S)
         self.assertIsNotNone(names_line, "WORKSPACE_CENTER_NAMES не найден в app.js")
-        self.assertEqual(re.findall(r'"([^"]+)"', names_line.group(1)), expected_names)
+        visible_names = re.findall(r'"([^"]+)"', names_line.group(1))
+
+        self.assertTrue(visible_names, "В переключателе должен остаться хотя бы один медцентр")
+        self.assertEqual(
+            visible_names,
+            known_names[: len(visible_names)],
+            "Список медцентров в app.js разошёлся со справочником backend",
+        )
 
         index_html = (DEMO_DIR / "index.html").read_text(encoding="utf-8")
         select_block = re.search(r'<select[^>]*id="centerSelect".*?</select>', index_html, re.S)
         self.assertIsNotNone(select_block, "Переключатель centerSelect не найден в index.html")
-        self.assertEqual(re.findall(r"<option[^>]*>([^<]+)</option>", select_block.group(0)), expected_names)
+        self.assertEqual(
+            re.findall(r"<option[^>]*>([^<]+)</option>", select_block.group(0)),
+            visible_names,
+            "Варианты в index.html разошлись с WORKSPACE_CENTER_NAMES",
+        )
 
 
 if __name__ == "__main__":
