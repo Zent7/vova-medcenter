@@ -372,14 +372,20 @@ class NewXlsTemplatesTests(unittest.TestCase):
                         self.encounter,
                         {"exams": self.exams},
                     )
+                    baseline_book = xlrd.open_workbook(str(baseline_path), formatting_info=True)
+
+                    def baseline_value(item):
+                        return strip_new_xls_placeholder_padding(
+                            baseline_book.sheet_by_name(item.sheet_name).cell_value(*item.source_cell)
+                        )
+
+                    # Переезд проверяем на заполненном поле: на обороте ВУ клетки
+                    # неотмеченных категорий пустые, они ничего не докажут.
                     field = next(
                         (item for item in spec.fields if item.field_id == "patient_name"),
-                        spec.fields[0],
+                        next((item for item in spec.fields if baseline_value(item)), spec.fields[0]),
                     )
-                    baseline_book = xlrd.open_workbook(str(baseline_path), formatting_info=True)
-                    expected = strip_new_xls_placeholder_padding(
-                        baseline_book.sheet_by_name(field.sheet_name).cell_value(*field.source_cell)
-                    )
+                    expected = baseline_value(field)
                     self.assertTrue(expected)
 
                     edited_dir = temporary_path / f"edited-{LEGACY_XLS_TEMPLATE_SPECS.index(spec)}"

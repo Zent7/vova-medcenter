@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from datetime import date
+import re
 import tempfile
 import sys
 import unittest
@@ -238,7 +239,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
         back_sheet = result_book.sheet_by_name("Водительская Оборотная")
 
-        expected_marks = ["Z", "✓", "✓", "Z", "Z", "Z", "Z", "✓", "Z", "Z", "Z", "Z", "Z", "Z", "✓", "Z"]
+        expected_marks = ["", "✓", "✓", "", "", "", "", "✓", "", "", "", "", "", "", "✓", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
         self.assertTrue(all(back_sheet.colinfo_map[col].hidden for col in range(34, 66)))
@@ -282,7 +283,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         target_book.save(str(output_path))
         back_sheet = xlrd.open_workbook(str(output_path), formatting_info=True).sheet_by_name("Водительская Оборотная")
 
-        expected_marks = ["Z", "✓", "Z", "Z", "✓", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z"]
+        expected_marks = ["", "✓", "", "", "✓", "", "", "", "", "", "", "", "", "", "", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         for row_index in (14, 17, 20, 25, 27, 29, 31, 33):
             self.assertEqual(back_sheet.cell_value(row_index, 29), "не установлено")
@@ -357,9 +358,47 @@ class DriverDocumentContextTests(unittest.TestCase):
         result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
         back_sheet = result_book.sheet_by_name("Водительская Оборотная")
 
-        expected_marks = ["✓", "✓", "✓", "Z", "✓", "Z", "Z", "Z", "Z", "✓", "Z", "Z", "Z", "Z", "Z", "Z"]
+        expected_marks = ["✓", "✓", "✓", "", "✓", "", "", "", "", "✓", "", "", "", "", "", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
+
+    def test_driver_xls_back_sheet_clears_the_crossing_out_on_marked_categories(self):
+        """Отмеченная категория печатается галочкой вместо Z-образного прочерка.
+
+        Прочерк рисуют границы клетки в шаблоне заказчика, поэтому у выбранной
+        категории он снимается вместе со стилем, а у остальных остаётся."""
+
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"
+        output_path = Path(tempfile.gettempdir()) / "driver_back_marked_categories_test.xls"
+        test_client = client()
+        exams = [chairman({"categoryB": True})]
+        context = {"ClientCalc": "Иванов Иван Иванович"}
+        context.update(_driver_document_context_overrides(test_client, exams))
+
+        _generate_runtime_xls(
+            template_path,
+            output_path,
+            context,
+            test_client,
+            SimpleNamespace(encounter_date=date(2026, 9, 3)),
+            {"exams": exams, "service_names": []},
+            print_variant="driver_back",
+        )
+
+        book = xlrd.open_workbook(str(output_path), formatting_info=True)
+        sheet = book.sheet_by_name("Водительская Оборотная")
+        marks = [
+            re.sub("[​‌‍]", "", str(sheet.cell_value(10, col)))
+            for col in range(2, 34, 2)
+        ]
+        self.assertEqual(marks, ["", "✓"] + [""] * 14)
+
+        crossings = [
+            book.xf_list[sheet.cell_xf_index(10, col)].border.diag_line_style
+            for col in range(2, 34, 2)
+        ]
+        self.assertEqual(crossings[1], 0)
+        self.assertTrue(all(crossings[index] for index in range(16) if index != 1))
 
     def test_driver_print_variants_keep_only_selected_side(self):
         for variant, expected_sheet, template_path in [

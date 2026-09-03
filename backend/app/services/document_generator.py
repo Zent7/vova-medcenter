@@ -2217,6 +2217,7 @@ def _driver_auxiliary_line(context: dict[str, str], key: str, fallback: str = "�
 
 
 DRIVER_XLS_CATEGORY_KEYS = ("A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E")
+DRIVER_XLS_CATEGORY_MARK = "✓"
 DRIVER_XLS_CATEGORY_CELLS_LEFT = (
     (10, 2),
     (10, 4),
@@ -2500,11 +2501,14 @@ def _driver_xml_context_overrides(context: dict[str, str], client: Client, exams
     return overrides
 
 
+# Невыбранная категория остаётся пустой: Z-образный прочерк в её клетке рисуют
+# границы самого шаблона, а не буква «Z». В отмеченной клетке прочерк снимается
+# вместе со стилем — см. _patch_driver_saved_xls_category_marks.
 def _driver_category_marks(context: dict[str, str], client: Client, exams_by_role: dict[str, DoctorExam]) -> list[str]:
     chairman = exams_by_role.get("chairman")
     chairman_categories = _driver_categories_from_chairman(chairman.fields_json or {}) if chairman and chairman.is_completed else None
     selected = chairman_categories if chairman_categories is not None else _driver_categories_from_context(context, client)
-    return ["✓" if category in selected else "Z" for category in DRIVER_XLS_CATEGORY_KEYS]
+    return [DRIVER_XLS_CATEGORY_MARK if category in selected else "" for category in DRIVER_XLS_CATEGORY_KEYS]
 
 
 def _driver_marker_style(source_book, source_sheet, row_index: int, col_index: int):
@@ -4328,6 +4332,125 @@ def _patch_xls_hidden_columns(
         output_path.write_bytes(file_bytes)
 
 
+def _xls_borderless_xf_index(book, source_xf_index: int) -> int | None:
+    """Стиль той же клетки, но без рамок и перечёркивания."""
+
+    def is_borderless(xf) -> bool:
+        border = xf.border
+        return not any(
+            (
+                border.top_line_style,
+                border.bottom_line_style,
+                border.left_line_style,
+                border.right_line_style,
+                border.diag_line_style,
+            )
+        )
+
+    if source_xf_index >= len(book.xf_list):
+        return None
+    source = book.xf_list[source_xf_index]
+    if is_borderless(source):
+        return None
+    candidates = [
+        index
+        for index, xf in enumerate(book.xf_list)
+        if xf.font_index == source.font_index
+        and not xf.background.fill_pattern
+        and is_borderless(xf)
+    ]
+    if not candidates:
+        return None
+
+    def rank(index: int) -> tuple[bool, ...]:
+        # Галочка должна стоять в середине клетки, а не уехать в угол
+        # и не сжаться из-за переноса по словам.
+        alignment = book.xf_list[index].alignment
+        return (
+            alignment.hor_align == 2,
+            not alignment.text_wrapped,
+            not alignment.shrink_to_fit,
+            alignment.vert_align == source.alignment.vert_align,
+            book.xf_list[index].format_key == source.format_key,
+        )
+
+    return max(candidates, key=rank)
+
+
+def _patch_xls_cell_styles(output_path: Path, *, sheet_index: int, styles: dict[tuple[int, int], int]) -> None:
+    original_bytes = output_path.read_bytes()
+    file_bytes = bytearray(original_bytes)
+    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
+    sheet_offsets = _xls_sheet_offsets(workbook_stream)
+    if sheet_index >= len(sheet_offsets):
+        return
+
+    patched = False
+    offset = sheet_offsets[sheet_index]
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream):
+            break
+        # LABELSST, BLANK, LABEL и RSTRING держат индекс стиля на одном месте.
+        if record_id in {0x00FD, 0x0201, 0x0204, 0x00D6} and payload_length >= 6:
+            row_index, col_index = struct.unpack_from("<HH", workbook_stream, payload_start)
+            xf_index = styles.get((row_index, col_index))
+            if xf_index is not None:
+                _write_new_xls_stream_bytes(
+                    file_bytes,
+                    sectors,
+                    payload_start + 4,
+                    struct.pack("<H", xf_index),
+                )
+                patched = True
+        if record_id == 0x000A:
+            break
+        offset = payload_end
+
+    if patched:
+        output_path.write_bytes(file_bytes)
+
+
+def _patch_driver_saved_xls_category_marks(
+    output_path: Path,
+    marker_locations: dict[str, tuple[str, int, int]],
+    values: dict[str, str],
+) -> None:
+    """Убирает Z-образный прочерк из клеток отмеченных категорий.
+
+    Пустая клетка остаётся перечёркнутой — так заказчик закрывает категории,
+    которые водителю не открыты.
+    """
+
+    marked = [
+        location
+        for field_id, location in marker_locations.items()
+        if field_id.startswith("category_") and str(values.get(field_id) or "").strip()
+    ]
+    if not marked:
+        return
+    try:
+        workbook = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+    except Exception:
+        return
+    sheet_names = workbook.sheet_names()
+    for sheet_index, sheet_name in enumerate(sheet_names):
+        styles: dict[tuple[int, int], int] = {}
+        for location_sheet, row_index, col_index in marked:
+            if location_sheet != sheet_name or row_index >= workbook.sheet_by_index(sheet_index).nrows:
+                continue
+            sheet = workbook.sheet_by_index(sheet_index)
+            if col_index >= sheet.ncols:
+                continue
+            mark_xf = _xls_borderless_xf_index(workbook, sheet.cell_xf_index(row_index, col_index))
+            if mark_xf is not None:
+                styles[(row_index, col_index)] = mark_xf
+        if styles:
+            _patch_xls_cell_styles(output_path, sheet_index=sheet_index, styles=styles)
+
+
 def _patch_driver_saved_xls_layout(output_path: Path) -> None:
     try:
         workbook = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
@@ -4545,6 +4668,7 @@ def _generate_preserved_legacy_xls(
             )
         _apply_print_variant_to_saved_xls_file(output_path, print_variant)
         _patch_driver_saved_xls_layout(output_path)
+        _patch_driver_saved_xls_category_marks(output_path, marker_locations, values)
     finally:
         temporary_path.unlink(missing_ok=True)
 
