@@ -1994,6 +1994,23 @@ function collectChairmanDriverLimitations(fields = {}) {
     .map(([, label]) => label);
 }
 
+function mergeDriverDetailFlagsIntoChairmanFields(fields = {}, detail = {}) {
+  const indications = Array.isArray(detail.indications) ? detail.indications : [];
+  const limitations = Array.isArray(detail.limitations) ? detail.limitations : [];
+  if (!indications.length && !limitations.length) return fields;
+
+  const merged = { ...fields };
+  Object.entries(DRIVER_INDICATION_FIELD_TO_LABEL).forEach(([field, label]) => {
+    if (indications.includes(label)) merged[field] = true;
+  });
+  if (merged.indicationGlasses) merged.hasGlasses = true;
+  if (merged.indicationHearingAid) merged.hasHearingAid = true;
+  Object.keys(DRIVER_LIMITATION_FIELD_TO_LABEL).forEach((field) => {
+    if (hasDriverLimitationSelection(limitations, field)) merged[field] = true;
+  });
+  return merged;
+}
+
 function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit = null) {
   const sourceCategories = Array.isArray(detail.categories) ? detail.categories : [];
   const categories = normalizeDriverCategories(sourceCategories);
@@ -4838,8 +4855,15 @@ async function prepareVisitDoctorExamsForDocuments(client, visit) {
       !suppressedRoles.has(String(exam.doctorRoleId || "").trim()),
   );
   const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
-  if (chairmanExam && !chairmanExam.isCompleted && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
-    const nextFields = applyDriverSelectionsToChairmanFields(chairmanExam.fields || {}, getDriverDetailFromVisit(visit), visit);
+  if (chairmanExam && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
+    const driverDetail = getDriverDetailFromVisit(visit);
+    // Показания и ограничения оператор отмечает в карточке клиента. Сохранённую
+    // карточку председателя нельзя переписывать целиком — его отметки останутся,
+    // а отметки клиента к ним добавятся, иначе на обороте печатается «не
+    // установлено» при заполненной карточке клиента.
+    const nextFields = chairmanExam.isCompleted
+      ? mergeDriverDetailFlagsIntoChairmanFields(chairmanExam.fields || {}, driverDetail)
+      : applyDriverSelectionsToChairmanFields(chairmanExam.fields || {}, driverDetail, visit);
     if (JSON.stringify(nextFields) !== JSON.stringify(chairmanExam.fields || {})) {
       chairmanExam.fields = nextFields;
       chairmanExam.updatedAt = new Date().toISOString();
