@@ -67,13 +67,13 @@ class DriverDocumentContextTests(unittest.TestCase):
 
         self.assertEqual(selected, {"A", "B", "C1E", "Tm"})
 
-    def test_legacy_default_driver_categories_are_treated_as_b_only(self):
+    def test_every_selected_category_reaches_the_documents(self):
         selected = _driver_categories_for_documents(
             client(admission_category="A B C D BE M"),
             [],
         )
 
-        self.assertEqual(selected, {"B"})
+        self.assertEqual(selected, {"A", "B", "C", "D", "BE", "M"})
 
         selected_from_chairman = _driver_categories_for_documents(
             client(),
@@ -91,7 +91,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(selected_from_chairman, {"B"})
+        self.assertEqual(selected_from_chairman, {"A", "B", "C", "D", "BE", "M"})
 
     def test_legacy_category_e_expands_to_be_ce_de(self):
         selected = _driver_categories_for_documents(
@@ -128,7 +128,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(context["VisionTCCalc"], "true")
         self.assertEqual(context["DriveShipCalc"], "true")
         self.assertEqual(context["TCA"], "X")
-        self.assertEqual(context["TCB"], "X")
+        self.assertEqual(context["TCB"], "")
         self.assertEqual(context["TCC"], "X")
 
     def test_driver_indications_use_latest_chairman_draft(self):
@@ -176,7 +176,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(xml_context["ManualControlCalc"], "true")
         self.assertEqual(xml_context["AutomaticTransmissionCalc"], "false")
         self.assertEqual(xml_context["CategoryACalc"], "true")
-        self.assertEqual(xml_context["CategoryBCalc"], "true")
+        self.assertEqual(xml_context["CategoryBCalc"], "false")
 
     def test_driver_xls_back_sheet_fills_categories_restrictions_and_signer(self):
         template_path = next(
@@ -246,7 +246,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(back_sheet.cell_value(36, 41), "")
         for row_index, expected in [
             (14, "установлено"),
-            (17, "установлено"),
+            (17, "не установлено"),
             (20, "установлено"),
             (25, "установлено"),
             (27, "не установлено"),
@@ -256,6 +256,36 @@ class DriverDocumentContextTests(unittest.TestCase):
         ]:
             self.assertEqual(back_sheet.cell_value(row_index, 29), expected)
             self.assertEqual(back_sheet.cell_value(row_index, 62), "")
+
+    def test_driver_xls_back_sheet_leaves_unselected_restrictions_empty(self):
+        """Водителю без ограничений и показаний оборот печатает "не установлено":
+        сама по себе выбранная категория ограничением не является."""
+
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"
+        source_book = xlrd.open_workbook(str(template_path), formatting_info=True)
+        target_book = copy_xls_workbook(source_book)
+        test_client = client()
+        exams = [chairman({"categoryB": True, "categoryBE": True})]
+        context = {"ClientCalc": "Иванов Иван Иванович"}
+        context.update(_driver_document_context_overrides(test_client, exams))
+
+        _fill_driver_xls_sheets(
+            source_book,
+            target_book,
+            context,
+            test_client,
+            SimpleNamespace(encounter_date=date(2026, 9, 3)),
+            _exam_map(exams),
+        )
+
+        output_path = Path(tempfile.gettempdir()) / "driver_xls_empty_restrictions_test.xls"
+        target_book.save(str(output_path))
+        back_sheet = xlrd.open_workbook(str(output_path), formatting_info=True).sheet_by_name("Водительская Оборотная")
+
+        expected_marks = ["Z", "✓", "Z", "Z", "✓", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z", "Z"]
+        self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
+        for row_index in (14, 17, 20, 25, 27, 29, 31, 33):
+            self.assertEqual(back_sheet.cell_value(row_index, 29), "не установлено")
 
     def test_driver_xls_front_sheet_writes_issue_date_as_text(self):
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская лицевая.xls"

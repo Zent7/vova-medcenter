@@ -20,8 +20,18 @@ test("new driver visits default to category B only", () => {
   assert.doesNotMatch(clientModalSource, /const CLIENT_DRIVER_DEFAULT_CATEGORIES = \["A", "B", "C", "D", "BE", "M"\];/);
 });
 
-test("stored legacy driver category default is treated as category B", () => {
-  assert.match(appSource, /const DRIVER_LEGACY_DEFAULT_CATEGORY_SET = \["A", "B", "C", "D", "BE", "M"\];/);
-  assert.match(appSource, /function normalizeStoredDriverCategories\(categories\)/);
-  assert.match(appSource, /DRIVER_LEGACY_DEFAULT_CATEGORY_SET\.every\(\(category\) => normalized\.includes\(category\)\)/);
+test("selected driver categories are never rewritten behind the operator", () => {
+  assert.doesNotMatch(appSource, /DRIVER_LEGACY_DEFAULT_CATEGORY_SET/);
+  assert.doesNotMatch(appSource, /normalizeStoredDriverCategories/);
+});
+
+test("the chairman card does not pre-tick categories the client did not choose", () => {
+  const templatesSource = readFileSync(resolve(import.meta.dirname, "../public/demo/doctor-templates.js"), "utf8");
+  for (const key of ["categoryA", "categoryC", "categoryD"]) {
+    const label = key.slice("category".length);
+    assert.ok(
+      templatesSource.includes(`{ key: "${key}", label: "${label}", type: "checkbox", defaultValue: false }`),
+      `${key} must stay unchecked by default`,
+    );
+  }
 });

@@ -849,10 +849,12 @@
     { key: "validity", label: "Срок", type: "select", options: ["6 мес", "1 год", "2 года"], defaultValue: "1 год" },
     { key: "organ", label: "Орган", type: "select", options: ["По возрасту", "По состоянию здоровья"], defaultValue: "По возрасту" },
 
-    { key: "categoryA", label: "A", type: "checkbox", defaultValue: true },
+    // Категории приходят из карточки клиента. Своей галочки председатель не
+    // добавляет: по умолчанию, как и у клиента, отмечена только B.
+    { key: "categoryA", label: "A", type: "checkbox", defaultValue: false },
     { key: "categoryB", label: "B", type: "checkbox", defaultValue: true },
-    { key: "categoryC", label: "C", type: "checkbox", defaultValue: true },
-    { key: "categoryD", label: "D", type: "checkbox", defaultValue: true },
+    { key: "categoryC", label: "C", type: "checkbox", defaultValue: false },
+    { key: "categoryD", label: "D", type: "checkbox", defaultValue: false },
     { key: "categoryBE", label: "BE", type: "checkbox", defaultValue: false },
     { key: "categoryCE", label: "CE", type: "checkbox", defaultValue: false },
     { key: "categoryDE", label: "DE", type: "checkbox", defaultValue: false },

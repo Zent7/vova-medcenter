@@ -699,7 +699,6 @@ const CHAIRMAN_FORM_CONFIGS = {
 };
 const DRIVER_BASE_CATEGORIES = new Set(["A", "B", "M", "A1", "B1"]);
 const DRIVER_DEFAULT_CATEGORIES = ["B"];
-const DRIVER_LEGACY_DEFAULT_CATEGORY_SET = ["A", "B", "C", "D", "BE", "M"];
 const DRIVER_CATEGORY_OPTIONS = ["A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E"];
 const DRIVER_CATEGORY_ADVANCED_ROLES = ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"];
 const DRIVER_CATEGORY_BASE_ROLES = ["therapist", "ophthalmologist", "chairman"];
@@ -896,7 +895,7 @@ function resolveDashboardAdmissionCategory(client, visit = null) {
   const hasDriverService = services.some(isDriverService);
   if (hasDriverService) {
     const driverDetail = getDriverDetailFromVisit(visit);
-    const driverCategories = normalizeStoredDriverCategories(
+    const driverCategories = normalizeDriverCategories(
       driverDetail.categories || visit.admissionCategory || client?.admissionCategory || client?.category,
     );
     return resolveDashboardAdmissionCategoryValue(driverCategories.join(", "), serviceNames, { client });
@@ -1763,7 +1762,7 @@ function hasDriverAdmissionCategoriesForVisit(visit) {
       ? []
       : [client?.admissionCategory, client?.category, client?.rawApiClient?.admission_category]),
   ];
-  return values.some((value) => normalizeStoredDriverCategories(value).length > 0);
+  return values.some((value) => normalizeDriverCategories(value).length > 0);
 }
 
 function getChairmanFormTypeForVisit(visit) {
@@ -1885,14 +1884,6 @@ function normalizeDriverCategories(categories) {
   return DRIVER_CATEGORY_OPTIONS.filter((item) => expanded.has(item));
 }
 
-function normalizeStoredDriverCategories(categories) {
-  const normalized = normalizeDriverCategories(categories);
-  return normalized.length === DRIVER_LEGACY_DEFAULT_CATEGORY_SET.length &&
-    DRIVER_LEGACY_DEFAULT_CATEGORY_SET.every((category) => normalized.includes(category))
-    ? ["B"]
-    : normalized;
-}
-
 function getDriverCategoryPrice(categories = []) {
   const normalized = normalizeDriverCategories(categories);
   if (!normalized.length) return 0;
@@ -2005,7 +1996,7 @@ function collectChairmanDriverLimitations(fields = {}) {
 
 function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit = null) {
   const sourceCategories = Array.isArray(detail.categories) ? detail.categories : [];
-  const categories = normalizeStoredDriverCategories(sourceCategories);
+  const categories = normalizeDriverCategories(sourceCategories);
   const indications = Array.isArray(detail.indications) ? detail.indications : [];
   const limitations = Array.isArray(detail.limitations) ? detail.limitations : [];
   const hasCategoryOverrides = sourceCategories.length > 0;
@@ -2083,7 +2074,7 @@ function getDoctorRoleCodeById(roleId) {
 function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   if (!service) return new Set();
   if (isDriverService(service)) {
-    return new Set([...getDriverRoleCodes(normalizeStoredDriverCategories(detail.categories || DRIVER_DEFAULT_CATEGORIES)), "chairman"]);
+    return new Set([...getDriverRoleCodes(normalizeDriverCategories(detail.categories || DRIVER_DEFAULT_CATEGORIES)), "chairman"]);
   }
 
   const roleCodes = (service.doctorRoleIds || [])
@@ -7510,7 +7501,7 @@ function renderVisitServicePicker(activeVisit) {
     .find((service) => isDriverService(service));
   const selectedDriverId = selectedDriverService ? getServiceToken(selectedDriverService) : null;
   const driverDetail = selectedDriverId ? serviceDetails[selectedDriverId] || {} : {};
-  const driverCategories = normalizeStoredDriverCategories(driverDetail.categories || activeVisit?.admissionCategory || getSelectedClient()?.admissionCategory || getSelectedClient()?.category);
+  const driverCategories = normalizeDriverCategories(driverDetail.categories || activeVisit?.admissionCategory || getSelectedClient()?.admissionCategory || getSelectedClient()?.category);
   const driverPrice = Number(driverDetail.unitPrice ?? (selectedDriverService ? getDriverCategoryPrice(driverCategories) : 0));
 
   return `

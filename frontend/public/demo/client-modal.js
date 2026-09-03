@@ -475,6 +475,29 @@ function getClientDriverFlagsFromForm(fieldName) {
 
 }
 
+function isClientDriverPanelRendered() {
+  return Boolean(actionModalContent?.querySelector('input[name="clientDriverCategory"]'));
+}
+
+function getStoredClientDriverDetail(selectedServices = []) {
+  const selectedDriverService = getClientSelectedDriverService(selectedServices);
+  if (!selectedDriverService) return {};
+  return clientModalServiceDetails[getClientServiceDetailKey(selectedDriverService)] || {};
+}
+
+// Галочки ограничений и показаний до сохранения живут только в самой панели.
+// При перерисовке их надо забрать из формы, иначе отмеченное молча слетает.
+function getClientDriverDetailFromForm(selectedServices = []) {
+  const storedDetail = getStoredClientDriverDetail(selectedServices);
+  if (!isClientDriverPanelRendered()) return storedDetail;
+  return {
+    ...storedDetail,
+    indications: getClientDriverFlagsFromForm("clientDriverIndication"),
+    limitations: getClientDriverFlagsFromForm("clientDriverLimit"),
+    boatFit: Boolean(actionModalContent.querySelector('input[name="clientDriverBoatFit"]')?.checked),
+  };
+}
+
 function renderClientClassicCheckbox(name, value, label, checked = false) {
   return `
     <label class="client-classic-checkbox">
@@ -588,23 +611,10 @@ function refreshClientDriverPanel() {
   const container = document.getElementById("clientDriverPanelContainer");
   if (!container) return;
   const selectedServices = getClientModalSelectedServicesFromDom();
-  const selectedCategories = getClientDriverCategoriesFromForm();
-
-
-
-  const selectedDriverService = getClientSelectedDriverService(selectedServices);
-
-
-
-  const selectedDriverDetail = selectedDriverService
-
-
-
-    ? clientModalServiceDetails[getClientServiceDetailKey(selectedDriverService)] || {}
-
-
-
-    : {};
+  const selectedDriverDetail = getClientDriverDetailFromForm(selectedServices);
+  const selectedCategories = isClientDriverPanelRendered()
+    ? getClientDriverCategoriesFromForm()
+    : (Array.isArray(selectedDriverDetail.categories) ? selectedDriverDetail.categories : CLIENT_DRIVER_DEFAULT_CATEGORIES);
   container.innerHTML = renderClientDriverClassicPanel(selectedServices, selectedCategories, selectedDriverDetail);
   bindClientDriverCategoryCheckboxes();
 }
@@ -615,7 +625,9 @@ function bindClientDriverCategoryCheckboxes() {
       const selectedServices = getClientModalSelectedServicesFromDom();
       const container = document.getElementById("clientDriverPanelContainer");
       if (container) {
-        container.innerHTML = renderClientDriverClassicPanel(selectedServices, getClientDriverCategoriesFromForm());
+        const selectedCategories = getClientDriverCategoriesFromForm();
+        const selectedDriverDetail = getClientDriverDetailFromForm(selectedServices);
+        container.innerHTML = renderClientDriverClassicPanel(selectedServices, selectedCategories, selectedDriverDetail);
         bindClientDriverCategoryCheckboxes();
       }
       refreshClientPaymentPanel({ driverCategoriesChanged: true });
@@ -780,7 +792,9 @@ function removeClientSelectedService(serviceName = "") {
 
   const driverContainer = document.getElementById("clientDriverPanelContainer");
   if (driverContainer) {
-    driverContainer.innerHTML = renderClientDriverClassicPanel(selectedNow, getClientDriverCategoriesFromForm());
+    const driverCategories = getClientDriverCategoriesFromForm();
+    const driverDetail = getClientDriverDetailFromForm(selectedNow);
+    driverContainer.innerHTML = renderClientDriverClassicPanel(selectedNow, driverCategories, driverDetail);
     bindClientDriverCategoryCheckboxes();
   }
 
@@ -994,6 +1008,12 @@ function openClientModal(clientId = null, options = {}) {
   const initialSelectedServices = encounterMode ? [] : (editingClient?.services || []);
   clientModalSelectedServices = new Set(initialSelectedServices);
   clientModalServiceDetails = { ...(initialVisit?.serviceDetails || {}) };
+  // Открытая заново карточка показывает ровно те категории, ограничения и
+  // показания, которые уже были выбраны для этого обращения.
+  const initialDriverDetail = getStoredClientDriverDetail(initialSelectedServices);
+  const initialDriverCategories = Array.isArray(initialDriverDetail.categories)
+    ? initialDriverDetail.categories
+    : CLIENT_DRIVER_DEFAULT_CATEGORIES;
   clientModalSubmitAction = "save";
   const modalTitle = encounterMode
     ? "Новое обращение"
@@ -1219,7 +1239,7 @@ function openClientModal(clientId = null, options = {}) {
           ${renderClientServiceSelector(initialSelectedServices)}
         </div>
         <div id="clientDriverPanelContainer">
-          ${renderClientDriverClassicPanel(initialSelectedServices)}
+          ${renderClientDriverClassicPanel(initialSelectedServices, initialDriverCategories, initialDriverDetail)}
         </div>
         <div id="clientPaymentContainer">
           ${renderClientPaymentRows(initialSelectedServices)}

@@ -2217,7 +2217,6 @@ def _driver_auxiliary_line(context: dict[str, str], key: str, fallback: str = "�
 
 
 DRIVER_XLS_CATEGORY_KEYS = ("A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E")
-DRIVER_LEGACY_DEFAULT_CATEGORY_SET = {"A", "B", "C", "D", "BE", "M"}
 DRIVER_XLS_CATEGORY_CELLS_LEFT = (
     (10, 2),
     (10, 4),
@@ -2312,11 +2311,6 @@ DRIVER_RESTRICTION_TOKEN_FIELDS = {
     "TCB": ("restrictionBBE", ("b be", "bbe")),
     "TCC": ("restrictionCCE", ("c ce", "cce")),
 }
-DRIVER_RESTRICTION_CATEGORY_GROUPS = {
-    "TCA": {"A", "M", "A1", "B1"},
-    "TCB": {"B", "BE", "B1"},
-    "TCC": {"C", "CE", "D", "DE", "Tm", "Tb", "C1", "D1", "C1E", "D1E"},
-}
 DRIVER_XLS_BACK_STATUS_ROWS = (
     (14, "TCA"),
     (17, "TCB"),
@@ -2363,10 +2357,6 @@ def _driver_category_tokens(value: object) -> set[str]:
     return tokens
 
 
-def _normalize_driver_legacy_default_categories(selected: set[str]) -> set[str]:
-    return {"B"} if selected == DRIVER_LEGACY_DEFAULT_CATEGORY_SET else selected
-
-
 def _driver_completed_chairman(exams: list[DoctorExam]) -> DoctorExam | None:
     return next(
         (
@@ -2401,10 +2391,10 @@ def _driver_categories_from_chairman(fields: dict) -> set[str] | None:
         }
         if _truthy_driver_value(fields.get("categoryE")) and not selected.intersection({"BE", "CE", "DE"}):
             selected.update({"BE", "CE", "DE"})
-        return _normalize_driver_legacy_default_categories(selected)
+        return selected
     driver_categories = fields.get("driverCategories")
     if str(driver_categories or "").strip():
-        return _normalize_driver_legacy_default_categories(_driver_category_tokens(driver_categories))
+        return _driver_category_tokens(driver_categories)
     return None
 
 
@@ -2415,7 +2405,7 @@ def _driver_categories_from_context(context: dict[str, str], client: Client) -> 
         if _truthy_driver_value(context.get(f"Category{category}") or context.get(f"{category}Calc"))
     }
     selected.update(_driver_category_tokens(client.admission_category))
-    return _normalize_driver_legacy_default_categories(selected)
+    return selected
 
 
 def _driver_categories_for_documents(client: Client, exams: list[DoctorExam]) -> set[str]:
@@ -2423,7 +2413,7 @@ def _driver_categories_for_documents(client: Client, exams: list[DoctorExam]) ->
     chairman_categories = _driver_categories_from_chairman(chairman.fields_json or {}) if chairman else None
     if chairman_categories is not None:
         return chairman_categories
-    return _normalize_driver_legacy_default_categories(_driver_category_tokens(client.admission_category))
+    return _driver_category_tokens(client.admission_category)
 
 
 def _driver_category_context_values(selected: set[str], true_value: str = "X", false_value: str = "") -> dict[str, str]:
@@ -2460,19 +2450,18 @@ def _driver_field_or_text_flag(fields: dict, field_key: str, fallback_text: obje
     return _driver_text_contains(fallback_text, labels)
 
 
-def _driver_flag_context_values(client: Client, exams: list[DoctorExam], selected: set[str] | None = None) -> dict[str, str]:
+# Показания и ограничения на обороте справки берутся только из отмеченных
+# галочек. Выбранная категория сама по себе ограничением не является:
+# у здорового водителя все три строки должны печататься как "не установлено".
+def _driver_flag_context_values(client: Client, exams: list[DoctorExam]) -> dict[str, str]:
     chairman = _driver_completed_chairman(exams) or _driver_latest_chairman(exams)
     fields = (chairman.fields_json or {}) if chairman else {}
     fallback_text = client.indications or ""
-    selected_categories = selected if selected is not None else _driver_categories_for_documents(client, exams)
     context: dict[str, str] = {}
     for token, (field_key, labels) in DRIVER_INDICATION_TOKEN_FIELDS.items():
         context[token] = "true" if _driver_field_or_text_flag(fields, field_key, fallback_text, labels) else "false"
     for token, (field_key, labels) in DRIVER_RESTRICTION_TOKEN_FIELDS.items():
-        category_group = DRIVER_RESTRICTION_CATEGORY_GROUPS.get(token, set())
-        has_category = bool(selected_categories.intersection(category_group))
-        has_restriction = _driver_field_or_text_flag(fields, field_key, fallback_text, labels)
-        context[token] = "X" if has_restriction or has_category else ""
+        context[token] = "X" if _driver_field_or_text_flag(fields, field_key, fallback_text, labels) else ""
     context["DriveShipCalc"] = "true" if _truthy_driver_value(fields.get("categoryBoat")) else "false"
     return context
 
@@ -2481,7 +2470,7 @@ def _driver_document_context_overrides(client: Client, exams: list[DoctorExam]) 
     selected = _driver_categories_for_documents(client, exams)
     return {
         **_driver_category_context_values(selected),
-        **_driver_flag_context_values(client, exams, selected),
+        **_driver_flag_context_values(client, exams),
     }
 
 
@@ -2497,7 +2486,7 @@ def _driver_xml_context_overrides(context: dict[str, str], client: Client, exams
         for token_name in token_names:
             overrides[token_name] = value
 
-    flag_context = _driver_flag_context_values(client, exams, selected)
+    flag_context = _driver_flag_context_values(client, exams)
     overrides.update(
         {
             token_name: flag_context[token_name]
