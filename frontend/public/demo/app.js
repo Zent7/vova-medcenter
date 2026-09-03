@@ -162,6 +162,10 @@ const data = {
   importSuccess: "",
   clientOverrides: {},
   doctorDirectory: {},
+  // Справочник врачей свой у каждого медцентра, поэтому кэш держим по названию
+  // центра: иначе после переключения на экране остались бы чужие ФИО.
+  doctorDirectoryByCenter: {},
+  doctorDirectoryCenterId: null,
   doctorDirectoryLoaded: false,
   servicesDirty: false,
   staffUsers: [],
@@ -185,6 +189,11 @@ let clientSearchRequestId = 0;
 let clientSearchAbortController = null;
 let clientRowClickTimer = null;
 const doctorDirectorySavePromises = new Map();
+// Номер последнего запроса календаря: ответы прошлых медцентров отбрасываем.
+let recallCalendarRequestId = 0;
+// Растёт при каждой правке справочника врачей: ответ запроса, отправленного до
+// правки, применять уже нельзя.
+let doctorDirectoryRevision = 0;
 const DASHBOARD_PAGE_SIZE = 50;
 const DASHBOARD_CLIENT_LOAD_LIMIT = 100;
 const CLIENT_ROW_SINGLE_CLICK_DELAY = 300;
@@ -1160,11 +1169,30 @@ function applyDefaultDoctorDirectory() {
   if (!data.doctorDirectory || typeof data.doctorDirectory !== "object") {
     data.doctorDirectory = {};
   }
+  // Это врачи первого медцентра. Остальные заводят своих, и подставлять им
+  // чужие ФИО нельзя — до ответа сервера у них пустой справочник.
+  if (getWorkspaceCenterName() !== WORKSPACE_CENTER_NAMES[0]) return;
   Object.entries(DEFAULT_DOCTOR_DIRECTORY).forEach(([roleId, doctorName]) => {
     if (!String(data.doctorDirectory[roleId] || "").trim()) {
       data.doctorDirectory[roleId] = doctorName;
     }
   });
+  // Кладём и в кэш по медцентрам: без backend оператор, переключившись в другой
+  // центр и обратно, читал бы пустой кэш и потерял бы эти ФИО до ответа сервера.
+  cacheDoctorDirectoryForCurrentCenter();
+}
+
+// Кэш справочника врачей на диске разложен по медцентрам.
+function readCachedDoctorDirectory(centerName) {
+  const cached = data.doctorDirectoryByCenter?.[centerName];
+  return cached && typeof cached === "object" ? { ...cached } : {};
+}
+
+function cacheDoctorDirectoryForCurrentCenter() {
+  if (!data.doctorDirectoryByCenter || typeof data.doctorDirectoryByCenter !== "object") {
+    data.doctorDirectoryByCenter = {};
+  }
+  data.doctorDirectoryByCenter[getWorkspaceCenterName()] = { ...(data.doctorDirectory || {}) };
 }
 
 function applyPersistedDemoState() {
@@ -1180,9 +1208,10 @@ function applyPersistedDemoState() {
   data.clientOverrides = saved.clientOverrides && typeof saved.clientOverrides === "object"
     ? saved.clientOverrides
     : {};
-  data.doctorDirectory = saved.doctorDirectory && typeof saved.doctorDirectory === "object"
-    ? saved.doctorDirectory
-    : {};
+  data.doctorDirectoryByCenter =
+    saved.doctorDirectoryByCenter && typeof saved.doctorDirectoryByCenter === "object"
+      ? saved.doctorDirectoryByCenter
+      : {};
   data.lastCreatedStaffUser = saved.lastCreatedStaffUser && typeof saved.lastCreatedStaffUser === "object"
     ? saved.lastCreatedStaffUser
     : null;
@@ -1227,6 +1256,10 @@ function applyPersistedDemoState() {
   if (WORKSPACE_CENTER_NAMES.includes(savedAppState.centerFilter)) {
     appState.centerFilter = savedAppState.centerFilter;
   }
+  // Только теперь известно, в каком медцентре работает оператор, — берём его
+  // справочник врачей, а не первого попавшегося центра.
+  data.doctorDirectory = readCachedDoctorDirectory(getWorkspaceCenterName());
+  applyDefaultDoctorDirectory();
   appState.clientSearch = "";
   appState.clientPeriodFilterApplied = savedAppState.clientPeriodFilterApplied === true;
   if (appState.clientPeriodFilterApplied) {
@@ -1325,7 +1358,7 @@ function persistDemoState() {
     const payload = {
       createdClients: data.clients.filter((client) => client.__demoCreated),
       clientOverrides: data.clientOverrides || {},
-      doctorDirectory: data.doctorDirectory || {},
+      doctorDirectoryByCenter: data.doctorDirectoryByCenter || {},
       visits: getPersistableVisits(),
       mkb10History: data.mkb10History || [],
       activeVisitId: appState.activeVisitId,
@@ -3099,19 +3132,41 @@ async function deleteDemoStaffUser(userId, userName) {
 
 async function loadServicesFromBackend() {
   try {
+    // Врачи у каждого медцентра свои, поэтому справочник запрашиваем с
+    // идентификатором того центра, в котором сейчас работает оператор.
+    const requestedCenterName = getWorkspaceCenterName();
+    const requestedDirectoryRevision = doctorDirectoryRevision;
+    let doctorDirectoryCenterId = null;
+    try {
+      doctorDirectoryCenterId = await resolveWorkspaceCenterId();
+    } catch (centerError) {
+      console.warn("Не удалось определить медцентр для справочника врачей", centerError);
+    }
+    const doctorRolesQuery = doctorDirectoryCenterId
+      ? `/doctor-roles?center_id=${encodeURIComponent(doctorDirectoryCenterId)}`
+      : "/doctor-roles";
     const [categories, roles, services] = await Promise.all([
       apiRequest("/service-categories"),
-      apiRequest("/doctor-roles"),
+      apiRequest(doctorRolesQuery),
       apiRequest("/services"),
     ]);
     serviceGroups = Array.isArray(categories) ? categories.map(mapApiServiceCategory) : [];
     doctorRoles = Array.isArray(roles) ? roles.map(mapApiDoctorRole).filter((role) => !isExcludedDoctorRole(role)) : [];
-    data.doctorDirectory = Object.fromEntries(
-      doctorRoles
-        .filter((role) => String(role.code || "").trim() && String(role.fullName || "").trim())
-        .map((role) => [role.code, String(role.fullName).trim()]),
-    );
-    data.doctorDirectoryLoaded = true;
+    // Пока шёл запрос, оператор мог переключить медцентр. Ответ на прошлый центр
+    // применять нельзя: иначе в новом центре оказались бы чужие врачи.
+    if (
+      getWorkspaceCenterName() === requestedCenterName &&
+      doctorDirectoryRevision === requestedDirectoryRevision
+    ) {
+      data.doctorDirectory = Object.fromEntries(
+        doctorRoles
+          .filter((role) => String(role.code || "").trim() && String(role.fullName || "").trim())
+          .map((role) => [role.code, String(role.fullName).trim()]),
+      );
+      data.doctorDirectoryCenterId = doctorDirectoryCenterId;
+      data.doctorDirectoryLoaded = true;
+      cacheDoctorDirectoryForCurrentCenter();
+    }
     data.serverServices = Array.isArray(services) ? services.map(mapApiService).filter((service) => !isHiddenService(service)) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
@@ -3619,39 +3674,64 @@ function getDoctorFullName(doctorRoleId) {
   return String(data.doctorDirectory?.[String(doctorRoleId || "").trim()] || "").trim();
 }
 
-function setDoctorFullName(doctorRoleId, value) {
+// Пишет ФИО в справочник названного медцентра. Экран обновляется, только если
+// оператор всё ещё в этом центре: ответ на запрос, отправленный до переключения,
+// не должен подменить врачей нового центра.
+function applyDoctorFullNameForCenter(centerName, doctorRoleId, value) {
   const roleId = String(doctorRoleId || "").trim();
   if (!roleId) return;
   const normalized = String(value || "").replace(/\s+/g, " ").trim();
-  if (!data.doctorDirectory || typeof data.doctorDirectory !== "object") {
-    data.doctorDirectory = {};
+  if (!data.doctorDirectoryByCenter || typeof data.doctorDirectoryByCenter !== "object") {
+    data.doctorDirectoryByCenter = {};
   }
+  const directory = { ...(data.doctorDirectoryByCenter[centerName] || {}) };
   if (normalized) {
-    data.doctorDirectory[roleId] = normalized;
+    directory[roleId] = normalized;
   } else {
-    delete data.doctorDirectory[roleId];
+    delete directory[roleId];
   }
+  data.doctorDirectoryByCenter[centerName] = directory;
+  doctorDirectoryRevision += 1;
+  if (getWorkspaceCenterName() === centerName) {
+    data.doctorDirectory = { ...directory };
+  }
+}
+
+function setDoctorFullName(doctorRoleId, value) {
+  applyDoctorFullNameForCenter(getWorkspaceCenterName(), doctorRoleId, value);
 }
 
 async function saveDoctorFullName(doctorRoleId, value) {
   const roleId = String(doctorRoleId || "").trim();
   if (!roleId) return null;
+
+  // Медцентр и введённое значение запоминаем до первого await: пока идёт запрос,
+  // оператор может переключить центр, и ни тело запроса, ни ответ не должны
+  // попасть в справочник соседнего медцентра.
+  const centerName = getWorkspaceCenterName();
   const previousValue = getDoctorFullName(roleId);
-  setDoctorFullName(roleId, value);
+  const submittedValue = String(value || "").replace(/\s+/g, " ").trim();
+  applyDoctorFullNameForCenter(centerName, roleId, submittedValue);
   persistDemoState();
 
   try {
-    const savedRole = await apiRequest(`/doctor-roles/${encodeURIComponent(roleId)}`, {
-      method: "PUT",
-      body: JSON.stringify({ full_name: getDoctorFullName(roleId) || null }),
-    });
-    setDoctorFullName(roleId, savedRole.full_name || "");
-    const role = doctorRoles.find((item) => String(item.code) === roleId);
-    if (role) role.fullName = savedRole.full_name || "";
+    const centerId = await resolveCenterIdForVisit({ center: centerName }, { center: centerName });
+    const savedRole = await apiRequest(
+      `/doctor-roles/${encodeURIComponent(roleId)}?center_id=${encodeURIComponent(centerId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ full_name: submittedValue || null }),
+      },
+    );
+    applyDoctorFullNameForCenter(centerName, roleId, savedRole.full_name || "");
+    if (getWorkspaceCenterName() === centerName) {
+      const role = doctorRoles.find((item) => String(item.code) === roleId);
+      if (role) role.fullName = savedRole.full_name || "";
+    }
     persistDemoState();
     return savedRole;
   } catch (error) {
-    setDoctorFullName(roleId, previousValue);
+    applyDoctorFullNameForCenter(centerName, roleId, previousValue);
     persistDemoState();
     throw error;
   }
@@ -3659,11 +3739,15 @@ async function saveDoctorFullName(doctorRoleId, value) {
 
 function queueDoctorFullNameSave(doctorRoleId, value) {
   const roleId = String(doctorRoleId || "").trim();
+  // Ключ с медцентром: одну и ту же специальность сохраняют в разных центрах, и
+  // по ключу из одной роли сохранение второго центра вытесняло бы первое —
+  // документ успел бы сформироваться до того, как ФИО доехало до сервера.
+  const saveKey = `${getWorkspaceCenterName()}::${roleId}`;
   const savePromise = saveDoctorFullName(roleId, value);
-  doctorDirectorySavePromises.set(roleId, savePromise);
+  doctorDirectorySavePromises.set(saveKey, savePromise);
   savePromise.finally(() => {
-    if (doctorDirectorySavePromises.get(roleId) === savePromise) {
-      doctorDirectorySavePromises.delete(roleId);
+    if (doctorDirectorySavePromises.get(saveKey) === savePromise) {
+      doctorDirectorySavePromises.delete(saveKey);
     }
   });
   return savePromise;
@@ -3671,6 +3755,17 @@ function queueDoctorFullNameSave(doctorRoleId, value) {
 
 async function waitForDoctorDirectorySaves() {
   await Promise.all(Array.from(doctorDirectorySavePromises.values()));
+}
+
+// ФИО врача в конкретном медцентре. Для чужого центра берём его кэш, а если
+// кэша нет — возвращаем пусто: пусть подпись останется той, что уже сохранена в
+// осмотре. Подписывать чужой осмотр врачом своего центра нельзя.
+function getDoctorFullNameForCenter(centerName, doctorRoleId) {
+  const roleId = String(doctorRoleId || "").trim();
+  if (!roleId) return "";
+  const name = String(centerName || "").trim();
+  if (!name || name === getWorkspaceCenterName()) return getDoctorFullName(roleId);
+  return String(data.doctorDirectoryByCenter?.[name]?.[roleId] || "").trim();
 }
 
 function getDoctorDisplayName(doctorRoleId) {
@@ -3683,7 +3778,7 @@ function getDoctorDisplayName(doctorRoleId) {
   return role?.name || doctorRoleId;
 }
 
-function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") {
+function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "", centerName = "") {
   const roleId = String(doctorRoleId || "").trim();
   const normalizedFallback = String(fallbackName || "").trim();
   const template = getDoctorTemplate(roleId);
@@ -3693,15 +3788,29 @@ function getDoctorSignatureName(doctorRoleId, client = null, fallbackName = "") 
       .filter(Boolean)
       .map((value) => String(value).trim().toLowerCase()),
   );
-  const directoryName = getDoctorFullName(roleId);
+  const directoryName = getDoctorFullNameForCenter(centerName, roleId);
   if (directoryName) return directoryName;
 
   if (normalizedFallback && !genericNames.has(normalizedFallback.toLowerCase())) {
     return normalizedFallback;
   }
 
-  const clientDoctorName = getClientDoctorFullName(client, roleId);
-  if (clientDoctorName) return clientDoctorName;
+  // Легаси-ФИО в карточке клиента приехали из старой базы одного медцентра —
+  // первого. Для остальных центров это чужой врач: сервер такое имя не
+  // перепишет (у центра нет своей записи), и им была бы подписана справка.
+  const scopedCenterName = String(centerName || "").trim();
+  if (!scopedCenterName || scopedCenterName === WORKSPACE_CENTER_NAMES[0]) {
+    const clientDoctorName = getClientDoctorFullName(client, roleId);
+    if (clientDoctorName) return clientDoctorName;
+  }
+
+  if (scopedCenterName) {
+    // Подпись просили для конкретного медцентра, и ФИО у него не заведено.
+    // getDoctorDisplayName снова заглянул бы в справочник рабочего центра, и
+    // осмотр чужого центра получил бы нашего врача — поэтому подписываем
+    // обобщённо, названием специальности.
+    return template?.name || role?.name || roleId;
+  }
 
   return getDoctorDisplayName(roleId, client);
 }
@@ -4318,19 +4427,25 @@ async function loadDoctorExamsForClient(client, visit = null) {
 
   try {
     const exams = await apiRequest(query);
-    const mapped = (Array.isArray(exams) ? exams : []).map((exam) => ({
-      id: `exam-${exam.id}`,
-      backendId: exam.id,
-      clientId: client.id,
-      visitId: visit?.id || `encounter-${exam.encounter_id}`,
-      backendEncounterId: exam.encounter_id || null,
-      doctorRoleId: exam.doctor_role_id,
-      doctorName: getDoctorSignatureName(exam.doctor_role_id, client, exam.doctor_name),
-      status: exam.is_completed ? "completed" : "draft",
-      isCompleted: Boolean(exam.is_completed),
-      updatedAt: new Date().toISOString(),
-      fields: exam.fields_json || {},
-    }));
+    const mapped = (Array.isArray(exams) ? exams : []).map((exam) => {
+      // Осмотры грузятся и без явного обращения, а лежать они могут в разных
+      // медцентрах: центр ищем у того обращения, к которому осмотр привязан.
+      const examVisit =
+        visit || data.visits.find((item) => String(item.backendId) === String(exam.encounter_id)) || null;
+      return {
+        id: `exam-${exam.id}`,
+        backendId: exam.id,
+        clientId: client.id,
+        visitId: visit?.id || `encounter-${exam.encounter_id}`,
+        backendEncounterId: exam.encounter_id || null,
+        doctorRoleId: exam.doctor_role_id,
+        doctorName: getDoctorSignatureName(exam.doctor_role_id, client, exam.doctor_name, examVisit?.center),
+        status: exam.is_completed ? "completed" : "draft",
+        isCompleted: Boolean(exam.is_completed),
+        updatedAt: new Date().toISOString(),
+        fields: exam.fields_json || {},
+      };
+    });
 
     data.doctorExams = [
       ...data.doctorExams.filter(
@@ -4662,6 +4777,10 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
     doctorName: getDoctorSignatureName(
       doctorRoleId,
       getClientPool().find((item) => String(item.id) === String(clientId)) || null,
+      "",
+      // Осмотр заводится на конкретное обращение: подпись берём у его медцентра,
+      // иначе в карточке чужого центра оказался бы наш врач.
+      data.visits.find((item) => String(item.id) === String(visitId))?.center,
     ),
     status: "draft",
     isCompleted: false,
@@ -5281,7 +5400,7 @@ async function syncDoctorExamToBackend(exam) {
       client_id: Number(clientId),
       encounter_id: visit?.backendId ? Number(visit.backendId) : null,
       doctor_role_id: exam.doctorRoleId,
-      doctor_name: getDoctorSignatureName(exam.doctorRoleId, client, exam.doctorName),
+      doctor_name: getDoctorSignatureName(exam.doctorRoleId, client, exam.doctorName, visit?.center),
       fields_json: exam.fields || {},
       is_completed: Boolean(exam.isCompleted),
     }),
@@ -5289,7 +5408,7 @@ async function syncDoctorExamToBackend(exam) {
   exam.backendId = savedExam.id;
   exam.backendEncounterId = savedExam.encounter_id || visit?.backendId || null;
   exam.updatedAt = savedExam.completed_at || savedExam.updated_at || new Date().toISOString();
-  exam.doctorName = getDoctorSignatureName(exam.doctorRoleId, client, savedExam.doctor_name);
+  exam.doctorName = getDoctorSignatureName(exam.doctorRoleId, client, savedExam.doctor_name, visit?.center);
   exam.fields = savedExam.fields_json || exam.fields || {};
   exam.isCompleted = Boolean(savedExam.is_completed);
   exam.status = exam.isCompleted ? "completed" : "draft";
@@ -6326,11 +6445,15 @@ async function previewClientImport() {
   data.importSuccess = "";
   renderApp();
   try {
+    // Обращения из файла заводятся в том медцентре, где сейчас работает
+    // оператор: без этого загрузка третьего центра уехала бы в первый.
+    const centerId = await resolveWorkspaceCenterId();
     data.importPreview = await apiRequest("/imports/clients-excel/preview", {
       method: "POST",
       body: JSON.stringify({
         file_name: data.importFileName,
         file_content_base64: data.importFileBase64,
+        center_id: centerId,
       }),
     });
   } catch (error) {
@@ -6352,11 +6475,13 @@ async function commitClientImport() {
   data.importSuccess = "";
   renderApp();
   try {
+    const centerId = await resolveWorkspaceCenterId();
     const result = await apiRequest("/imports/clients-excel/commit", {
       method: "POST",
       body: JSON.stringify({
         file_name: data.importFileName,
         file_content_base64: data.importFileBase64,
+        center_id: centerId,
       }),
     });
     const warningRows = result.service_warning_rows || 0;
@@ -7327,6 +7452,8 @@ function renderDoctorsPage() {
 
   return `
     <section class="card">
+      <h3>Врачи медцентра — ${escapeHtml(getWorkspaceCenterName())}</h3>
+      <p class="muted">ФИО сохраняется только для этого медцентра. У остальных медцентров свои врачи — переключи медцентр вверху, чтобы завести их.</p>
       <p class="muted">Карточки врачей подключены. Чтобы открыть осмотр, вернись на главную, найди клиента и нажми нужного врача.</p>
       <div class="cards-grid">
         ${roles
@@ -7938,13 +8065,27 @@ function shouldShowDoctorExamInAmbulatorySheet(exam, selectedClient = null) {
   return getRequiredDoctorRoleCodesForVisit(visit, selectedClient).includes(exam.doctorRoleId);
 }
 
+// Обращение записи амбулаторного листа: нужно, чтобы подписать её врачом того
+// медцентра, где приём и был, а не того, в котором сейчас работает оператор.
+function getVisitForMedicalRecordEntry(entry) {
+  const encounterId = entry?.encounter_id;
+  if (!encounterId) return null;
+  return data.visits.find((item) => String(item.backendId) === String(encounterId)) || null;
+}
+
 function buildAmbulatorySheetEntries(entries, exams, selectedClient = null) {
   const backendEntries = (Array.isArray(entries) ? entries : []).map((entry) => ({
     id: `record-${entry.id}`,
     source: "backend",
     backendId: entry.id,
     doctorRoleId: entry.doctor_role_id || "",
-    doctorName: getDoctorSignatureName(entry.doctor_role_id, selectedClient, entry.doctor_name) || "Врач",
+    doctorName:
+      getDoctorSignatureName(
+        entry.doctor_role_id,
+        selectedClient,
+        entry.doctor_name,
+        getVisitForMedicalRecordEntry(entry)?.center,
+      ) || "Врач",
     entryDate: formatApiDate(entry.entry_date) || "—",
     complaints: normalizeSheetValue(entry.complaints),
     anamnesis: normalizeSheetValue(entry.anamnesis),
@@ -7965,7 +8106,13 @@ function buildAmbulatorySheetEntries(entries, exams, selectedClient = null) {
       source: "exam",
       backendId: null,
       doctorRoleId: exam.doctorRoleId || "",
-      doctorName: getDoctorSignatureName(exam.doctorRoleId, selectedClient, exam.doctorName) || "Врач",
+      doctorName:
+        getDoctorSignatureName(
+          exam.doctorRoleId,
+          selectedClient,
+          exam.doctorName,
+          getVisitForDoctorExam(exam)?.center,
+        ) || "Врач",
       entryDate: formatApiDate(exam.isCompleted ? exam.updatedAt : getVisitForDoctorExam(exam)?.visitDate || exam.updatedAt) || "-",
       complaints: normalizeSheetValue(getExamFieldValue(exam, ["complaints", "complaintsPreset"])),
       anamnesis: normalizeSheetValue(getExamFieldValue(exam, ["anamnesis", "epidAnamnesis", "allergyAnamnesis"])),
@@ -8027,7 +8174,15 @@ function renderMedicalRecordBackendBlock(selectedClient, exams = []) {
     .join(", ");
   const healthGroup = draft.healthGroup;
   const serviceDiagnosis = draft.dispensaryObservation || diagnosis;
-  const chairmanName = normalizeSheetValue(getDoctorSignatureName("chairman", selectedClient));
+  // Председателя подписываем врачом того медцентра, где велось само заключение.
+  const chairmanName = normalizeSheetValue(
+    getDoctorSignatureName(
+      "chairman",
+      selectedClient,
+      chairmanExam?.doctorName || "",
+      getVisitForDoctorExam(chairmanExam)?.center,
+    ),
+  );
   const visibleEntries = data.medicalRecordEditMode ? draft.entries : entries;
   const memberNames = normalizeSheetValue(visibleEntries.map((entry) => entry.doctorName).slice(0, 4).join(", "));
   const commissionDate = (data.medicalRecordEditMode ? draft.entries : primaryEntries)[0]?.entryDate || openedAt;
@@ -11084,6 +11239,10 @@ function buildLocalRecallItems() {
   data.visits.forEach((visit) => {
     const client = clients.find((item) => String(item.id) === String(visit.clientId));
     if (!client) return;
+    // Обращения прошлого медцентра остаются в памяти после переключения, а этот
+    // список показывается, пока сервер не ответил: без фильтра в новом центре
+    // мелькнули бы чужие пациенты.
+    if (!matchesCenter(visit.center || client.center)) return;
     const encounterDate = parseCalendarDate(visit.visitDate || visit.createdAt);
     if (!encounterDate) return;
 
@@ -11137,18 +11296,51 @@ function getVisibleRecallItems() {
   });
 }
 
+// Гасит уже летящий запрос календаря: его ответ относится к прошлому медцентру.
+// Флаг загрузки снимаем здесь же — тот запрос до `finally` уже не дойдёт.
+function invalidateRecallCalendar() {
+  recallCalendarRequestId += 1;
+  data.recallItems = [];
+  data.recallItemsLoaded = false;
+  data.recallItemsLoading = false;
+  data.recallItemsError = "";
+}
+
 async function loadRecallCalendar() {
+  // Медцентр фиксируем на старте, а ответ применяем, только если он всё ещё
+  // самый свежий: иначе после переключения в календаре нового центра осталась бы
+  // подгрузка прошлого — то есть чужие пациенты.
+  const requestId = ++recallCalendarRequestId;
+  const requestedCenterName = getWorkspaceCenterName();
   data.recallItemsLoading = true;
   data.recallItemsError = "";
   renderApp();
   try {
-    data.recallItems = await apiRequest("/recalls/due?horizon_days=45&include_done=true");
+    // Повторы спрашиваем по своему медцентру: обзванивать чужих пациентов
+    // и звать их в другой центр регистратор не должен.
+    // Без медцентра запрос не отправляем: `/recalls/due` без `center_id`
+    // возвращает повторы всех центров сразу, и это хуже честной ошибки.
+    const centerId = await resolveCenterIdForVisit(
+      { center: requestedCenterName },
+      { center: requestedCenterName },
+    );
+    const params = new URLSearchParams({
+      horizon_days: "45",
+      include_done: "true",
+      center_id: String(centerId),
+    });
+    const items = await apiRequest(`/recalls/due?${params.toString()}`);
+    if (requestId !== recallCalendarRequestId) return;
+    data.recallItems = items;
     data.recallItemsLoaded = true;
   } catch (error) {
+    if (requestId !== recallCalendarRequestId) return;
     data.recallItemsError = humanizeApiError(error, "Не удалось загрузить календарь сроков");
   } finally {
-    data.recallItemsLoading = false;
-    renderApp();
+    if (requestId === recallCalendarRequestId) {
+      data.recallItemsLoading = false;
+      renderApp();
+    }
   }
 }
 
@@ -13346,14 +13538,24 @@ if (centerSelect) {
     data.blanksForms = [];
     data.cashRequestKey = "";
     data.cashRows = [];
+    // Врачи у нового медцентра свои: показываем его кэш и перезапрашиваем
+    // справочник, иначе на экране остались бы ФИО прошлого центра.
+    data.doctorDirectory = readCachedDoctorDirectory(nextCenter);
+    data.doctorDirectoryCenterId = null;
+    data.doctorDirectoryLoaded = false;
+    invalidateRecallCalendar();
     actionModal?.classList.add("hidden");
     persistDemoState();
     renderApp();
+    void loadServicesFromBackend();
     if (appState.page === "cash" && !data.cashLoading) {
       loadCashReport();
     }
     if (appState.page === "blanks" && typeof window.loadBlanksData === "function") {
       window.loadBlanksData({ force: true });
+    }
+    if (appState.page === "calendar") {
+      loadRecallCalendar();
     }
     showToast(`Рабочий медцентр: ${nextCenter}`);
   });

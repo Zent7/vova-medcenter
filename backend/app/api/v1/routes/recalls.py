@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, true
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -25,8 +25,15 @@ def list_recalls(db: Session = Depends(get_db)) -> list[RecallRead]:
 def list_due_recalls(
     horizon_days: int = Query(default=45, ge=0, le=3650),
     include_done: bool = Query(default=False),
+    center_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[RecallDueRead]:
+    """Повторы к обзвону. С `center_id` — только по обращениям этого медцентра.
+
+    Без фильтра регистратор третьего медцентра видел бы пациентов первого и
+    звал бы на повтор в чужой центр.
+    """
+
     today = date.today()
     horizon = today + timedelta(days=horizon_days)
     seen_keys: set[tuple[int, int, int]] = set()
@@ -48,6 +55,7 @@ def list_due_recalls(
         .where(Client.deleted_at.is_(None))
         .where(Encounter.deleted_at.is_(None))
         .where(Service.recall_after_days.is_not(None))
+        .where(Encounter.center_id == center_id if center_id is not None else true())
         .order_by(Encounter.encounter_date.asc(), Client.last_name.asc(), Client.first_name.asc())
     ).all()
 

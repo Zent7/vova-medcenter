@@ -40,7 +40,7 @@ from app.models.encounter import Encounter
 from app.models.encounter_service import EncounterService
 from app.models.generated_document import GeneratedDocument
 from app.models.medical_record import MedicalRecord, MedicalRecordEntry
-from app.models.service import DoctorRole, Service
+from app.models.service import Service
 from app.schemas.document_generation import DocumentGenerateResponse
 from app.services.audit import write_audit_log
 from app.services.blank_forms import (
@@ -49,6 +49,7 @@ from app.services.blank_forms import (
     resolve_required_blank_type,
     reuse_blank_for_existing_document,
 )
+from app.services.doctor_directory import get_center_doctor_names
 from app.services.document_context import (
     MONTH_NAMES,
     _add_calendar_months,
@@ -5179,13 +5180,9 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         .scalars()
         .all()
     )
-    role_names = {
-        role.code: str(role.full_name or "").strip()
-        for role in db.execute(
-            select(DoctorRole).where(DoctorRole.full_name.is_not(None))
-        ).scalars()
-        if str(role.full_name or "").strip()
-    }
+    # Справочник врачей берём у медцентра обращения: в соседнем центре ту же
+    # специальность ведёт другой человек, и подписывать документ его ФИО нельзя.
+    role_names = get_center_doctor_names(db, encounter.center_id)
     for exam in exams:
         current_name = role_names.get(str(exam.doctor_role_id or "").strip())
         if current_name:

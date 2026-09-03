@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password
 from app.models.certificate_number_range import CertificateNumberRange
 from app.models.center import Center
+from app.models.center_doctor_name import CenterDoctorName
 from app.models.client import Client
 from app.models.client_document import ClientDocument
 from app.models.document_journal import DocumentJournalEntry
@@ -21,6 +22,7 @@ from app.models.service import DoctorRole, Service, ServiceCategory, ServiceDoct
 from app.models.template_phrase import TemplatePhrase
 from app.models.user import Role, User
 from app.models.visit_type import VisitType, VisitTypeService
+from app.services.doctor_directory import set_center_doctor_name
 from app.services.template_catalog import sync_document_template_catalog, template_visit_type_code
 
 
@@ -420,6 +422,7 @@ def seed_reference_data(db: Session) -> None:
         _ensure_user_roles_and_staff(db)
         _ensure_center_details(db)
         _ensure_service_catalog(db)
+        _ensure_default_doctor_directory(db)
         _backfill_guard_certificate_service_records(db)
         _ensure_foundation_catalog(db)
         has_large_import = db.execute(select(Client.id).offset(2000).limit(1)).scalar_one_or_none() is not None
@@ -467,6 +470,7 @@ def seed_reference_data(db: Session) -> None:
     db.add_all(services)
     _ensure_service_catalog(db)
     _ensure_center_details(db)
+    _ensure_default_doctor_directory(db)
     _ensure_foundation_catalog(db)
 
     clients = [
@@ -520,6 +524,31 @@ def seed_reference_data(db: Session) -> None:
 
     db.commit()
     _backfill_related_records(db)
+
+
+def _ensure_default_doctor_directory(db: Session) -> None:
+    """Заполняет справочник врачей первого медцентра на новой установке.
+
+    Только пока справочник этого центра пуст: если заказчик стёр ФИО, оно не
+    должно вернуться при следующем старте. Остальные медцентры заводят своих
+    врачей сами — ради этого справочник и разделён по центрам.
+    """
+
+    home_center_id = db.execute(
+        select(Center.id).order_by(Center.id.asc()).limit(1)
+    ).scalar_one_or_none()
+    if home_center_id is None:
+        return
+
+    has_directory = db.execute(
+        select(CenterDoctorName.id).where(CenterDoctorName.center_id == home_center_id).limit(1)
+    ).scalar_one_or_none()
+    if has_directory is not None:
+        return
+
+    for code, full_name in DEFAULT_DOCTOR_FULL_NAMES.items():
+        set_center_doctor_name(db, home_center_id, code, full_name)
+    db.commit()
 
 
 def _ensure_workspace_centers(db: Session) -> list[Center]:
@@ -678,8 +707,6 @@ def _ensure_service_catalog(db: Session) -> None:
             role.name = name
             role.sort_order = sort_order
             role.is_active = True
-        if hasattr(role, "full_name") and not str(role.full_name or "").strip():
-            role.full_name = DEFAULT_DOCTOR_FULL_NAMES.get(code)
         role_by_legacy_id[legacy_id] = role.id
 
     category_by_group_id: dict[int, int] = {}

@@ -618,7 +618,17 @@ def get_import_services(db: Session) -> list[Service]:
     ).scalars().all()
 
 
-def get_import_center(db: Session, actor_user_id: int | None) -> Center | None:
+def get_import_center(db: Session, actor_user_id: int | None, center_id: int | None = None) -> Center | None:
+    """Медцентр, в который загрузка заводит обращения.
+
+    В первую очередь — тот, что прислал интерфейс: оператор третьего медцентра
+    грузит свой список, и обращения должны остаться у него, а не уехать в первый.
+    """
+
+    if center_id is not None:
+        center = db.get(Center, center_id)
+        if center is not None and center.is_active:
+            return center
     if actor_user_id is not None:
         actor = db.get(User, actor_user_id)
         if actor is not None and actor.center_id is not None:
@@ -887,7 +897,7 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
     )
 
     service_rows = sum(1 for service in resolved_services.values() if service is not None)
-    if service_rows and get_import_center(db, get_system_user_id(db)) is None:
+    if service_rows and get_import_center(db, get_system_user_id(db), payload.center_id) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Для импорта услуг не найден активный медцентр",
@@ -955,7 +965,7 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
     resolved_services, service_warnings, service_warning_rows = resolve_import_services(
         rows, service_lookup
     )
-    import_center = get_import_center(db, actor_user_id)
+    import_center = get_import_center(db, actor_user_id, payload.center_id)
     if any(service is not None for service in resolved_services.values()) and import_center is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -4,6 +4,9 @@ from pydantic import BaseModel
 class ClientImportExcelRequest(BaseModel):
     file_name: str
     file_content_base64: str
+    # Медцентр, в котором работает оператор. Обращения из файла заводятся именно
+    # в нём: раньше загрузка всегда уходила в первый центр.
+    center_id: int | None = None
 
 
 class ClientImportPreviewRow(BaseModel):

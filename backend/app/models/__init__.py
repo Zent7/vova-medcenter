@@ -1,6 +1,7 @@
 from app.models.audit_log import AuditLog
 from app.models.blank_form import BlankBatch, BlankForm, BlankType
 from app.models.center import Center
+from app.models.center_doctor_name import CenterDoctorName
 from app.models.client import Client
 from app.models.client_document import ClientDocument
 from app.models.certificate_number_range import CertificateNumberRange
@@ -26,6 +27,7 @@ __all__ = [
     "BlankForm",
     "BlankType",
     "Center",
+    "CenterDoctorName",
     "CertificateNumberRange",
     "Client",
     "ClientDocument",

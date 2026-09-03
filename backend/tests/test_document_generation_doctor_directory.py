@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db.base import Base  # noqa: E402
 from app.models.client import Client  # noqa: E402
 from app.models.center import Center  # noqa: E402
+from app.models.center_doctor_name import CenterDoctorName  # noqa: E402
 from app.models.doctor_exam import DoctorExam  # noqa: E402
 from app.models.encounter import Encounter  # noqa: E402
 from app.models.service import DoctorRole  # noqa: E402
@@ -48,7 +49,14 @@ class DocumentGenerationDoctorDirectoryTests(unittest.TestCase):
             )
             db.add(encounter)
             db.flush()
-            db.add(DoctorRole(id=8, code="therapist", name="Терапевт", full_name="Новое ФИО"))
+            db.add(DoctorRole(id=8, code="therapist", name="Терапевт"))
+            db.add(
+                CenterDoctorName(
+                    center_id=center.id,
+                    doctor_role_code="therapist",
+                    full_name="Новое ФИО",
+                )
+            )
             db.add(
                 DoctorExam(
                     client_id=client.id,
