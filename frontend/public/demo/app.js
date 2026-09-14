@@ -1997,9 +1997,10 @@ function collectChairmanDriverLimitations(fields = {}) {
 function mergeDriverDetailFlagsIntoChairmanFields(fields = {}, detail = {}) {
   const indications = Array.isArray(detail.indications) ? detail.indications : [];
   const limitations = Array.isArray(detail.limitations) ? detail.limitations : [];
-  if (!indications.length && !limitations.length) return fields;
+  if (!indications.length && !limitations.length && !Object.hasOwn(detail, "licenseRevoked")) return fields;
 
   const merged = { ...fields };
+  if (Object.hasOwn(detail, "licenseRevoked")) merged.licenseRevoked = Boolean(detail.licenseRevoked);
   Object.entries(DRIVER_INDICATION_FIELD_TO_LABEL).forEach(([field, label]) => {
     if (indications.includes(label)) merged[field] = true;
   });
@@ -2041,6 +2042,7 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
     categoryC1E: hasCategoryOverrides ? categories.includes("C1E") : Boolean(fields.categoryC1E),
     categoryD1E: hasCategoryOverrides ? categories.includes("D1E") : Boolean(fields.categoryD1E),
     categoryTractor: hasCategoryOverrides ? sourceCategories.includes("tractor") : Boolean(fields.categoryTractor),
+    licenseRevoked: Object.hasOwn(detail, "licenseRevoked") ? Boolean(detail.licenseRevoked) : Boolean(fields.licenseRevoked),
     categoryBoat: hasCategoryOverrides ? (sourceCategories.includes("boat") || Boolean(detail.boatFit)) : Boolean(fields.categoryBoat),
     categorySailing: hasCategoryOverrides ? sourceCategories.includes("sailing") : Boolean(fields.categorySailing),
     hasGlasses: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationGlasses) : Boolean(fields.hasGlasses),
@@ -2064,20 +2066,21 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
 function getDriverDetailFromVisit(visit) {
   if (!visit) return {};
   const serviceDetails = getVisitServiceDetails(visit);
-  const driverServiceId = getSelectedVisitServiceIds(visit).find((serviceId) => isDriverService(getServiceById(serviceId)));
+  const driverServiceId = getSelectedVisitServiceIds(visit).find((serviceId) => isDriverService(getServiceById(serviceId)) || isTractorService(getServiceById(serviceId)));
   const primaryDetail = driverServiceId ? (serviceDetails[String(driverServiceId)] ||= {}) : {};
   const details = Object.values(serviceDetails).filter((detail) => detail && typeof detail === "object");
   const driverDetails = details.filter((detail) =>
     (Array.isArray(detail.categories) ? detail.categories.length : String(detail.categories || "").trim()) ||
     Array.isArray(detail.indications) ||
     Array.isArray(detail.limitations) ||
-    Object.hasOwn(detail, "boatFit"),
+    Object.hasOwn(detail, "boatFit") || Object.hasOwn(detail, "licenseRevoked"),
   );
   driverDetails.forEach((detail) => {
     if (detail === primaryDetail) return;
     if (!primaryDetail.categories && detail.categories) primaryDetail.categories = detail.categories;
     if (!Array.isArray(primaryDetail.indications) && Array.isArray(detail.indications)) primaryDetail.indications = detail.indications.slice();
     if (!Array.isArray(primaryDetail.limitations) && Array.isArray(detail.limitations)) primaryDetail.limitations = detail.limitations.slice();
+    if (!Object.hasOwn(primaryDetail, "licenseRevoked") && Object.hasOwn(detail, "licenseRevoked")) primaryDetail.licenseRevoked = detail.licenseRevoked;
     if (!Object.hasOwn(primaryDetail, "boatFit") && Object.hasOwn(detail, "boatFit")) primaryDetail.boatFit = detail.boatFit;
   });
   if (driverServiceId) return primaryDetail;
@@ -2338,6 +2341,8 @@ function mapApiClient(client) {
     documentType: client.document_type || "",
     documentSeries: client.document_series || "",
     documentNumber: client.document_number || "",
+    citizenship: client.citizenship || "",
+    arrivalCountry: client.arrival_country || "",
     documentIssuedBy: client.document_issued_by || client.legacy_payload_json?.WhoGive || client.legacy_payload_json?.["qdfMain.WhoGive"] || "",
     documentIssuedDate: formatApiDate(client.document_issued_date),
     snils: client.snils || "",
@@ -4855,7 +4860,7 @@ async function prepareVisitDoctorExamsForDocuments(client, visit) {
       !suppressedRoles.has(String(exam.doctorRoleId || "").trim()),
   );
   const chairmanExam = exams.find((exam) => String(exam.doctorRoleId || "") === "chairman");
-  if (chairmanExam && getChairmanFormInfo(visit, client).printMode === "driver-flow") {
+  if (chairmanExam && (getChairmanFormInfo(visit, client).printMode === "driver-flow" || getChairmanFormInfo(visit, client).type === "tractor")) {
     const driverDetail = getDriverDetailFromVisit(visit);
     // Показания и ограничения оператор отмечает в карточке клиента. Сохранённую
     // карточку председателя нельзя переписывать целиком — его отметки останутся,

@@ -17,13 +17,13 @@ function sourceBetween(startMarker, endMarker) {
   return appSource.slice(start, end);
 }
 
-function buildContext(chairmanExam, driverDetail) {
+function buildContext(chairmanExam, driverDetail, formInfo = { printMode: "driver-flow" }) {
   const syncedExams = [];
   const context = vm.createContext({
     data: { doctorExams: [chairmanExam] },
     syncVisitToBackend: async () => {},
     getSuppressedDoctorRoleCodesForVisit: () => new Set(),
-    getChairmanFormInfo: () => ({ printMode: "driver-flow" }),
+    getChairmanFormInfo: () => formInfo,
     getDriverDetailFromVisit: () => driverDetail,
     applyDriverSelectionsToChairmanFields: (fields) => fields,
     persistDemoState: () => {},
@@ -78,6 +78,30 @@ test("an empty client card leaves the chairman's own marks alone", async () => {
 
   assert.equal(syncedExams[0].fields.indicationManual, true);
   assert.equal(syncedExams[0].fields.restrictionAM, false);
+});
+
+test("revocation can be set and cleared on a saved chairman card before printing", async () => {
+  for (const revoked of [true, false]) {
+    const chairmanExam = {
+      id: "exam-revocation", clientId: 7, visitId: "encounter-3",
+      doctorRoleId: "chairman", isCompleted: true,
+      fields: { licenseRevoked: !revoked, categoryB: true },
+    };
+    const { context, syncedExams } = buildContext(chairmanExam, { licenseRevoked: revoked });
+    await context.prepareDocuments({ id: 7 }, { id: "encounter-3" });
+    assert.equal(syncedExams[0].fields.licenseRevoked, revoked);
+    assert.equal(syncedExams[0].fields.categoryB, true);
+  }
+});
+
+test("tractor printing also synchronizes the revocation flag", async () => {
+  const chairmanExam = {
+    id: "tractor-exam", clientId: 7, visitId: "encounter-3",
+    doctorRoleId: "chairman", isCompleted: true, fields: {},
+  };
+  const { context, syncedExams } = buildContext(chairmanExam, { licenseRevoked: true }, { type: "tractor", printMode: "document" });
+  await context.prepareDocuments({ id: 7 }, { id: "encounter-3" });
+  assert.equal(syncedExams[0].fields.licenseRevoked, true);
 });
 
 test("the client card offers the same labels the merge looks for", () => {

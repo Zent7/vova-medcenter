@@ -75,7 +75,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
     maxDiff = None
 
     def setUp(self) -> None:
-        self.client = SimpleNamespace(birth_date=date(1988, 4, 12))
+        self.client = SimpleNamespace(birth_date=date(1988, 4, 12), admission_category="A B C D")
         self.encounter = SimpleNamespace(encounter_date=date(2026, 7, 30))
         self.context = {
             "ClientCalc": "Проверкин Алексей Сергеевич",
@@ -549,10 +549,12 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 (26, 2): "30",
                 (26, 11): "июля",
                 (26, 21): "2026",
-                (29, 12): "Терапевт Тестов Годен",
-                (31, 12): "Офтальмолог Тестов Годен",
-                (35, 12): "Невролог Тестов Годен",
-                (37, 12): "ЛОР Тестов Годен",
+                (29, 12): "Терапевт Т. Противопоказания Отсутствуют",
+                (31, 12): "Офтальмолог Т. Противопоказания Отсутствуют",
+                (35, 12): "Невролог Т. Противопоказания Отсутствуют",
+                (37, 12): "ЛОР Т. Противопоказания Отсутствуют",
+                (39, 12): "ЭЭГ Без Патологии",
+                (41, 12): "Не Установлено",
             },
             "Тр.Об": {
                 (9, 18): "Годен",

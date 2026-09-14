@@ -2195,25 +2195,33 @@ def _xls_blank_or_dash(value: object) -> str:
     return text or "-"
 
 
-def _driver_exam_line(exam: DoctorExam | None, fallback: str = "Противопоказания отсутствуют") -> str:
-    if exam is None:
-        return fallback
-    data = _build_exam_export(exam)
+def _driver_exam_line(exam: DoctorExam | None, client: Client, role_id: str) -> str:
+    data = _exam_export_with_client_doctor(exam, client, role_id)
     doctor = str(data.get("doctor") or "").strip()
     if not doctor:
-        return fallback
-    conclusion = _first_non_empty(
-        data.get("diagnosis"),
-        data.get("objective"),
-        data.get("title"),
-        "Противопоказания отсутствуют",
-    )
-    return " ".join(part for part in [doctor, conclusion] if part).strip()
+        return "Противопоказания Отсутствуют"
+    parts = doctor.split(maxsplit=1)
+    if len(parts) > 1:
+        initials = re.findall(r"[^\W\d_]+", parts[1], re.UNICODE)
+        doctor = parts[0] + " " + " ".join(f"{part[0].upper()}." for part in initials)
+    return f"{doctor} Противопоказания Отсутствуют"
 
 
-def _driver_auxiliary_line(context: dict[str, str], key: str, fallback: str = "Не установлено") -> str:
-    value = str(context.get(key) or "").strip()
-    return value or fallback
+def _driver_certificate_lines(client: Client, exams_by_role: dict[str, DoctorExam]) -> list[str]:
+    exams = list(exams_by_role.values())
+    selected = _driver_categories_for_documents(client, exams)
+    extended = bool(selected & {"C", "D", "CE", "DE", "C1", "D1", "C1E", "D1E", "Tm", "Tb"})
+    chairman = _driver_latest_chairman(exams)
+    fields = (chairman.fields_json or {}) if chairman else {}
+    lines = [
+        _driver_exam_line(exams_by_role.get(role), client, role)
+        if role in {"therapist", "ophthalmologist"} or extended else "Не Установлено"
+        for role in ("therapist", "ophthalmologist", "neurologist", "otolaryngologist")
+    ]
+    return lines + [
+        "ЭЭГ Без Патологии" if extended else "Не Установлено",
+        "" if _truthy_driver_value(fields.get("licenseRevoked")) else "Не Установлено",
+    ]
 
 
 DRIVER_XLS_CATEGORY_KEYS = ("A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E")
@@ -2336,6 +2344,11 @@ def _driver_category_tokens(value: object) -> set[str]:
     text = str(value or "")
     raw_tokens = re.findall(r"[A-Za-zА-Яа-я0-9]+", text)
     aliases = {
+        "А": "A",
+        "Б": "B",
+        "В": "B",
+        "С": "C",
+        "Д": "D",
         "1A": "A1",
         "1B": "B1",
         "1C": "C1",
@@ -2414,7 +2427,7 @@ def _driver_categories_for_documents(client: Client, exams: list[DoctorExam]) ->
     chairman_categories = _driver_categories_from_chairman(chairman.fields_json or {}) if chairman else None
     if chairman_categories is not None:
         return chairman_categories
-    return _driver_category_tokens(client.admission_category)
+    return _driver_category_tokens(getattr(client, "admission_category", ""))
 
 
 def _driver_category_context_values(selected: set[str], true_value: str = "X", false_value: str = "") -> dict[str, str]:
@@ -2562,12 +2575,7 @@ def _fill_driver_xls_sheets(
     exams_by_role: dict[str, DoctorExam],
 ) -> None:
     driver_lines = [
-        _driver_exam_line(exams_by_role.get("therapist")),
-        _driver_exam_line(exams_by_role.get("ophthalmologist")),
-        _driver_exam_line(exams_by_role.get("neurologist"), "не установлено"),
-        _driver_exam_line(exams_by_role.get("otolaryngologist"), "не установлено"),
-        _driver_auxiliary_line(context, "InstrumentalExamination"),
-        _driver_auxiliary_line(context, "LaboratoryStudy"),
+        *_driver_certificate_lines(client, exams_by_role),
         _build_exam_export(exams_by_role.get("chairman")).get("doctor"),
     ]
     issue_date = encounter.encounter_date if encounter else date.today()
@@ -2645,13 +2653,8 @@ def _fill_driver_xls_sheets(
         _hide_xls_columns(back_target, 34, 65)
 
 
-def _fill_tractor_xls_sheets(source_book, target_book, exams_by_role: dict[str, DoctorExam]) -> None:
-    tractor_lines = [
-        _exam_conclusion_line(exams_by_role.get("therapist")),
-        _exam_conclusion_line(exams_by_role.get("ophthalmologist")),
-        _exam_conclusion_line(exams_by_role.get("neurologist")),
-        _exam_conclusion_line(exams_by_role.get("otolaryngologist")),
-    ]
+def _fill_tractor_xls_sheets(source_book, target_book, exams_by_role: dict[str, DoctorExam], client: Client) -> None:
+    tractor_lines = _driver_certificate_lines(client, exams_by_role)
     front_source, front_target, _ = _sheet_pair(source_book, target_book, "Тракторная Лицевая")
     if front_source and front_target:
         _write_xls_pairs(
@@ -2666,6 +2669,10 @@ def _fill_tractor_xls_sheets(source_book, target_book, exams_by_role: dict[str, 
                 ((35, 39), tractor_lines[2]),
                 ((37, 12), tractor_lines[3]),
                 ((37, 39), tractor_lines[3]),
+                ((39, 12), tractor_lines[4]),
+                ((39, 39), tractor_lines[4]),
+                ((41, 12), tractor_lines[5]),
+                ((41, 39), tractor_lines[5]),
             ],
         )
     back_source, back_target, _ = _sheet_pair(source_book, target_book, "Тракторная оборотная")
@@ -3155,10 +3162,7 @@ def _fill_new_tractor_front_xls_sheet(
         context.get("BlankFullNumber"),
         context.get("ReferenceNumber"),
     )
-    exam_lines = []
-    for role_id in ("therapist", "ophthalmologist", "neurologist", "otolaryngologist"):
-        exam = exams_by_role.get(role_id)
-        exam_lines.append(_exam_conclusion_line(exam) if exam is not None else "")
+    exam_lines = _driver_certificate_lines(client, exams_by_role) if context.get("ClientCalc") or exams_by_role else [""] * 6
 
     values = [
         ((7, 3), blank_number),
@@ -3201,6 +3205,10 @@ def _fill_new_tractor_front_xls_sheet(
         ((35, 39), exam_lines[2]),
         ((37, 12), exam_lines[3]),
         ((37, 39), exam_lines[3]),
+        ((39, 12), exam_lines[4]),
+        ((39, 39), exam_lines[4]),
+        ((41, 12), exam_lines[5]),
+        ((41, 39), exam_lines[5]),
     ]
     _write_xls_pairs(target_sheet, source_sheet, values)
 
@@ -4629,7 +4637,7 @@ def _generate_unpreserved_runtime_xls(
         _fill_chod_xls_sheet(source_sheet, target_sheet, context, encounter)
 
     _fill_driver_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
-    _fill_tractor_xls_sheets(source_book, target_book, exams_by_role)
+    _fill_tractor_xls_sheets(source_book, target_book, exams_by_role, client)
     _fill_new_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
 
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "АмбОПО !")
@@ -4833,7 +4841,7 @@ def _generate_runtime_xlsx(
         _fill_chod_xls_sheet(source_sheet, target_sheet, context, encounter)
 
     _fill_driver_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
-    _fill_tractor_xls_sheets(source_book, target_book, exams_by_role)
+    _fill_tractor_xls_sheets(source_book, target_book, exams_by_role, client)
     _fill_new_xls_sheets(source_book, target_book, context, client, encounter, exams_by_role)
 
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "АмбОПО !")

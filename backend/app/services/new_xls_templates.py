@@ -198,7 +198,6 @@ NEW_XLS_TEMPLATE_SPECS: tuple[NewXlsTemplateSpec, ...] = (
         print_variant="tractor_front",
         print_pages_tall=1,
         print_area="$A$1:$AZ$42",
-        print_zoom=97,
         dynamic_cells=(
             (7, 3),
             (7, 30),
@@ -240,6 +239,10 @@ NEW_XLS_TEMPLATE_SPECS: tuple[NewXlsTemplateSpec, ...] = (
             (35, 39),
             (37, 12),
             (37, 39),
+            (39, 12),
+            (39, 39),
+            (41, 12),
+            (41, 39),
         ),
     ),
     NewXlsTemplateSpec(
@@ -475,6 +478,8 @@ NEW_XLS_FIELD_LABELS: dict[str, dict[Cell, str]] = {
             ("Окулист", (31, 12), (31, 39)),
             ("Невролог", (35, 12), (35, 39)),
             ("ЛОР", (37, 12), (37, 39)),
+            ("Инструментальные", (39, 12), (39, 39)),
+            ("Лабораторные", (41, 12), (41, 39)),
         )
     ),
     "трактор об ст.xls": _sided_labels(

@@ -15,12 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.services.document_generator import (  # noqa: E402
     _apply_print_variant_to_xls_workbook,
     _driver_categories_for_documents,
+    _driver_certificate_lines,
     _driver_document_context_overrides,
     _exam_map,
     _fill_driver_xls_sheets,
     _driver_xml_context_overrides,
     _generate_runtime_xls,
 )
+from app.services.new_xls_templates import strip_new_xls_placeholder_padding
 
 
 def client(admission_category="", indications=""):
@@ -52,6 +54,75 @@ def exam(role, doctor_name, fields=None, *, is_completed=True):
 
 
 class DriverDocumentContextTests(unittest.TestCase):
+    def certificate_exams(self, revoked=False):
+        return _exam_map([
+            exam("therapist", "Сибирцев Вячеслав Александрович", {"diagnosis": "Произвольный диагноз"}),
+            exam("ophthalmologist", "Цыганюк Ю. С.", {"objective": "Произвольное описание"}),
+            exam("neurologist", "Этчанов С."),
+            exam("otolaryngologist", "Изория С. Г."),
+            chairman({"licenseRevoked": revoked}),
+        ])
+
+    def test_ab_certificate_uses_only_two_doctors_and_fixed_conclusions(self):
+        self.assertEqual(_driver_certificate_lines(client("А, Б"), self.certificate_exams()), [
+            "Сибирцев В. А. Противопоказания Отсутствуют",
+            "Цыганюк Ю. С. Противопоказания Отсутствуют",
+            "Не Установлено", "Не Установлено", "Не Установлено", "Не Установлено",
+        ])
+
+    def test_extended_certificate_uses_four_doctors_and_eeg(self):
+        for categories in ("A B C D", "С", "Д", "C1E", "D1"):
+            with self.subTest(categories=categories):
+                lines = _driver_certificate_lines(client(categories), self.certificate_exams())
+                self.assertEqual(lines[2:], [
+                    "Этчанов С. Противопоказания Отсутствуют",
+                    "Изория С. Г. Противопоказания Отсутствуют",
+                    "ЭЭГ Без Патологии", "Не Установлено",
+                ])
+
+    def test_revocation_clears_only_laboratory_line(self):
+        for categories in ("A B", "A B C D"):
+            ordinary = _driver_certificate_lines(client(categories), self.certificate_exams())
+            revoked = _driver_certificate_lines(client(categories), self.certificate_exams(True))
+            self.assertEqual(revoked, ordinary[:5] + [""])
+
+    def test_certificate_obeys_saved_chairman_categories(self):
+        exams = self.certificate_exams()
+        exams["chairman"] = chairman({"categoryB": True, "categoryC": False})
+        self.assertEqual(_driver_certificate_lines(client("C D"), exams)[2:5], ["Не Установлено"] * 3)
+
+    def test_certificate_uses_client_doctor_when_exam_is_missing(self):
+        patient = client("B")
+        patient.doctor_therapist = "Сибирцев Вячеслав Александрович"
+        self.assertEqual(_driver_certificate_lines(patient, {})[0], "Сибирцев В. А. Противопоказания Отсутствуют")
+
+    def test_saved_driver_and_tractor_files_use_the_same_six_lines(self):
+        templates = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
+        with tempfile.TemporaryDirectory() as directory:
+            for kind, filename, rows in (
+                ("driver", "водительская лицевая.xls", (28, 30, 35, 37, 39, 41)),
+                ("tractor", "трактор лиц ст.xls", (29, 31, 35, 37, 39, 41)),
+            ):
+                for categories, revoked in (("A B", False), ("A B C D", False), ("A B C D", True)):
+                    with self.subTest(kind=kind, categories=categories, revoked=revoked):
+                        patient = client(categories)
+                        patient.birth_date = date(1990, 1, 1)
+                        exams = self.certificate_exams(revoked)
+                        path = Path(directory) / filename
+                        _generate_runtime_xls(
+                            templates / filename, path, {"ClientCalc": "Проверкин Иван Иванович"},
+                            patient, SimpleNamespace(encounter_date=date(2026, 9, 13)),
+                            {"exams": list(exams.values())}, print_variant=f"{kind}_front",
+                        )
+                        sheet = xlrd.open_workbook(str(path)).sheet_by_index(0)
+                        actual = [strip_new_xls_placeholder_padding(sheet.cell_value(row, 12)).strip() for row in rows]
+                        expected = ["Сибирцев В. А. Противопоказания Отсутствуют", "Цыганюк Ю. С. Противопоказания Отсутствуют"]
+                        expected += (["Не Установлено"] * 4 if categories == "A B" else [
+                            "Этчанов С. Противопоказания Отсутствуют", "Изория С. Г. Противопоказания Отсутствуют",
+                            "ЭЭГ Без Патологии", "" if revoked else "Не Установлено",
+                        ])
+                        self.assertEqual(actual, expected)
+
     def test_completed_chairman_categories_override_client_categories(self):
         selected = _driver_categories_for_documents(
             client(admission_category="A B C D"),

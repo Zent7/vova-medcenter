@@ -1505,7 +1505,21 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
 }
 
 .client-create-grid--top {
-  grid-template-columns: 160px 120px;
+  grid-template-columns: 160px minmax(160px, 1fr) minmax(190px, 1fr) 120px;
+}
+
+.client-driver-revocation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.client-driver-revocation input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
 }
 
 .client-create-grid--document {

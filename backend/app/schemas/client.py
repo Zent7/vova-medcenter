@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 
 class ClientBase(BaseModel):
+    citizenship: str | None = Field(default=None, max_length=255)
+    arrival_country: str | None = Field(default=None, max_length=255)
     last_name: str
     first_name: str
     middle_name: str | None = None
@@ -68,6 +70,8 @@ class ClientRead(ClientBase):
 
 
 class ClientSearchRead(BaseModel):
+    citizenship: str | None = None
+    arrival_country: str | None = None
     id: int
     patient_number: int
     created_at: datetime | None = None

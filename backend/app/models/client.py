@@ -18,6 +18,8 @@ class Client(TimestampMixin, Base):
     middle_name: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     birth_date: Mapped[date] = mapped_column(Date, index=True)
     sex: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    citizenship: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    arrival_country: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     document_type: Mapped[str | None] = mapped_column(String(80), nullable=True)

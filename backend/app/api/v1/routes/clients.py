@@ -47,6 +47,11 @@ def capitalize_name_part(value: str | None) -> str | None:
 
 def normalize_payload(payload: ClientCreate | ClientUpdate) -> dict:
     data = payload.model_dump()
+    # Older clients may omit these optional fields when editing another detail.
+    if isinstance(payload, ClientUpdate):
+        for key in ("citizenship", "arrival_country"):
+            if key not in payload.model_fields_set:
+                data.pop(key, None)
     for key, value in list(data.items()):
         if isinstance(value, str):
             data[key] = normalize_optional(value)
@@ -241,6 +246,8 @@ CLIENT_SEARCH_FIELDS = (
     Client.document_series,
     Client.document_number,
     Client.address_text,
+    Client.citizenship,
+    Client.arrival_country,
     Client.registration_text,
     Client.admission_category,
     Client.reference_number,
@@ -267,6 +274,8 @@ CLIENT_SEARCH_COLUMNS = (
     Client.document_number,
     Client.snils,
     Client.address_text,
+    Client.citizenship,
+    Client.arrival_country,
     Client.registration_text,
     Client.admission_category,
     Client.reference_number,

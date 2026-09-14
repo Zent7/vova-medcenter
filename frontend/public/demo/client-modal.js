@@ -436,7 +436,7 @@ function getClientModalSelectedServicesFromDom() {
 function getClientSelectedDriverService(selectedServices = []) {
   return selectedServices
     .map((name) => getServerServiceByName(name) || structuredServices.find((service) => service.name === name))
-    .find((service) => service && isDriverService(service)) || null;
+    .find((service) => service && (isDriverService(service) || isTractorService(service))) || null;
 }
 
 function getClientDriverCategoriesFromForm() {
@@ -494,6 +494,7 @@ function getClientDriverDetailFromForm(selectedServices = []) {
     ...storedDetail,
     indications: getClientDriverFlagsFromForm("clientDriverIndication"),
     limitations: getClientDriverFlagsFromForm("clientDriverLimit"),
+    licenseRevoked: Boolean(actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked),
     boatFit: Boolean(actionModalContent.querySelector('input[name="clientDriverBoatFit"]')?.checked),
   };
 }
@@ -593,7 +594,12 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
         </div>
       </div>
 
-      <div class="client-driver-footer">
+        <label class="client-driver-revocation">
+          <span>Лишение прав</span>
+          <input type="checkbox" name="clientDriverLicenseRevoked" ${driverDetail.licenseRevoked ? "checked" : ""} />
+        </label>
+      <div class="client-driver-footer">
+
         <label class="client-classic-checkbox client-classic-checkbox--inline">
           <span>Годен к упр-ю маломер. судами</span>
           <input type="checkbox" name="clientDriverBoatFit" ${boatFitChecked ? "checked" : ""} />
@@ -809,7 +815,7 @@ function refreshClientPaymentPanel({ driverCategoriesChanged = false } = {}) {
   syncClientPaymentRowsFromDom();
   const selectedServices = getClientModalSelectedServicesFromDom();
   const selectedDriverService = getClientSelectedDriverService(selectedServices);
-  if (driverCategoriesChanged && selectedDriverService) {
+  if (driverCategoriesChanged && selectedDriverService && isDriverService(selectedDriverService)) {
     const driverKey = getClientServiceDetailKey(selectedDriverService);
     const current = clientModalServiceDetails[driverKey] || {};
     clientModalServiceDetails[driverKey] = {
@@ -850,7 +856,8 @@ function buildClientServiceDetails(selectedServices = []) {
       indications,
       limitations,
       boatFit,
-      unitPrice: Number(details[serviceId]?.unitPrice ?? getDriverCategoryPrice(categories)),
+      licenseRevoked: Boolean(actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked),
+      unitPrice: Number(details[serviceId]?.unitPrice ?? (isDriverService(selectedDriverService) ? getDriverCategoryPrice(categories) : getDefaultServiceUnitPrice(selectedDriverService))),
       autoDoctorRoles: getDriverRoleCodes(categories),
     };
   }
@@ -1095,6 +1102,14 @@ function openClientModal(clientId = null, options = {}) {
             <span>Дата рождения</span>
             <input name="birthDate" data-date-mask value="${escapeHtml(editingClient?.birthDate || "")}" />
           </label>
+          <label class="field">
+            <span>Гражданство</span>
+            <input name="citizenship" maxlength="255" value="${escapeHtml(editingClient?.rawApiClient?.citizenship || editingClient?.citizenship || "")}" />
+          </label>
+          <label class="field">
+            <span>Из какой страны прибыл</span>
+            <input name="arrivalCountry" maxlength="255" value="${escapeHtml(editingClient?.rawApiClient?.arrival_country || editingClient?.arrivalCountry || "")}" />
+          </label>
           <label class="field">
             <span>Пол</span>
             <select name="gender">
@@ -1405,6 +1420,8 @@ function openClientModal(clientId = null, options = {}) {
     if (!encounterMode) Object.assign(targetClient, {
       fullName: fullName || "Новый клиент",
       birthDate: String(formData.get("birthDate") || "").trim(),
+      citizenship: String(formData.get("citizenship") || "").trim(),
+      arrivalCountry: String(formData.get("arrivalCountry") || "").trim(),
       sex: formSex,
       gender: formSex,
       phone: String(formData.get("phone") || "").trim(),
@@ -1475,6 +1492,8 @@ function openClientModal(clientId = null, options = {}) {
           first_name: String(formData.get("firstName") || "").trim() || "Без имени",
           middle_name: String(formData.get("middleName") || "").trim() || null,
           birth_date: birthDateIso || "1900-01-01",
+          citizenship: String(formData.get("citizenship") || "").trim() || null,
+          arrival_country: String(formData.get("arrivalCountry") || "").trim() || null,
           sex: formSex,
           phone: String(formData.get("phone") || "").trim() || null,
           email: String(formData.get("email") || "").trim() || null,

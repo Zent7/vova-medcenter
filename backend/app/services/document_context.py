@@ -476,6 +476,8 @@ def build_document_context(
         "MainDoctorCalc": "Главный врач",
         "Harmfulness": _text(client.indications) or "не указано",
         "Therapist": "Терапевт",
+        "Citizenship": _text(getattr(client, "citizenship", None)),
+        "ArrivalCountry": _text(getattr(client, "arrival_country", None)),
         "TherapistCalc": "Терапевт",
         "Ophthalmolog": "Офтальмолог",
         "OphthalmologCalc": "Офтальмолог",
