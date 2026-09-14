@@ -716,6 +716,36 @@ class NewXlsTemplatesTests(unittest.TestCase):
             )
             self.assertEqual(generated_sheet.cell_value(*source_coordinate), "")
 
+    def test_tractor_front_with_pre_result_markers_prints_the_new_result_rows(self):
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Тр.Лиц")
+        missing_result_cells = ((39, 12), (39, 39), (41, 12), (41, 39))
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            temporary_path = Path(temporary_dir)
+            outdated_path = temporary_path / spec.file_name
+            output_path = temporary_path / "generated.xls"
+            source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+            outdated_book = copy_xls_workbook(source_book)
+            outdated_sheet = outdated_book.get_sheet(0)
+            for coordinate in missing_result_cells:
+                outdated_sheet.write(*coordinate, "")
+            outdated_book.save(str(outdated_path))
+
+            _generate_runtime_xls(
+                outdated_path,
+                output_path,
+                self.context,
+                self.client,
+                self.encounter,
+                {"exams": self.exams},
+                print_variant=spec.print_variant,
+            )
+
+            sheet = xlrd.open_workbook(str(output_path)).sheet_by_name(spec.sheet_name)
+            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(39, 12)), "ЭЭГ Без Патологии")
+            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(39, 39)), "ЭЭГ Без Патологии")
+            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(41, 12)), "Не Установлено")
+            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(41, 39)), "Не Установлено")
+
     def test_validation_rejects_missing_and_duplicate_markers(self):
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
         coordinate = spec.dynamic_cells[0]

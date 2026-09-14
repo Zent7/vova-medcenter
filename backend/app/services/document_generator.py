@@ -70,6 +70,7 @@ from app.services.new_xls_templates import (
     new_xls_markers,
     strip_new_xls_placeholder_padding,
 )
+from app.services.template_catalog import get_templates_root
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
@@ -4164,6 +4165,49 @@ def _patch_new_xls_placeholders(
     output_path.write_bytes(file_bytes)
 
 
+# Первые пользовательские копии 071у были сохранены до того, как в лицевую
+# сторону добавили эти две строки. В них остальные служебные метки целы, а
+# четыре ячейки результатов пусты. Во время печати берём встроенную актуальную
+# версию лишь для этой точно распознаваемой старой копии. Так сохраняются
+# правильный макет и настройки печати, а новые результаты появляются без
+# ручного сброса шаблона.
+_TRACTOR_FRONT_MISSING_RESULT_CELLS = frozenset(
+    {
+        (39, 12),
+        (39, 39),
+        (41, 12),
+        (41, 39),
+    }
+)
+
+
+def _new_xls_missing_marker_coordinates(source_book, spec: NewXlsTemplateSpec) -> frozenset[tuple[int, int]]:
+    source_sheet = source_book.sheet_by_name(spec.sheet_name)
+    missing: set[tuple[int, int]] = set()
+    for coordinate in spec.dynamic_cells:
+        value = str(source_sheet.cell_value(*coordinate) or "")
+        if not any(marker in value for marker in new_xls_markers(spec, coordinate)):
+            missing.add(coordinate)
+    return frozenset(missing)
+
+
+def _copy_current_tractor_front_template_if_needed(
+    output_path: Path,
+    source_book,
+    spec: NewXlsTemplateSpec,
+) -> bool:
+    if spec.file_name.casefold() != "трактор лиц ст.xls":
+        return False
+    if _new_xls_missing_marker_coordinates(source_book, spec) != _TRACTOR_FRONT_MISSING_RESULT_CELLS:
+        return False
+
+    bundled_template = get_templates_root() / spec.file_name
+    if not bundled_template.is_file():
+        return False
+    shutil.copy2(bundled_template, output_path)
+    return True
+
+
 def _patch_legacy_xls_placeholders(
     output_path: Path,
     spec: LegacyXlsTemplateSpec,
@@ -4596,7 +4640,8 @@ def _generate_preserved_new_xls(
             )
             for coordinate in spec.dynamic_cells
         }
-        shutil.copy2(template_path, output_path)
+        if not _copy_current_tractor_front_template_if_needed(output_path, source_book, spec):
+            shutil.copy2(template_path, output_path)
         _patch_new_xls_placeholders(output_path, spec, values)
     finally:
         temporary_path.unlink(missing_ok=True)
