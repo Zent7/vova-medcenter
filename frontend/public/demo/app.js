@@ -1861,6 +1861,33 @@ async function openChairmanTemplateFile(examId = null) {
   }
 }
 
+// Оператор пишет категории и кириллицей («А, Б»), и латиницей. Список повторяет
+// алиасы бэкенда (_driver_category_tokens), иначе экран и печать расходятся.
+const DRIVER_CATEGORY_ALIASES = {
+  "А": "A",
+  "Б": "B",
+  "В": "B",
+  "С": "C",
+  "Д": "D",
+  "Е": "E",
+  "ВЕ": "BE",
+  "СЕ": "CE",
+  "ДЕ": "DE",
+  "1A": "A1",
+  "1B": "B1",
+  "1C": "C1",
+  "1D": "D1",
+  "1CE": "C1E",
+  "1DE": "D1E",
+};
+
+function normalizeDriverCategoryToken(token) {
+  const upper = String(token || "").trim().toUpperCase();
+  if (!upper) return "";
+  const aliased = String(DRIVER_CATEGORY_ALIASES[upper] || upper).toUpperCase();
+  return { TM: "Tm", TB: "Tb" }[aliased] || aliased;
+}
+
 function normalizeDriverCategories(categories) {
   const source = Array.isArray(categories)
     ? categories
@@ -1869,18 +1896,12 @@ function normalizeDriverCategories(categories) {
         .map((item) => item.trim())
         .filter(Boolean);
   if (!source.length) return [];
-  const expanded = new Set(source);
+  const expanded = new Set(source.map(normalizeDriverCategoryToken).filter(Boolean));
   if (expanded.has("E")) {
     expanded.add("BE");
     expanded.add("CE");
     expanded.add("DE");
   }
-  if (expanded.has("1A")) expanded.add("A1");
-  if (expanded.has("1B")) expanded.add("B1");
-  if (expanded.has("1C")) expanded.add("C1");
-  if (expanded.has("1D")) expanded.add("D1");
-  if (expanded.has("1CE")) expanded.add("C1E");
-  if (expanded.has("1DE")) expanded.add("D1E");
   return DRIVER_CATEGORY_OPTIONS.filter((item) => expanded.has(item));
 }
 
@@ -1907,6 +1928,13 @@ function getDriverCategoryRuleKey(categories = [], { includeTransport = true } =
   if (normalized.includes("Tm")) transport.push("TM");
 
   return includeTransport && transport.length ? `${key},${transport.join(",")}` : key;
+}
+
+// Цена по категориям — правило водительской справки. У тракторной своя цена
+// в карточке услуги, её пересчитывать по категориям нельзя.
+function getVisitDriverServicePrice(service, categories = []) {
+  if (!service) return 0;
+  return isDriverService(service) ? getDriverCategoryPrice(categories) : Number(service.price || 0);
 }
 
 function getDriverRoleCodes(categories = []) {
@@ -2093,7 +2121,10 @@ function getDoctorRoleCodeById(roleId) {
 
 function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   if (!service) return new Set();
-  if (isDriverService(service)) {
+  // Тракторная 071у заполняется по тем же правилам, что и водительская:
+  // на А и В — только терапевт с офтальмологом, на С и D добавляются
+  // невролог с отоларингологом. Список врачей услуги здесь не годится.
+  if (isDriverService(service) || isTractorService(service)) {
     return new Set([...getDriverRoleCodes(normalizeDriverCategories(detail.categories || DRIVER_DEFAULT_CATEGORIES)), "chairman"]);
   }
 
@@ -7528,11 +7559,11 @@ function renderVisitServicePicker(activeVisit) {
     });
   const selectedDriverService = getSelectedVisitServiceIds(activeVisit)
     .map((id) => getServiceById(id))
-    .find((service) => isDriverService(service));
+    .find((service) => isDriverService(service) || isTractorService(service));
   const selectedDriverId = selectedDriverService ? getServiceToken(selectedDriverService) : null;
   const driverDetail = selectedDriverId ? serviceDetails[selectedDriverId] || {} : {};
   const driverCategories = normalizeDriverCategories(driverDetail.categories || activeVisit?.admissionCategory || getSelectedClient()?.admissionCategory || getSelectedClient()?.category);
-  const driverPrice = Number(driverDetail.unitPrice ?? (selectedDriverService ? getDriverCategoryPrice(driverCategories) : 0));
+  const driverPrice = Number(driverDetail.unitPrice ?? getVisitDriverServicePrice(selectedDriverService, driverCategories));
 
   return `
     <div class="operator-services">
@@ -7592,7 +7623,7 @@ function renderVisitServicePicker(activeVisit) {
           ? `
             <div class="driver-category-panel">
               <div class="driver-category-panel__head">
-                <strong>Категории водительской справки</strong>
+                <strong>Категории ${isTractorService(selectedDriverService) ? "тракторной" : "водительской"} справки</strong>
                 <span>по ним назначаются врачи и считается цена</span>
               </div>
               <div class="driver-category-grid">
@@ -11901,8 +11932,12 @@ function readOperatorVisitForm(form) {
     };
   });
 
-  const driverServiceId = serviceIds.find((serviceId) => isDriverService(getServiceById(serviceId)));
+  const driverServiceId = serviceIds.find((serviceId) => {
+    const service = getServiceById(serviceId);
+    return isDriverService(service) || isTractorService(service);
+  });
   if (driverServiceId) {
+    const driverService = getServiceById(driverServiceId);
     const categories = Array.from(form.querySelectorAll('input[name="driverCategory"]:checked'))
       .map((input) => input.value)
       .filter(Boolean);
@@ -11911,7 +11946,7 @@ function readOperatorVisitForm(form) {
     serviceDetails[driverServiceId] = {
       ...(serviceDetails[driverServiceId] || {}),
       categories: normalizedCategories,
-      unitPrice: Number(driverPriceInput) || getDriverCategoryPrice(normalizedCategories),
+      unitPrice: Number(driverPriceInput) || getVisitDriverServicePrice(driverService, normalizedCategories),
       autoDoctorRoles: getDriverRoleCodes(normalizedCategories),
     };
   }
