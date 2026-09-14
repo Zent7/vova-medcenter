@@ -5147,7 +5147,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
 async function saveDoctorExam(examId, updatedFields, options = {}) {
   ensureVisitsStore();
 
-  const exam = data.doctorExams.find((item) => item.id === examId);
+  const exam = findDoctorExamForDraft(examId, options.doctorRoleId);
   if (!exam) return false;
   if (exam.__saving) return false;
   exam.__saving = true;
@@ -5219,6 +5219,7 @@ async function saveDoctorExam(examId, updatedFields, options = {}) {
     }
     showToast("Не удалось сохранить карточку врача");
     console.warn("Не удалось сохранить карточку врача в backend", error);
+    if (options.throwOnError) throw error;
     return false;
   }
 }
@@ -13273,23 +13274,35 @@ function bindContentEvents() {
     };
 
     const runChairmanPrint = async (printKind, actionLabel, currentButton, targetWindow = null) => {
-      const examId = chairmanForm.dataset.examId;
+      // A background reload replaces a draft's local id with exam-<server id>.
+      // Resolve the open chairman card again before saving and keep using it
+      // for the client/encounter lookup after the save.
+      const exam = findDoctorExamForDraft(chairmanForm.dataset.examId, "chairman");
+      const examId = exam?.id;
       if (!examId) {
         showDocumentTargetError(targetWindow, "Не удалось подготовить печать из окна председателя.");
         showToast("Не удалось подготовить печать из окна председателя");
         return;
       }
+      chairmanForm.dataset.examId = examId;
 
       if (currentButton) currentButton.disabled = true;
       const values = collectChairmanModalFormValues(chairmanForm);
-      const saved = await window.saveDoctorExam?.(examId, values, { waitForSecondarySync: false });
-      if (!saved) {
-        showDocumentTargetError(targetWindow, "Не удалось сохранить карточку врача перед печатью.");
+      try {
+        const saved = await window.saveDoctorExam?.(examId, values, {
+          doctorRoleId: "chairman", waitForSecondarySync: false, throwOnError: true,
+        });
+        if (!saved) throw new Error(exam.__saving
+          ? "Карточка ещё сохраняется. Дождитесь окончания сохранения и повторите печать."
+          : "Карточка председателя недоступна. Откройте её заново и повторите печать.");
+      } catch (error) {
+        const message = humanizeApiError(error, "Не удалось сохранить карточку врача перед печатью.");
+        showDocumentTargetError(targetWindow, message);
+        showToast(message);
         if (currentButton) currentButton.disabled = false;
         return;
       }
 
-      const exam = data.doctorExams.find((item) => String(item.id) === String(examId));
       const client = exam
         ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
         : getSelectedClient();
