@@ -18,6 +18,7 @@ function sourceBetween(startMarker, endMarker) {
 
 const context = vm.createContext({
   doctorRoles: [],
+  getServicesForVisit: (visit) => visit.services,
   getClientSexKey: () => "",
   isChairmanMarkedService: () => false,
 });
@@ -29,6 +30,9 @@ vm.runInContext(
     sourceBetween("function isDriverService", "function isGimsService"),
     sourceBetween("const DRIVER_CATEGORY_ALIASES", "const DRIVER_INDICATION_FIELD_TO_LABEL"),
     sourceBetween("function getDoctorRoleCodeById", "function isDoctorRoleVisibleForClient"),
+    sourceBetween("function getCertificateExcludedDoctorRoles", "function mapApiService"),
+    "this.excluded = getCertificateExcludedDoctorRoles;",
+    "this.mark = buildDoctorMark;",
     "this.normalize = normalizeDriverCategories;",
     "this.rolesForService = getDoctorRoleCodeSetFromService;",
     "this.servicePrice = getVisitDriverServicePrice;",
@@ -85,4 +89,25 @@ test("цена тракторной справки не пересчитывае
 test("регистр категорий не меняет состав врачей", () => {
   assert.deepEqual(normalize("a, b"), ["A", "B"]);
   assert.deepEqual(normalize(["tm", "tb"]), ["Tm", "Tb"]);
+});
+
+for (const service of [DRIVER_SERVICE, TRACTOR_SERVICE]) {
+  test(`${service.name}: old completed neurologist and ENT do not mark an AB visit`, () => {
+    const required = new Set(rolesFor(service, ["A", "B"]));
+    const excluded = context.excluded({services: [service]}, required);
+    const completed = new Set(ADVANCED_ROLES);
+    for (const role of ["neurologist", "otolaryngologist"]) {
+      assert.equal(context.mark(role, required, completed, excluded, completed).value, "");
+    }
+    for (const role of BASE_ROLES) assert.equal(context.mark(role, required, completed, excluded, completed).value, "✓");
+    assert.equal(completed.size, 5, "saved examinations are preserved");
+  });
+  test(`${service.name}: CD and additional services retain required doctors`, () => {
+    const required = new Set(ADVANCED_ROLES);
+    assert.equal(context.excluded({services: [service]}, required).size, 0);
+    assert.deepEqual(rolesFor(service, ["B", "BE"]), BASE_ROLES);
+  });
+}
+test("other services retain existing examinations", () => {
+  assert.equal(context.excluded({services: [{name: "Other"}]}, new Set()).size, 0);
 });

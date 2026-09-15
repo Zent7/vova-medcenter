@@ -50,6 +50,7 @@ from app.services.blank_forms import (
     reuse_blank_for_existing_document,
 )
 from app.services.doctor_directory import get_center_doctor_names
+from app.services.driver_rules import driver_category_tokens as _driver_category_tokens
 from app.services.document_context import (
     MONTH_NAMES,
     _add_calendar_months,
@@ -2339,37 +2340,6 @@ def _truthy_driver_value(value: object) -> bool:
         return value
     text = str(value or "").strip().lower()
     return text not in {"", "0", "false", "no", "нет", "не установлено", "z"}
-
-
-def _driver_category_tokens(value: object) -> set[str]:
-    text = str(value or "")
-    raw_tokens = re.findall(r"[A-Za-zА-Яа-я0-9]+", text)
-    aliases = {
-        "А": "A",
-        "Б": "B",
-        "В": "B",
-        "С": "C",
-        "Д": "D",
-        "1A": "A1",
-        "1B": "B1",
-        "1C": "C1",
-        "1D": "D1",
-        "1CE": "C1E",
-        "1DE": "D1E",
-        "Е": "E",
-        "ВЕ": "BE",
-        "СЕ": "CE",
-        "ДЕ": "DE",
-    }
-    tokens: set[str] = set()
-    for token in raw_tokens:
-        normalized = aliases.get(token.upper(), token)
-        normalized = {"TM": "Tm", "TB": "Tb"}.get(normalized.upper(), normalized.upper())
-        if normalized in DRIVER_XLS_CATEGORY_KEYS or normalized == "E":
-            tokens.add(normalized)
-    if "E" in tokens:
-        tokens.update({"BE", "CE", "DE"})
-    return tokens
 
 
 def _driver_completed_chairman(exams: list[DoctorExam]) -> DoctorExam | None:

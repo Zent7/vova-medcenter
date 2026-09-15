@@ -702,24 +702,6 @@ const DRIVER_DEFAULT_CATEGORIES = ["B"];
 const DRIVER_CATEGORY_OPTIONS = ["A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E"];
 const DRIVER_CATEGORY_ADVANCED_ROLES = ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"];
 const DRIVER_CATEGORY_BASE_ROLES = ["therapist", "ophthalmologist", "chairman"];
-const DRIVER_CATEGORY_DOCTOR_RULES = new Map([
-  ["A", ["therapist", "ophthalmologist", "chairman"]],
-  ["B", ["therapist", "ophthalmologist", "chairman"]],
-  ["AB", ["therapist", "ophthalmologist", "chairman"]],
-  ["ABE", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["ABC", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["ABCD", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["ABCDE", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["BC", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["BD", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["BCDE", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["BCD", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["BE", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["BCE", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["ABCDE,TB,TM", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["BCE,TB,TM", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-  ["ABC,TB,TM", ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"]],
-]);
 const OPERATOR_SERVICE_PRIORITY_BY_LEGACY_ID = new Map([
   [8, 1],
   [29, 2],
@@ -1912,24 +1894,6 @@ function getDriverCategoryPrice(categories = []) {
   return isBase ? 3500 : 4000;
 }
 
-function getDriverCategoryRuleKey(categories = [], { includeTransport = true } = {}) {
-  const normalized = normalizeDriverCategories(categories);
-  const parts = new Set();
-
-  if (normalized.includes("A") || normalized.includes("A1")) parts.add("A");
-  if (normalized.includes("B") || normalized.includes("B1") || normalized.includes("BE")) parts.add("B");
-  if (normalized.includes("C") || normalized.includes("C1") || normalized.includes("CE") || normalized.includes("C1E")) parts.add("C");
-  if (normalized.includes("D") || normalized.includes("D1") || normalized.includes("DE") || normalized.includes("D1E")) parts.add("D");
-  if (normalized.some((item) => item === "BE" || item === "CE" || item === "DE" || item === "C1E" || item === "D1E")) parts.add("E");
-
-  const key = ["A", "B", "C", "D", "E"].filter((item) => parts.has(item)).join("");
-  const transport = [];
-  if (normalized.includes("Tb")) transport.push("TB");
-  if (normalized.includes("Tm")) transport.push("TM");
-
-  return includeTransport && transport.length ? `${key},${transport.join(",")}` : key;
-}
-
 // Цена по категориям — правило водительской справки. У тракторной своя цена
 // в карточке услуги, её пересчитывать по категориям нельзя.
 function getVisitDriverServicePrice(service, categories = []) {
@@ -1940,13 +1904,8 @@ function getVisitDriverServicePrice(service, categories = []) {
 function getDriverRoleCodes(categories = []) {
   const normalized = normalizeDriverCategories(categories);
   if (!normalized.length) return [];
-  const exactKey = getDriverCategoryRuleKey(normalized);
-  const baseKey = getDriverCategoryRuleKey(normalized, { includeTransport: false });
-  const matched = DRIVER_CATEGORY_DOCTOR_RULES.get(exactKey) || DRIVER_CATEGORY_DOCTOR_RULES.get(baseKey);
-  if (matched) return matched;
-
-  const isBase = normalized.length > 0 && normalized.every((item) => DRIVER_BASE_CATEGORIES.has(item));
-  return isBase ? DRIVER_CATEGORY_BASE_ROLES : DRIVER_CATEGORY_ADVANCED_ROLES;
+  const extended = normalized.some((category) => ["C", "D", "CE", "DE", "C1", "D1", "C1E", "D1E", "Tm", "Tb"].includes(category));
+  return extended ? DRIVER_CATEGORY_ADVANCED_ROLES : DRIVER_CATEGORY_BASE_ROLES;
 }
 
 const DRIVER_INDICATION_FIELD_TO_LABEL = {
@@ -2650,6 +2609,14 @@ function hasCompletedDoctorExamHistory(clientId, doctorRoleId, currentVisitId = 
   ) || (Array.isArray(client?.doctorExamHistory) ? client.doctorExamHistory : []).some(
     (exam) => String(exam?.doctorRoleId || "") === roleCode && isOtherEncounter(exam),
   );
+}
+
+// Сохранённые осмотры остаются в истории. В журнале отмечаем специалистов,
+// которые требуются по текущим категориям справки или другой услуге обращения.
+function getCertificateExcludedDoctorRoles(visit, requiredDoctors) {
+  const services = getServicesForVisit(visit);
+  if (!services.some((service) => isDriverService(service) || isTractorService(service))) return new Set();
+  return new Set(["neurologist", "otolaryngologist"].filter((role) => !requiredDoctors.has(role)));
 }
 
 function buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors = new Set(), existingDoctors = new Set()) {
@@ -5883,7 +5850,10 @@ function buildExcelRows(clients) {
     const requiredDoctors = currentVisit ? getRequiredDoctorRoleCountsForVisit(currentVisit, client) : new Map();
     const completedDoctors = getCompletedDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
     const existingDoctors = getExistingDoctorRoleIdsForDashboardVisit(client, currentVisit, status);
-    const suppressedDoctors = getSuppressedDoctorRoleIdsForDashboardVisit(currentVisit, status);
+    const suppressedDoctors = new Set([
+      ...getSuppressedDoctorRoleIdsForDashboardVisit(currentVisit, status),
+      ...getCertificateExcludedDoctorRoles(currentVisit, requiredDoctors),
+    ]);
     const markDoctor = (roleCode) =>
       isDoctorRoleVisibleForClient(roleCode, client)
         ? buildDoctorMark(roleCode, requiredDoctors, completedDoctors, suppressedDoctors, existingDoctors)

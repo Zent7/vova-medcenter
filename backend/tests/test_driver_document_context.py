@@ -103,7 +103,7 @@ class DriverDocumentContextTests(unittest.TestCase):
                 ("driver", "водительская лицевая.xls", (28, 30, 35, 37, 39, 41)),
                 ("tractor", "трактор лиц ст.xls", (29, 31, 35, 37, 39, 41)),
             ):
-                for categories, revoked in (("A B", False), ("A B C D", False), ("A B C D", True)):
+                for categories, revoked in (("A B", False), ("A B", True), ("A B C D", False), ("A B C D", True)):
                     with self.subTest(kind=kind, categories=categories, revoked=revoked):
                         patient = client(categories)
                         patient.birth_date = date(1990, 1, 1)
@@ -121,6 +121,8 @@ class DriverDocumentContextTests(unittest.TestCase):
                             "Этчанов С. Противопоказания Отсутствуют", "Изория С. Г. Противопоказания Отсутствуют",
                             "ЭЭГ Без Патологии", "" if revoked else "Не Установлено",
                         ])
+                        if revoked:
+                            expected[-1] = ""
                         self.assertEqual(actual, expected)
 
     def test_completed_chairman_categories_override_client_categories(self):

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from sqlalchemy import select
@@ -6,10 +7,12 @@ from sqlalchemy.orm import Session
 from app.models.client import Client
 from app.models.doctor_exam import DoctorExam
 from app.models.encounter import Encounter
+from app.models.encounter_service import EncounterService
 from app.models.medical_record import MedicalRecord, MedicalRecordEntry
-from app.models.service import DoctorRole, ServiceDoctorRole
+from app.models.service import DoctorRole, Service, ServiceDoctorRole
 from app.models.template_phrase import TemplatePhrase
 from app.services.doctor_rules import should_include_doctor_role_for_client_sex
+from app.services.driver_rules import certificate_doctor_roles, is_driver_or_tractor_service
 
 
 NO_COMPLAINTS_TEXT = "в момент осмотра жалоб нет"
@@ -180,6 +183,26 @@ def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, se
         )
         .order_by(DoctorRole.sort_order.asc(), DoctorRole.name.asc())
     ).scalars().all()
+    service = db.get(Service, service_id)
+    if is_driver_or_tractor_service(service):
+        items = db.scalars(select(EncounterService).where(
+            EncounterService.encounter_id == encounter.id,
+            EncounterService.service_id == service_id,
+        )).all()
+        selected = []
+        has_categories = False
+        for item in items:
+            try:
+                detail = json.loads(item.notes or "{}")
+            except (ValueError, TypeError):
+                detail = {}
+            if isinstance(detail, dict) and "categories" in detail:
+                has_categories = True
+                selected.append(detail["categories"])
+        if not has_categories:
+            selected = [db.scalar(select(Client.admission_category).where(Client.id == encounter.client_id))]
+        allowed = certificate_doctor_roles(selected)
+        roles = [role for role in roles if role.code in allowed]
     roles = [role for role in roles if role.code not in suppressed_role_ids]
     if not roles:
         return
