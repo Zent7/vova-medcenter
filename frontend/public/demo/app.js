@@ -10308,21 +10308,28 @@ function normalizeDriverPrintBlank(blank) {
 
 function renderDriverPrintResultPrompt({ printedDocument, printMessage }) {
   return `
-    <div class="document-preview">
-      <strong>${escapeHtml(printedDocument?.title || "Водительская справка")}</strong>
-      <p>${escapeHtml(printMessage || "Документ открыт.")}</p>
-      <p>После печати подтвердите результат. Если бланк испорчен, мы сразу спишем его и подберем следующий номер.</p>
-      <div class="card" style="margin-top:12px;">
-        <strong>Инструкция по двусторонней печати</strong>
-        <ol style="margin:10px 0 0 18px; padding:0; display:grid; gap:8px;">
+    <div class="print-result">
+      <div class="print-result__summary">
+        <div class="print-result__icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/><path d="M9 17.5h6"/></svg></div>
+        <div class="print-result__summary-text">
+          <strong>${escapeHtml(printedDocument?.title || "Водительская справка")}</strong>
+          <p>${escapeHtml(printMessage || "Документ открыт для печати.")}</p>
+        </div>
+      </div>
+      <p class="print-result__hint">
+        После печати подтвердите результат. Если бланк испорчен, мы сразу спишем его и подберем следующий номер.
+      </p>
+      <div class="print-result__steps">
+        <div class="print-result__steps-title">Двусторонняя печать</div>
+        <ol>
           <li>Достаньте стопку распечатанных страниц из выходного лотка.</li>
           <li>Положите ее в лоток 1, не меняя ориентацию.</li>
-          <li>Подтвердите продолжение печати кнопкой ` + "`Да`" + `, если бланк напечатан нормально.</li>
+          <li>Нажмите «Да», если бланк напечатан нормально.</li>
         </ol>
       </div>
-      <div class="client-create-actions" style="margin-top:16px;">
-        <button type="button" class="ghost-button" id="driverPrintFailed">Нет, бланк испорчен</button>
-        <button type="button" class="primary-button" id="driverPrintSuccess">Да, все нормально</button>
+      <div class="print-result__actions">
+        <button type="button" class="ghost-button print-result__button print-result__button--danger" id="driverPrintFailed">Нет, бланк испорчен</button>
+        <button type="button" class="primary-button print-result__button" id="driverPrintSuccess">Да, все нормально</button>
       </div>
     </div>
   `;
@@ -10638,6 +10645,7 @@ async function openDriverPrintFlow(options = {}) {
         printedDocument,
         printMessage: result.message,
       }),
+      "modal--print-result",
     );
 
     document.getElementById("driverPrintSuccess")?.addEventListener("click", async () => {
