@@ -51,6 +51,7 @@ from app.services.blank_forms import (
 )
 from app.services.doctor_directory import get_center_doctor_names
 from app.services.driver_rules import driver_category_tokens as _driver_category_tokens
+from app.services.driver_rules import expand_implied_driver_categories as _expand_implied_driver_categories
 from app.services.document_context import (
     MONTH_NAMES,
     _add_calendar_months,
@@ -2188,8 +2189,8 @@ def _fill_prof_conclusion_29n_sheet(
 def _restriction_text(value: object) -> str:
     text = str(value or "").strip().lower()
     if not text or text in {"0", "нет", "false", "no", "не установлено"}:
-        return "не установлено"
-    return "установлено"
+        return "Не Установлено"
+    return "Установлено"
 
 
 def _xls_blank_or_dash(value: object) -> str:
@@ -2376,7 +2377,7 @@ def _driver_categories_from_chairman(fields: dict) -> set[str] | None:
         }
         if _truthy_driver_value(fields.get("categoryE")) and not selected.intersection({"BE", "CE", "DE"}):
             selected.update({"BE", "CE", "DE"})
-        return selected
+        return _expand_implied_driver_categories(selected)
     driver_categories = fields.get("driverCategories")
     if str(driver_categories or "").strip():
         return _driver_category_tokens(driver_categories)

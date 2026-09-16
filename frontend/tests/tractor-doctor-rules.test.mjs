@@ -67,10 +67,20 @@ test("водительская справка по-прежнему считае
 });
 
 test("категории, набранные кириллицей, читаются как латинские", () => {
-  assert.deepEqual(normalize("А, Б"), ["A", "B"]);
-  assert.deepEqual(normalize("А, В"), ["A", "B"]);
-  assert.deepEqual(normalize("А, В, С, Д"), ["A", "B", "C", "D"]);
+  assert.deepEqual(normalize("А, Б"), ["A", "B", "M", "A1", "B1"]);
+  assert.deepEqual(normalize("А, В"), ["A", "B", "M", "A1", "B1"]);
+  assert.deepEqual(normalize("А, В, С, Д"), ["A", "B", "C", "D", "M", "A1", "B1", "C1", "D1"]);
   assert.deepEqual(normalize("ВЕ"), ["BE"]);
+});
+
+test("основная категория открывает подкатегорию и M", () => {
+  assert.deepEqual(normalize(["B"]), ["B", "M", "B1"]);
+  assert.deepEqual(normalize(["A"]), ["A", "M", "A1"]);
+  assert.deepEqual(normalize(["C"]), ["C", "M", "C1"]);
+  assert.deepEqual(normalize(["D"]), ["D", "M", "D1"]);
+  // Прицепные и трамвай/троллейбус ничего не открывают.
+  assert.deepEqual(normalize(["BE"]), ["BE"]);
+  assert.deepEqual(normalize(["Tm"]), ["Tm"]);
 });
 
 test("кириллические категории назначают тех же врачей, что и латинские", () => {
@@ -87,7 +97,7 @@ test("цена тракторной справки не пересчитывае
 });
 
 test("регистр категорий не меняет состав врачей", () => {
-  assert.deepEqual(normalize("a, b"), ["A", "B"]);
+  assert.deepEqual(normalize("a, b"), ["A", "B", "M", "A1", "B1"]);
   assert.deepEqual(normalize(["tm", "tb"]), ["Tm", "Tb"]);
 });
 

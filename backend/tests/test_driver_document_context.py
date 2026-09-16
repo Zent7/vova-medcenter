@@ -19,6 +19,7 @@ from app.services.document_generator import (  # noqa: E402
     _driver_document_context_overrides,
     _exam_map,
     _fill_driver_xls_sheets,
+    _restriction_text,
     _driver_xml_context_overrides,
     _generate_runtime_xls,
 )
@@ -131,7 +132,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             [chairman({"categoryB": True, "categoryC": True})],
         )
 
-        self.assertEqual(selected, {"B", "C"})
+        self.assertEqual(selected, {"B", "B1", "C", "C1", "M"})
 
     def test_falls_back_to_client_admission_category_without_completed_chairman(self):
         selected = _driver_categories_for_documents(
@@ -139,7 +140,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             [chairman({"categoryD": True}, is_completed=False)],
         )
 
-        self.assertEqual(selected, {"A", "B", "C1E", "Tm"})
+        self.assertEqual(selected, {"A", "A1", "B", "B1", "M", "C1E", "Tm"})
 
     def test_every_selected_category_reaches_the_documents(self):
         selected = _driver_categories_for_documents(
@@ -147,7 +148,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             [],
         )
 
-        self.assertEqual(selected, {"A", "B", "C", "D", "BE", "M"})
+        self.assertEqual(selected, {"A", "B", "C", "D", "BE", "M", "A1", "B1", "C1", "D1"})
 
         selected_from_chairman = _driver_categories_for_documents(
             client(),
@@ -165,7 +166,38 @@ class DriverDocumentContextTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(selected_from_chairman, {"A", "B", "C", "D", "BE", "M"})
+        self.assertEqual(selected_from_chairman, {"A", "B", "C", "D", "BE", "M", "A1", "B1", "C1", "D1"})
+
+    def test_open_category_opens_its_subcategory_and_m(self):
+        """Отмеченная A/B/C/D открывает свою подкатегорию и M — и в тексте
+        категорий клиента, и в карточке председателя."""
+
+        for source, expected in [
+            ("A", {"A", "A1", "M"}),
+            ("B", {"B", "B1", "M"}),
+            ("C", {"C", "C1", "M"}),
+            ("D", {"D", "D1", "M"}),
+            ("BE", {"BE"}),
+            ("Tm", {"Tm"}),
+        ]:
+            with self.subTest(source=source):
+                self.assertEqual(_driver_categories_for_documents(client(admission_category=source), []), expected)
+
+        self.assertEqual(
+            _driver_categories_for_documents(client(), [chairman({"categoryC": True})]),
+            {"C", "C1", "M"},
+        )
+
+    def test_back_side_prints_only_the_two_allowed_statuses(self):
+        context = _driver_document_context_overrides(
+            client(),
+            [chairman({"restrictionAM": True, "indicationGlasses": True})],
+        )
+
+        self.assertEqual(_restriction_text(context["TCA"]), "Установлено")
+        self.assertEqual(_restriction_text(context["TCB"]), "Не Установлено")
+        self.assertEqual(_restriction_text(context["VisionTCCalc"]), "Установлено")
+        self.assertEqual(_restriction_text(context["HearingTCCalc"]), "Не Установлено")
 
     def test_legacy_category_e_expands_to_be_ce_de(self):
         selected = _driver_categories_for_documents(
@@ -312,27 +344,27 @@ class DriverDocumentContextTests(unittest.TestCase):
         result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
         back_sheet = result_book.sheet_by_name("Водительская Оборотная")
 
-        expected_marks = ["", "✓", "✓", "", "", "", "", "✓", "", "", "", "", "", "", "✓", ""]
+        expected_marks = ["", "✓", "✓", "", "", "", "", "✓", "", "✓", "", "✓", "✓", "", "✓", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
         self.assertTrue(all(back_sheet.colinfo_map[col].hidden for col in range(34, 66)))
         self.assertEqual(back_sheet.cell_value(36, 8), "Председатель")
         self.assertEqual(back_sheet.cell_value(36, 41), "")
         for row_index, expected in [
-            (14, "установлено"),
-            (17, "не установлено"),
-            (20, "установлено"),
-            (25, "установлено"),
-            (27, "не установлено"),
-            (29, "установлено"),
-            (31, "не установлено"),
-            (33, "установлено"),
+            (14, "Установлено"),
+            (17, "Не Установлено"),
+            (20, "Установлено"),
+            (25, "Установлено"),
+            (27, "Не Установлено"),
+            (29, "Установлено"),
+            (31, "Не Установлено"),
+            (33, "Установлено"),
         ]:
             self.assertEqual(back_sheet.cell_value(row_index, 29), expected)
             self.assertEqual(back_sheet.cell_value(row_index, 62), "")
 
     def test_driver_xls_back_sheet_leaves_unselected_restrictions_empty(self):
-        """Водителю без ограничений и показаний оборот печатает "не установлено":
+        """Водителю без ограничений и показаний оборот печатает "Не Установлено":
         сама по себе выбранная категория ограничением не является."""
 
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"
@@ -356,10 +388,10 @@ class DriverDocumentContextTests(unittest.TestCase):
         target_book.save(str(output_path))
         back_sheet = xlrd.open_workbook(str(output_path), formatting_info=True).sheet_by_name("Водительская Оборотная")
 
-        expected_marks = ["", "✓", "", "", "✓", "", "", "", "", "", "", "", "", "", "", ""]
+        expected_marks = ["", "✓", "", "", "✓", "", "", "", "", "✓", "", "✓", "", "", "", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         for row_index in (14, 17, 20, 25, 27, 29, 31, 33):
-            self.assertEqual(back_sheet.cell_value(row_index, 29), "не установлено")
+            self.assertEqual(back_sheet.cell_value(row_index, 29), "Не Установлено")
 
     def test_driver_xls_front_sheet_writes_issue_date_as_text(self):
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская лицевая.xls"
@@ -431,7 +463,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
         back_sheet = result_book.sheet_by_name("Водительская Оборотная")
 
-        expected_marks = ["✓", "✓", "✓", "", "✓", "", "", "", "", "✓", "", "", "", "", "", ""]
+        expected_marks = ["✓", "✓", "✓", "", "✓", "", "", "", "", "✓", "✓", "✓", "✓", "", "", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
 
@@ -477,7 +509,11 @@ class DriverDocumentContextTests(unittest.TestCase):
             return "галочка" if border.left_line_style else "?"
 
         shapes = [shape(col) for col in range(2, 34, 2)]
-        self.assertEqual(shapes, ["прочерк", "галочка"] + ["прочерк"] * 14)
+        # Категория B открывает B1 и M — галочка встаёт и в их клетках.
+        expected_shapes = ["прочерк"] * 16
+        for index in (1, 9, 11):
+            expected_shapes[index] = "галочка"
+        self.assertEqual(shapes, expected_shapes)
 
     def test_driver_print_variants_keep_only_selected_side(self):
         for variant, expected_sheet, template_path in [

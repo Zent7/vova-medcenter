@@ -1863,6 +1863,15 @@ const DRIVER_CATEGORY_ALIASES = {
   "1DE": "D1E",
 };
 
+// Открытая категория открывает и свою подкатегорию, и M: отметил оператор B —
+// в справке появляются B, B1, M. Правило повторяет _driver_category_tokens.
+const DRIVER_CATEGORY_IMPLIED = {
+  A: ["A1", "M"],
+  B: ["B1", "M"],
+  C: ["C1", "M"],
+  D: ["D1", "M"],
+};
+
 function normalizeDriverCategoryToken(token) {
   const upper = String(token || "").trim().toUpperCase();
   if (!upper) return "";
@@ -1884,6 +1893,9 @@ function normalizeDriverCategories(categories) {
     expanded.add("CE");
     expanded.add("DE");
   }
+  Object.entries(DRIVER_CATEGORY_IMPLIED).forEach(([category, implied]) => {
+    if (expanded.has(category)) implied.forEach((item) => expanded.add(item));
+  });
   return DRIVER_CATEGORY_OPTIONS.filter((item) => expanded.has(item));
 }
 
@@ -2007,6 +2019,12 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
   const hasCategoryOverrides = sourceCategories.length > 0;
   const hasIndicationOverrides = Array.isArray(detail.indications);
   const hasLimitationOverrides = Array.isArray(detail.limitations);
+  const indicationFlag = (fieldKey, savedValue) =>
+    Boolean(savedValue) ||
+    (hasIndicationOverrides && indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL[fieldKey]));
+  const limitationFlag = (fieldKey, savedValue) =>
+    Boolean(savedValue) ||
+    (hasLimitationOverrides && hasDriverLimitationSelection(limitations, fieldKey));
 
   return {
     ...fields,
@@ -2032,20 +2050,23 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
     licenseRevoked: Object.hasOwn(detail, "licenseRevoked") ? Boolean(detail.licenseRevoked) : Boolean(fields.licenseRevoked),
     categoryBoat: hasCategoryOverrides ? (sourceCategories.includes("boat") || Boolean(detail.boatFit)) : Boolean(fields.categoryBoat),
     categorySailing: hasCategoryOverrides ? sourceCategories.includes("sailing") : Boolean(fields.categorySailing),
-    hasGlasses: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationGlasses) : Boolean(fields.hasGlasses),
-    hasHearingAid: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationHearingAid) : Boolean(fields.hasHearingAid),
-    indicationManual: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationManual) : Boolean(fields.indicationManual),
-    indicationAutomatic: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationAutomatic) : Boolean(fields.indicationAutomatic),
-    indicationAcoustic: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationAcoustic) : Boolean(fields.indicationAcoustic),
-    indicationGlasses: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationGlasses) : Boolean(fields.indicationGlasses),
-    indicationHearingAid: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationHearingAid) : Boolean(fields.indicationHearingAid),
-    indicationNoHiring: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationNoHiring) : Boolean(fields.indicationNoHiring),
-    indicationOneYear: hasIndicationOverrides ? indications.includes(DRIVER_INDICATION_FIELD_TO_LABEL.indicationOneYear) : Boolean(fields.indicationOneYear),
-    restrictionAM: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionAM") : Boolean(fields.restrictionAM),
-    restrictionBBE: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionBBE") : Boolean(fields.restrictionBBE),
-    restrictionCCE: hasLimitationOverrides ? hasDriverLimitationSelection(limitations, "restrictionCCE") : Boolean(fields.restrictionCCE),
-    restrictionNoHands: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionNoHands) : Boolean(fields.restrictionNoHands),
-    restrictionNoLegs: hasLimitationOverrides ? limitations.includes(DRIVER_LIMITATION_FIELD_TO_LABEL.restrictionNoLegs) : Boolean(fields.restrictionNoLegs),
+    // Показания и ограничения складываем, а не заменяем: председатель отмечает
+    // их в своей карточке, оператор — в карточке клиента. Замена стирала отметку
+    // председателя, пока он не закрыл карточку, и оборот печатал «Не Установлено».
+    hasGlasses: indicationFlag("indicationGlasses", fields.hasGlasses || fields.indicationGlasses),
+    hasHearingAid: indicationFlag("indicationHearingAid", fields.hasHearingAid || fields.indicationHearingAid),
+    indicationManual: indicationFlag("indicationManual", fields.indicationManual),
+    indicationAutomatic: indicationFlag("indicationAutomatic", fields.indicationAutomatic),
+    indicationAcoustic: indicationFlag("indicationAcoustic", fields.indicationAcoustic),
+    indicationGlasses: indicationFlag("indicationGlasses", fields.indicationGlasses),
+    indicationHearingAid: indicationFlag("indicationHearingAid", fields.indicationHearingAid),
+    indicationNoHiring: indicationFlag("indicationNoHiring", fields.indicationNoHiring),
+    indicationOneYear: indicationFlag("indicationOneYear", fields.indicationOneYear),
+    restrictionAM: limitationFlag("restrictionAM", fields.restrictionAM),
+    restrictionBBE: limitationFlag("restrictionBBE", fields.restrictionBBE),
+    restrictionCCE: limitationFlag("restrictionCCE", fields.restrictionCCE),
+    restrictionNoHands: limitationFlag("restrictionNoHands", fields.restrictionNoHands),
+    restrictionNoLegs: limitationFlag("restrictionNoLegs", fields.restrictionNoLegs),
     examDate: fields.examDate || visit?.visitDate || "",
   };
 }

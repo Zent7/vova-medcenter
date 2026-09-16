@@ -2,6 +2,22 @@ import re
 
 DRIVER_CATEGORY_KEYS = ("A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E")
 DRIVER_EXTENDED_CATEGORIES = {"C", "D", "CE", "DE", "C1", "D1", "C1E", "D1E", "Tm", "Tb"}
+# Открытая категория открывает и свою подкатегорию, и M: отметили B — в справке
+# появляются B, B1, M. То же правило продублировано в demo/app.js.
+DRIVER_IMPLIED_CATEGORIES = {
+    "A": ("A1", "M"),
+    "B": ("B1", "M"),
+    "C": ("C1", "M"),
+    "D": ("D1", "M"),
+}
+
+
+def expand_implied_driver_categories(categories: set[str]) -> set[str]:
+    expanded = set(categories)
+    for category, implied in DRIVER_IMPLIED_CATEGORIES.items():
+        if category in expanded:
+            expanded.update(implied)
+    return expanded
 
 
 def driver_category_tokens(value: object) -> set[str]:
@@ -32,7 +48,7 @@ def driver_category_tokens(value: object) -> set[str]:
             tokens.add(normalized)
     if "E" in tokens:
         tokens.update({"BE", "CE", "DE"})
-    return tokens
+    return expand_implied_driver_categories(tokens)
 
 
 def certificate_doctor_roles(categories: object) -> set[str]:
