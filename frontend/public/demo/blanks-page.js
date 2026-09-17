@@ -55,7 +55,15 @@
   }
 
   const BLANKS_FORMS_PAGE_SIZE = 50;
+  const BLANKS_CLEAR_CONFIRM_WORD = "ОЧИСТИТЬ";
   let blanksSearchTimer = null;
+
+  // Очистка стирает все партии и номера медцентра без возможности вернуть,
+  // поэтому она доступна тем же ролям, что проверяет бэкенд.
+  function canClearBlanks() {
+    const roleCode = window.appState?.auth?.roleCode;
+    return roleCode === "chairman" || roleCode === "admin";
+  }
 
   function getFormsPage() {
     const page = Number.parseInt(String(window.appState?.blanksFormsPage || "1"), 10);
@@ -608,6 +616,13 @@
             </button>
             <button type="button" class="ghost-button" data-blanks-show-info>Инфо о бланках</button>
             <button type="button" class="ghost-button" data-blanks-refresh>Обновить</button>
+            ${
+              canClearBlanks()
+                ? `<button type="button" class="ghost-button danger-button" data-blanks-clear ${data.blanksClearing ? "disabled" : ""}>${
+                    data.blanksClearing ? "Очистка..." : "Очистить бланки"
+                  }</button>`
+                : ""
+            }
           </div>
         </div>
         <div class="tabs">
@@ -635,6 +650,55 @@
 
     document.querySelector("[data-blanks-refresh]")?.addEventListener("click", () => {
       loadBlanksData({ force: true });
+    });
+
+    document.querySelector("[data-blanks-clear]")?.addEventListener("click", async () => {
+      const data = window.data || {};
+      if (data.blanksClearing) return;
+      const centerName = window.getWorkspaceCenterName?.() || window.appState?.centerFilter || "Медцентр";
+      const batchesCount = Array.isArray(data.blanksBatches) ? data.blanksBatches.length : 0;
+      const formsCount = (Array.isArray(data.blanksStats) ? data.blanksStats : []).reduce(
+        (total, item) => total + Number(item.total || 0),
+        0,
+      );
+      const answer = window.prompt(
+        `Очистить все бланки медцентра «${centerName}»?\n\n` +
+          `Будут удалены партии (${batchesCount}) и номера (${formsCount}) вместе с историей выдачи. ` +
+          "Уже напечатанные документы останутся. Нумерация справок ЛМК не меняется. Вернуть удалённое нельзя.\n\n" +
+          `Чтобы подтвердить, введите слово ${BLANKS_CLEAR_CONFIRM_WORD}`,
+        "",
+      );
+      if (answer === null) return;
+      if (answer.trim().toUpperCase() !== BLANKS_CLEAR_CONFIRM_WORD) {
+        window.showToast?.(`Очистка отменена: слово ${BLANKS_CLEAR_CONFIRM_WORD} не введено`);
+        return;
+      }
+
+      data.blanksClearing = true;
+      window.renderApp?.();
+      try {
+        const centerId = await window.resolveWorkspaceCenterId?.();
+        const result = await window.apiRequest("/blanks/clear", {
+          method: "POST",
+          body: JSON.stringify({ center_id: Number(centerId) }),
+        });
+        window.appState.blanksFormOpen = false;
+        window.appState.blanksHistorySearch = "";
+        resetFormsPage();
+        window.persistDemoState?.();
+        window.showToast?.(
+          `Бланки очищены: удалено партий ${Number(result?.batches_deleted || 0)}, номеров ${Number(result?.forms_deleted || 0)}`,
+        );
+      } catch (error) {
+        window.showToast?.(
+          window.humanizeApiError
+            ? window.humanizeApiError(error, "Не удалось очистить бланки")
+            : String(error?.message || error || "Не удалось очистить бланки"),
+        );
+      } finally {
+        data.blanksClearing = false;
+        await loadBlanksData({ force: true });
+      }
     });
 
     document.querySelector("[data-blanks-show-info]")?.addEventListener("click", () => {

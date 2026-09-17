@@ -1,10 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.routes.auth import get_current_user
 from app.db.session import get_db
+from app.models.center import Center
+from app.models.user import User
 from app.schemas.blank_form import (
     BlankBatchCreate,
     BlankBatchRead,
+    BlankClearRequest,
+    BlankClearResult,
     BlankFormRead,
     BlankFormsPageRead,
     BlankFormSpoilRequest,
@@ -17,6 +22,7 @@ from app.services.blank_forms import (
     BlankRangeInvalidError,
     BlankRangeOverlapError,
     BlankServiceError,
+    clear_center_blanks,
     create_auto_number_form,
     create_batch,
     enrich_form_for_read,
@@ -35,6 +41,8 @@ from app.services.blank_forms import (
 
 
 router = APIRouter()
+
+BLANK_CLEAR_ROLE_CODES = ("chairman", "admin")
 
 
 def _current_user_id() -> int:
@@ -263,6 +271,29 @@ def release_form_endpoint(
     db.commit()
     db.refresh(form)
     return BlankFormRead.model_validate(enrich_form_for_read(db, form))
+
+
+def require_blank_clear_access(current_user: User = Depends(get_current_user)) -> User:
+    role_code = current_user.role.code if current_user.role is not None else ""
+    if role_code not in BLANK_CLEAR_ROLE_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Очищать бланки может только председатель или админ",
+        )
+    return current_user
+
+
+@router.post("/clear", response_model=BlankClearResult)
+def clear_blanks_endpoint(
+    payload: BlankClearRequest,
+    current_user: User = Depends(require_blank_clear_access),
+    db: Session = Depends(get_db),
+) -> BlankClearResult:
+    if db.get(Center, payload.center_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Медцентр не найден")
+    result = clear_center_blanks(db, center_id=payload.center_id, user_id=current_user.id)
+    db.commit()
+    return BlankClearResult(center_id=payload.center_id, **result)
 
 
 @router.get("/stats", response_model=BlankStatsResponse)

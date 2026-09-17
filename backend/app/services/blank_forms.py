@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import Integer, and_, case, cast, func, or_, select
+from sqlalchemy import Integer, and_, case, cast, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -783,6 +783,73 @@ def release_form(
         },
     )
     return form
+
+
+def clear_center_blanks(
+    db: Session,
+    *,
+    center_id: int,
+    user_id: int | None,
+) -> dict[str, int]:
+    """Стирает учёт номерных бланков медцентра, чтобы начать нумерацию заново.
+
+    Номера удаляются из базы, а не помечаются: у blank_forms нет deleted_at, и
+    уникальный ключ «медцентр + тип + номер» не дал бы завести тот же диапазон
+    повторно. Партии помечаются удалёнными. Сформированные документы остаются —
+    у них снимается только ссылка на номер, напечатанный номер сохраняется в
+    blank_number_snapshot. Автонумерация по сокращению услуги после очистки
+    снова начинается с единицы.
+    """
+
+    center_batch_ids = select(BlankBatch.id).where(BlankBatch.center_id == center_id)
+    center_forms = or_(BlankForm.center_id == center_id, BlankForm.batch_id.in_(center_batch_ids))
+    center_form_ids = select(BlankForm.id).where(center_forms)
+
+    status_counts = {
+        status: int(count or 0)
+        for status, count in db.execute(
+            select(BlankForm.status, func.count(BlankForm.id)).where(center_forms).group_by(BlankForm.status)
+        ).all()
+    }
+
+    detached_generated = db.execute(
+        update(GeneratedDocument)
+        .where(GeneratedDocument.blank_form_id.in_(center_form_ids))
+        .values(blank_form_id=None)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    detached_client = db.execute(
+        update(ClientDocument)
+        .where(ClientDocument.blank_form_id.in_(center_form_ids))
+        .values(blank_form_id=None)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    forms_deleted = db.execute(
+        delete(BlankForm).where(center_forms).execution_options(synchronize_session=False)
+    ).rowcount
+    batches_deleted = db.execute(
+        update(BlankBatch)
+        .where(BlankBatch.center_id == center_id, BlankBatch.deleted_at.is_(None))
+        .values(deleted_at=datetime.utcnow())
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    db.flush()
+
+    result = {
+        "batches_deleted": int(batches_deleted or 0),
+        "forms_deleted": int(forms_deleted or 0),
+        "documents_detached": int(detached_generated or 0) + int(detached_client or 0),
+    }
+    write_audit_log(
+        db,
+        entity_type="center",
+        entity_id=center_id,
+        action="clear_blanks",
+        user_id=user_id or 1,
+        center_id=center_id,
+        payload_json={**result, "forms_by_status": status_counts},
+    )
+    return result
 
 
 def issue_next_blank(

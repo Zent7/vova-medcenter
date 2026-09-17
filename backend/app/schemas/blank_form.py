@@ -91,6 +91,17 @@ class BlankFormSpoilRequest(BaseModel):
     reason: str | None = None
 
 
+class BlankClearRequest(BaseModel):
+    center_id: int
+
+
+class BlankClearResult(BaseModel):
+    center_id: int
+    batches_deleted: int
+    forms_deleted: int
+    documents_detached: int
+
+
 class BlankStatsItem(BaseModel):
     blank_type: str
     blank_type_name: str
