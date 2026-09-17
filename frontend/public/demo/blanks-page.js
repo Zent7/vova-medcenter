@@ -59,10 +59,9 @@
   let blanksSearchTimer = null;
 
   // Очистка стирает все партии и номера медцентра без возможности вернуть,
-  // поэтому она доступна тем же ролям, что проверяет бэкенд.
+  // поэтому она доступна только председателю — это же проверяет бэкенд.
   function canClearBlanks() {
-    const roleCode = window.appState?.auth?.roleCode;
-    return roleCode === "chairman" || roleCode === "admin";
+    return window.appState?.auth?.roleCode === "chairman";
   }
 
   function getFormsPage() {

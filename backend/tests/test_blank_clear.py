@@ -203,12 +203,16 @@ class BlankClearTests(unittest.TestCase):
             self.assertEqual(auto_form.number_value, 1)
             self.assertEqual(len(list_batches(db, center_id=first.id)), 2)
 
-    def test_only_chairman_or_admin_may_clear(self):
-        for role_code in ("chairman", "admin"):
-            user = SimpleNamespace(role=SimpleNamespace(code=role_code))
-            self.assertIs(require_blank_clear_access(current_user=user), user)
+    def test_only_chairman_may_clear(self):
+        user = SimpleNamespace(role=SimpleNamespace(code="chairman"))
+        self.assertIs(require_blank_clear_access(current_user=user), user)
 
-        for role in (SimpleNamespace(code="registrar"), None):
+        for role in (
+            SimpleNamespace(code="admin"),
+            SimpleNamespace(code="operator"),
+            SimpleNamespace(code="doctor"),
+            None,
+        ):
             with self.assertRaises(HTTPException) as error:
                 require_blank_clear_access(current_user=SimpleNamespace(role=role))
             self.assertEqual(error.exception.status_code, 403)

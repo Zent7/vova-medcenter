@@ -42,7 +42,7 @@ from app.services.blank_forms import (
 
 router = APIRouter()
 
-BLANK_CLEAR_ROLE_CODES = ("chairman", "admin")
+BLANK_CLEAR_ROLE_CODES = ("chairman",)
 
 
 def _current_user_id() -> int:
@@ -278,7 +278,7 @@ def require_blank_clear_access(current_user: User = Depends(get_current_user)) -
     if role_code not in BLANK_CLEAR_ROLE_CODES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Очищать бланки может только председатель или админ",
+            detail="Очищать бланки может только председатель",
         )
     return current_user
 
