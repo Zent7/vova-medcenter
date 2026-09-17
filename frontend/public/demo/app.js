@@ -4135,6 +4135,39 @@ function getCurrentVisitForClient(clientId) {
   return getVisitsForClient(clientId)[0] || null;
 }
 
+// Услуги клиента, оформленные за один день в одном медцентре, — одна группа.
+// У каждой услуги своё обращение и своя строка журнала, но карточка клиента
+// показывает их вместе, а договор печатается один на всю группу. Так работает
+// и ручное добавление, и загрузка клиентов из Excel.
+function getVisitServiceGroup(visit) {
+  if (!visit?.backendId) return [];
+  const visitDate = parseRuDateToIso(visit.visitDate, "");
+  return data.visits
+    .filter(
+      (item) =>
+        item.backendId &&
+        String(item.clientId) === String(visit.clientId) &&
+        String(item.centerId ?? "") === String(visit.centerId ?? "") &&
+        parseRuDateToIso(item.visitDate, "") === visitDate,
+    )
+    .sort((a, b) => Number(a.backendId) - Number(b.backendId));
+}
+
+async function loadClientServiceGroup(client, encounterId = null) {
+  if (!client) return [];
+  await loadEncountersForClient(client);
+  const visit = activateClientEncounter(client.id, encounterId) || getCurrentVisitForClient(client.id);
+  if (visit) appState.activeVisitId = visit.id;
+  return getVisitServiceGroup(visit);
+}
+
+async function openClientModalWithServiceGroup(clientId, options = {}) {
+  if (!window.openClientModal) return;
+  const client = options.client || getClientPool().find((item) => String(item.id) === String(clientId)) || null;
+  const serviceGroup = client ? await loadClientServiceGroup(client, appState.selectedEncounterId) : null;
+  window.openClientModal(clientId, { ...options, serviceGroup });
+}
+
 function createVisitForClient(clientId, options = {}) {
   ensureVisitsStore();
   const client = getClientPool().find((item) => String(item.id) === String(clientId));
@@ -4178,12 +4211,14 @@ function createVisitForClient(clientId, options = {}) {
   return visit;
 }
 
-async function createVisitsForClientByServices(client, serviceDrafts = []) {
+async function createVisitsForClientByServices(client, serviceDrafts = [], options = {}) {
   const drafts = Array.isArray(serviceDrafts) ? serviceDrafts.filter((item) => item?.serviceId) : [];
   if (!client || !drafts.length) return [];
 
-  const centerId = await resolveWorkspaceCenterId();
-  const encounterDate = getLocalDateInputValue();
+  // Услугу, добавленную в карточку прошлого дня, заводим в тот же день и центр,
+  // иначе она выпадет из карточки и из договора этого дня.
+  const centerId = options.centerId || await resolveWorkspaceCenterId();
+  const encounterDate = options.encounterDate || getLocalDateInputValue();
   const savedItems = await apiRequest("/encounters/by-services", {
     method: "POST",
     body: JSON.stringify({
@@ -9746,41 +9781,6 @@ async function createDemoDocument(type) {
   return createDocumentForVisit(type, client, visit);
 }
 
-async function createContractsForVisits(client, visits = []) {
-  const targetVisits = Array.isArray(visits) ? visits.filter(Boolean) : [];
-  if (!client || !targetVisits.length) return [];
-
-  const documents = [];
-  const failures = [];
-  try {
-    for (const visit of targetVisits) {
-      try {
-        appState.activeVisitId = visit.id;
-        appState.selectedEncounterId = visit.backendId || null;
-        const documentItem = await createDocumentForVisit("contract", client, visit);
-        if (!documentItem) continue;
-        documents.push(documentItem);
-        if (documentItem.downloadUrl) await downloadGeneratedDocument(documentItem);
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-  } finally {
-    const firstVisit = targetVisits[0];
-    appState.activeVisitId = firstVisit?.id || null;
-    appState.selectedEncounterId = firstVisit?.backendId || null;
-    persistDemoState();
-  }
-
-  if (failures.length) {
-    throw new Error(`Сформировано договоров: ${documents.length} из ${targetVisits.length}`);
-  }
-  showToast(`Договоры скачиваются: ${documents.length}`);
-  return documents;
-}
-
-window.createContractsForVisits = createContractsForVisits;
-
 function normalizeBlankSeries(series) {
   return String(series ?? "").trim();
 }
@@ -12041,6 +12041,9 @@ async function prepareContractPrintContext() {
     ? await saveOperatorVisitForm({ skipAutoDocuments: true })
     : await (async () => {
         await loadEncountersForClient(client);
+        // Договор печатаем за день той строки журнала, что выбрана, а не за
+        // последнее обращение клиента.
+        activateClientEncounter(client.id, appState.selectedEncounterId);
         const draftVisit = getOrCreateDraftVisit(client.id);
         if (draftVisit) {
           await syncVisitToBackend(draftVisit, client);
@@ -12275,9 +12278,7 @@ function bindContentEvents() {
   const editSelectedClientButton = document.getElementById("editSelectedClientButton");
   if (editSelectedClientButton) {
     editSelectedClientButton.addEventListener("click", () => {
-      if (window.openClientModal) {
-        window.openClientModal(appState.selectedClientId);
-      }
+      void openClientModalWithServiceGroup(appState.selectedClientId);
     });
   }
 
@@ -12301,9 +12302,7 @@ function bindContentEvents() {
   const chartEditClientButton = document.getElementById("chartEditClientButton");
   if (chartEditClientButton) {
     chartEditClientButton.addEventListener("click", () => {
-      if (window.openClientModal) {
-        window.openClientModal(appState.selectedClientId);
-      }
+      void openClientModalWithServiceGroup(appState.selectedClientId);
     });
   }
 
@@ -12802,8 +12801,8 @@ function bindContentEvents() {
         return;
       }
 
-      if (selectedClient && window.openClientModal) {
-        window.openClientModal(selectedClient.id, { client: selectedClient });
+      if (selectedClient) {
+        await openClientModalWithServiceGroup(selectedClient.id, { client: selectedClient });
       }
     });
   });
@@ -13694,6 +13693,7 @@ window.getOrCreateDraftVisit = getOrCreateDraftVisit;
 window.getCurrentVisitForClient = getCurrentVisitForClient;
 window.createVisitForClient = createVisitForClient;
 window.createVisitsForClientByServices = createVisitsForClientByServices;
+window.loadClientServiceGroup = loadClientServiceGroup;
 window.createVisitForClientIfNeeded = createVisitForClientIfNeeded;
 window.updateVisit = updateVisit;
 window.ensureRequiredDoctorExamsForVisit = ensureRequiredDoctorExamsForVisit;

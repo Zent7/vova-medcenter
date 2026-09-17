@@ -882,6 +882,106 @@ function getClientVisitPaymentSummary(selectedServices = [], serviceDetails = {}
   };
 }
 
+function buildClientServiceDrafts(services = [], serviceDetails = {}, clientSex = "", baseComment = "") {
+  return services.map((service) => {
+    const serviceId = getClientServiceDetailKey(service);
+    const detail = { ...(serviceDetails[serviceId] || {}) };
+    const summary = getClientVisitPaymentSummary([service.name], { [serviceId]: detail }, baseComment);
+    return {
+      serviceId,
+      serviceName: service.name,
+      detail,
+      clientSex,
+      amount: Number(detail.unitPrice ?? service.price ?? 0),
+      paymentType: summary.paymentType,
+      comment: summary.comment,
+    };
+  });
+}
+
+// Сравниваем только то, что редактирует карточка. Пустые оплата и комментарий
+// у загруженных из Excel услуг равны значениям карточки по умолчанию.
+function isSameClientServiceDetail(stored = {}, next = {}) {
+  const keys = Object.keys(next);
+  const normalize = (detail) => JSON.stringify(keys.map((key) => {
+    const value = detail?.[key];
+    if (key === "unitPrice") return Number(value || 0);
+    if (key === "paymentType") return value || "cash";
+    if (key === "comment") return value || "";
+    return value ?? null;
+  }));
+  return normalize(stored) === normalize(next);
+}
+
+// Карточка показывает все услуги дня разом, но у каждой услуги остаётся своё
+// обращение: своя строка журнала, свои врачи и свой бланк. Поэтому изменения
+// раскладываем по этим обращениям, а не сливаем все услуги в одно текущее.
+async function saveClientServiceGroup(client, serviceGroup, { selectedServiceValues, serviceDetails, clientSex, baseComment }) {
+  const selectedServices = getClientServiceItemsByNames(selectedServiceValues);
+  const serviceById = new Map(selectedServices.map((service) => [getClientServiceDetailKey(service), service]));
+  const closedVisits = serviceGroup.filter((visit) => visit.status === "closed");
+  const openVisits = serviceGroup.filter((visit) => visit.status !== "closed");
+  const nextIdsByVisit = new Map(
+    openVisits.map((visit) => [visit, (visit.serviceIds || []).map(String).filter((id) => serviceById.has(id))]),
+  );
+  const existingIds = new Set([
+    ...closedVisits.flatMap((visit) => (visit.serviceIds || []).map(String)),
+    ...Array.from(nextIdsByVisit.values()).flat(),
+  ]);
+  const addedIds = Array.from(serviceById.keys()).filter((id) => !existingIds.has(id));
+  // Строку, с которой сняли все услуги, занимаем добавленной услугой, а не плодим пустые.
+  openVisits.forEach((visit) => {
+    if (!nextIdsByVisit.get(visit).length && addedIds.length) {
+      nextIdsByVisit.set(visit, [addedIds.shift()]);
+    }
+  });
+
+  const savedVisits = [];
+  for (const [visit, nextIds] of nextIdsByVisit) {
+    const currentIds = (visit.serviceIds || []).map(String);
+    const nextDetails = Object.fromEntries(nextIds.map((id) => [id, serviceDetails[id] || {}]));
+    const isUnchanged =
+      currentIds.length === nextIds.length &&
+      currentIds.every((id, index) => id === nextIds[index]) &&
+      nextIds.every((id) => isSameClientServiceDetail(visit.serviceDetails?.[id], nextDetails[id]));
+    if (isUnchanged) continue;
+
+    const nextNames = nextIds.map((id) => serviceById.get(id).name);
+    const summary = getClientVisitPaymentSummary(nextNames, nextDetails, baseComment);
+    Object.assign(visit, {
+      serviceNames: nextNames,
+      serviceIds: nextIds,
+      serviceDetails: nextDetails,
+      clientSex,
+      amount: window.calculateVisitAmountByIds?.(nextIds, nextDetails) ?? 0,
+      paymentType: summary.paymentType,
+      comment: summary.comment,
+    });
+    if (!(await window.syncVisitToBackend?.(visit, client))) {
+      throw new Error("Не удалось сохранить услуги обращения");
+    }
+    savedVisits.push(visit);
+  }
+
+  let createdVisits = [];
+  if (addedIds.length) {
+    const groupVisit = serviceGroup[0];
+    createdVisits = await window.createVisitsForClientByServices?.(
+      client,
+      buildClientServiceDrafts(addedIds.map((id) => serviceById.get(id)), serviceDetails, clientSex, baseComment),
+      {
+        centerId: groupVisit.centerId,
+        encounterDate: window.parseRuDateToIso?.(groupVisit.visitDate, "") || "",
+      },
+    ) || [];
+    if (createdVisits.length !== addedIds.length) {
+      throw new Error("Backend не сохранил все выбранные услуги");
+    }
+  }
+
+  return { savedVisits, createdVisits };
+}
+
 function getClientServiceIdsByNames(selectedServices = []) {
   return selectedServices
     .map((name) => getServerServiceByName(name))
@@ -1012,9 +1112,20 @@ function openClientModal(clientId = null, options = {}) {
   }
 
   const initialVisit = !encounterMode && editingClient ? window.getCurrentVisitForClient?.(editingClient.id) : null;
-  const initialSelectedServices = encounterMode ? [] : (editingClient?.services || []);
+  // Карточка, открытая со строки журнала, показывает все услуги клиента за этот
+  // день в этом медцентре, хотя у каждой услуги своя строка журнала.
+  const serviceGroup = !encounterMode && editingClient && Array.isArray(options?.serviceGroup)
+    ? options.serviceGroup
+    : null;
+  const initialSelectedServices = encounterMode
+    ? []
+    : serviceGroup?.length
+      ? Array.from(new Set(serviceGroup.flatMap((visit) => visit.serviceNames || [])))
+      : (editingClient?.services || []);
   clientModalSelectedServices = new Set(initialSelectedServices);
-  clientModalServiceDetails = { ...(initialVisit?.serviceDetails || {}) };
+  clientModalServiceDetails = serviceGroup?.length
+    ? Object.assign({}, ...serviceGroup.map((visit) => visit.serviceDetails || {}))
+    : { ...(initialVisit?.serviceDetails || {}) };
   // Открытая заново карточка показывает ровно те категории, ограничения и
   // показания, которые уже были выбраны для этого обращения.
   const initialDriverDetail = getStoredClientDriverDetail(initialSelectedServices);
@@ -1563,7 +1674,11 @@ function openClientModal(clientId = null, options = {}) {
 
     let createdVisits = [];
     let currentVisit = null;
-    const shouldSplitIntoServiceEncounters = (isCreated || encounterMode) && selectedServiceValues.length > 0;
+    // Группа загружена при открытии карточки. Пустая значит, что обращений у
+    // клиента нет, и выбранные услуги заводятся как у нового клиента.
+    const shouldSplitIntoServiceEncounters =
+      (isCreated || encounterMode || (Array.isArray(serviceGroup) && !serviceGroup.length)) &&
+      selectedServiceValues.length > 0;
 
     if (encounterMode && !selectedServiceValues.length) {
       showToast("Выберите хотя бы одну услугу");
@@ -1571,20 +1686,12 @@ function openClientModal(clientId = null, options = {}) {
     }
 
     if (shouldSplitIntoServiceEncounters) {
-      const serviceDrafts = getClientServiceItemsByNames(selectedServiceValues).map((service) => {
-        const serviceId = getClientServiceDetailKey(service);
-        const detail = { ...(serviceDetails[serviceId] || {}) };
-        const summary = getClientVisitPaymentSummary([service.name], { [serviceId]: detail }, formData.get("comment"));
-        return {
-          serviceId,
-          serviceName: service.name,
-          detail,
-          clientSex: formSex,
-          amount: Number(detail.unitPrice ?? service.price ?? 0),
-          paymentType: summary.paymentType,
-          comment: summary.comment,
-        };
-      });
+      const serviceDrafts = buildClientServiceDrafts(
+        getClientServiceItemsByNames(selectedServiceValues),
+        serviceDetails,
+        formSex,
+        formData.get("comment"),
+      );
 
       try {
         createdVisits = await window.createVisitsForClientByServices?.(targetClient, serviceDrafts) || [];
@@ -1603,6 +1710,34 @@ function openClientModal(clientId = null, options = {}) {
         { render: false },
       );
       await window.refreshDashboardEncounterRows?.();
+    } else if (serviceGroup?.length) {
+      let savedGroup;
+      try {
+        savedGroup = await saveClientServiceGroup(targetClient, serviceGroup, {
+          selectedServiceValues,
+          serviceDetails,
+          clientSex: formSex,
+          baseComment: formData.get("comment"),
+        });
+      } catch (error) {
+        console.warn("Failed to save the client's service group", error);
+        showToast(window.humanizeApiError?.(error, "Не удалось сохранить услуги") || "Не удалось сохранить услуги");
+        return;
+      }
+      createdVisits = savedGroup.createdVisits;
+      const touchedEncounterIds = [...savedGroup.savedVisits, ...createdVisits]
+        .map((visit) => visit.backendId)
+        .filter(Boolean);
+      await window.loadClientServiceGroup?.(targetClient, initialVisit?.backendId || null);
+      currentVisit = window.getCurrentVisitForClient?.(targetClient.id) || null;
+      if (touchedEncounterIds.length) {
+        await window.loadDashboardDoctorStatuses?.(
+          touchedEncounterIds.map((encounterId) => ({ ...targetClient, encounterId })),
+          { render: false },
+        );
+      }
+      await window.refreshDashboardEncounterRows?.();
+      window.persistDemoState?.();
     } else {
       const shouldCreateOrUpdateVisit = isCreated || selectedServiceValues.length;
       currentVisit = shouldCreateOrUpdateVisit
@@ -1618,7 +1753,7 @@ function openClientModal(clientId = null, options = {}) {
         : window.getCurrentVisitForClient?.(targetClient.id);
     }
 
-    if (!shouldSplitIntoServiceEncounters && currentVisit && currentVisit.status !== "closed") {
+    if (!shouldSplitIntoServiceEncounters && !serviceGroup?.length && currentVisit && currentVisit.status !== "closed") {
       const visitPatch = {
         serviceNames: selectedServiceValues,
         serviceIds: selectedServiceIds,
@@ -1659,15 +1794,8 @@ function openClientModal(clientId = null, options = {}) {
     }
     renderApp();
     if (shouldOpenContract) {
-      if (createdVisits.length > 1) {
-        try {
-          await window.createContractsForVisits?.(targetClient, createdVisits);
-        } catch (error) {
-          showToast(window.humanizeApiError?.(error, "Не удалось сформировать все договоры") || "Не удалось сформировать все договоры");
-        }
-      } else {
-        await window.openDemoDocument?.("contract", { autoOpenFile: true });
-      }
+      // Договор один на все услуги дня: backend сам соберёт их со всех строк журнала.
+      await window.openDemoDocument?.("contract", { autoOpenFile: true });
       return;
     }
     showToast(

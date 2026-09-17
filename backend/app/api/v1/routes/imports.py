@@ -716,6 +716,32 @@ def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[C
     return None, None
 
 
+def import_row_identity_keys(row: dict[str, Any]) -> set[tuple[Any, ...]]:
+    """Признаки, по которым строки файла относятся к одному новому клиенту.
+
+    Те же, что и при поиске в базе: на загрузке первая строка человека заводит
+    клиента, а его следующие строки находят эту карточку и добавляют к ней услуги.
+    """
+
+    keys: set[tuple[Any, ...]] = set()
+    birth_date = row.get("birth_date")
+    if row.get("patient_number"):
+        keys.add(("patient_number", row["patient_number"]))
+    snils = normalize_text(row.get("snils"))
+    if snils and birth_date:
+        keys.add(("snils", snils, birth_date))
+    document_series = normalize_text(row.get("document_series"))
+    document_number = normalize_text(row.get("document_number"))
+    if document_series and document_number:
+        keys.add(("document", document_series, document_number))
+    last_name = normalize_text(row.get("last_name"))
+    first_name = normalize_text(row.get("first_name"))
+    if last_name and first_name and birth_date:
+        middle_name = normalize_text(row.get("middle_name")) or ""
+        keys.add(("full_name", last_name.lower(), first_name.lower(), middle_name.lower(), birth_date))
+    return keys
+
+
 def get_next_patient_number(db: Session, used_numbers: set[int]) -> int:
     patient_numbers = db.execute(select(Client.patient_number).order_by(Client.patient_number.asc())).scalars()
     expected_number = 1
@@ -903,17 +929,25 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
             detail="Для импорта услуг не найден активный медцентр",
         )
     preview_rows: list[ClientImportPreviewRow] = []
+    # Клиента с несколькими услугами завод пишет несколькими строками. Считаем
+    # людей, а не строки: иначе предпросмотр обещает лишних новых клиентов.
+    created_client_keys: set[tuple[Any, ...]] = set()
     created_candidates = 0
-    update_candidates = 0
+    update_client_ids: set[int] = set()
 
-    for row in rows[:20]:
+    for index, row in enumerate(rows):
         existing_client, match_reason = find_existing_client_for_import(db, row)
-        service = resolved_services[int(row["row_number"])]
         status_label = "update" if existing_client is not None else "create"
         if existing_client is not None:
-            update_candidates += 1
+            update_client_ids.add(existing_client.id)
         else:
-            created_candidates += 1
+            row_keys = import_row_identity_keys(row)
+            if created_client_keys.isdisjoint(row_keys):
+                created_candidates += 1
+            created_client_keys.update(row_keys)
+        if index >= 20:
+            continue
+        service = resolved_services[int(row["row_number"])]
         preview_rows.append(
             ClientImportPreviewRow(
                 row_number=row["row_number"],
@@ -932,19 +966,11 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
             )
         )
 
-    if len(rows) > 20:
-        for row in rows[20:]:
-            existing_client, _ = find_existing_client_for_import(db, row)
-            if existing_client is not None:
-                update_candidates += 1
-            else:
-                created_candidates += 1
-
     return ClientImportPreviewResponse(
         file_name=payload.file_name,
         parsed_rows=len(rows),
         created_candidates=created_candidates,
-        update_candidates=update_candidates,
+        update_candidates=len(update_client_ids),
         service_rows=service_rows,
         service_warnings=service_warnings,
         service_warning_rows=service_warning_rows,
@@ -972,8 +998,10 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
             detail="Для импорта услуг не найден активный медцентр",
         )
     used_numbers: set[int] = set()
-    created = 0
-    updated = 0
+    # Следующие строки того же человека находят карточку, заведённую первой его
+    # строкой, — это добавление услуги, а не обновление клиента.
+    created_client_ids: set[int] = set()
+    updated_client_ids: set[int] = set()
     encounters_created = 0
 
     try:
@@ -992,7 +1020,6 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
             if existing_client is None:
                 client = Client(created_by_user_id=actor_user_id, **client_payload)
                 db.add(client)
-                created += 1
             else:
                 client = existing_client
                 for key, value in client_payload.items():
@@ -1001,8 +1028,11 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
                     if value is None:
                         continue
                     setattr(client, key, value)
-                updated += 1
             db.flush()
+            if existing_client is None:
+                created_client_ids.add(client.id)
+            elif client.id not in created_client_ids:
+                updated_client_ids.add(client.id)
 
             service = resolved_services[int(row["row_number"])]
             if service is None:
@@ -1040,6 +1070,8 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
     except Exception:
         db.rollback()
         raise
+    created = len(created_client_ids)
+    updated = len(updated_client_ids)
     write_audit_log(
         db,
         entity_type="import",

@@ -5315,6 +5315,62 @@ def _document_doctor_name_for_context(exams: list[DoctorExam]) -> str:
     return chairman_doctor or ", ".join(doctor_names)
 
 
+def _encounter_service_values(
+    db: Session, encounters: list[Encounter]
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Названия услуг и строки таблицы услуг в порядке обращений."""
+
+    encounter_by_id = {encounter.id: encounter for encounter in encounters}
+    service_items = (
+        db.execute(
+            select(EncounterService, Service.name)
+            .join(Service, EncounterService.service_id == Service.id)
+            .where(EncounterService.encounter_id.in_(list(encounter_by_id)))
+            .order_by(EncounterService.encounter_id.asc(), EncounterService.id.asc())
+        )
+        .all()
+    )
+    service_names = [name for _, name in service_items]
+    service_rows = [
+        {
+            "ordinal": str(index),
+            "service": name,
+            "quantity": str(item.quantity or 1),
+            "date": encounter_by_id[item.encounter_id].encounter_date.strftime("%d.%m.%y"),
+            "unit_price": str(item.unit_price or ""),
+            "line_total": str(item.line_total or ""),
+        }
+        for index, (item, name) in enumerate(service_items, start=1)
+    ]
+    return service_names, service_rows
+
+
+def _contract_encounter_group(db: Session, encounter: Encounter) -> list[Encounter]:
+    """Обращения, услуги которых входят в один договор.
+
+    Каждая услуга клиента заводится отдельным обращением: у неё своя строка
+    журнала, свои врачи и свой бланк. Договор же клиент подписывает один на всё,
+    что оформил за день в этом медцентре, — и при ручном добавлении, и при
+    загрузке списка из Excel. Иначе на десять услуг печатается десять договоров.
+    """
+
+    group = (
+        db.execute(
+            select(Encounter)
+            .where(
+                Encounter.client_id == encounter.client_id,
+                Encounter.center_id == encounter.center_id,
+                Encounter.encounter_date == encounter.encounter_date,
+                Encounter.deleted_at.is_(None),
+            )
+            .order_by(Encounter.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    return group or [encounter]
+
+
 def _load_encounter_document_values(db: Session, client: Client, encounter: Encounter | None) -> dict[str, object]:
     if encounter is None:
         fallback_services = client.legacy_payload_json.get("services", []) if isinstance(client.legacy_payload_json, dict) else []
@@ -5348,27 +5404,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
             "context_overrides": context_overrides,
         }
 
-    service_items = (
-        db.execute(
-            select(EncounterService, Service.name)
-            .join(Service, EncounterService.service_id == Service.id)
-            .where(EncounterService.encounter_id == encounter.id)
-            .order_by(EncounterService.id.asc())
-        )
-        .all()
-    )
-    service_names = [name for _, name in service_items]
-    service_rows = [
-        {
-            "ordinal": str(index),
-            "service": name,
-            "quantity": str(item.quantity or 1),
-            "date": encounter.encounter_date.strftime("%d.%m.%y"),
-            "unit_price": str(item.unit_price or ""),
-            "line_total": str(item.line_total or ""),
-        }
-        for index, (item, name) in enumerate(service_items, start=1)
-    ]
+    service_names, service_rows = _encounter_service_values(db, [encounter])
     if not service_rows:
         fallback_services = client.legacy_payload_json.get("services", []) if isinstance(client.legacy_payload_json, dict) else []
         service_names = [str(item).strip() for item in fallback_services if str(item).strip()]
@@ -5617,6 +5653,16 @@ def generate_document(
     output_path = output_dir / output_file_name
 
     runtime_values = _load_encounter_document_values(db, client, encounter)
+    contract_encounters = (
+        _contract_encounter_group(db, encounter)
+        if encounter is not None and _is_contract_template(template)
+        else []
+    )
+    if len(contract_encounters) > 1:
+        contract_service_names, contract_service_rows = _encounter_service_values(db, contract_encounters)
+        if contract_service_rows:
+            runtime_values["service_names"] = contract_service_names
+            runtime_values["service_rows"] = contract_service_rows
     required_blank_type = (
         None
         if is_side_print
@@ -5781,6 +5827,9 @@ def generate_document(
             )
             context["CertificateNumber"] = sequential_number
         context.update(_chairman_082_context_overrides(template, document_exams, blank_form))
+        if contract_encounters:
+            # Номер один на весь договор, с какой бы строки журнала его ни печатали.
+            context["ContractNumber"] = f"Д-{contract_encounters[0].id}"
         if is_side_print:
             context["ReferenceNumber"] = ""
             context["SeriesNumberCalc"] = ""

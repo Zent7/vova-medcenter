@@ -132,6 +132,64 @@ class ClientExcelImportTests(unittest.TestCase):
         self.assertEqual(encounter_service.service_id, self.service.id)
         self.assertEqual(payment.amount, Decimal("1000.00"))
 
+    def test_client_on_several_rows_is_one_client_with_an_encounter_per_service(self):
+        self.db.add_all(
+            [
+                Service(id=2, code="service-gs", name="ГС", price=Decimal("1800.00"), is_active=True),
+                Service(id=3, code="service-prof", name="Профосмотр", price=Decimal("3500.00"), is_active=True),
+            ]
+        )
+        self.db.commit()
+        rows = [
+            self._row(row_number=2, service="Справка в бассейн"),
+            self._row(row_number=3, service="ГС"),
+            self._row(row_number=4, service="Профосмотр"),
+            self._row(row_number=5, last_name="Петров", snils="555-666-777 88", service="ГС"),
+        ]
+        with patch(
+            "app.api.v1.routes.imports.read_client_excel_rows",
+            return_value=rows,
+        ):
+            preview = preview_client_excel_import(self.request, db=self.db)
+            result = commit_client_excel_import(self.request, db=self.db)
+
+        self.assertEqual(preview.created_candidates, 2)
+        self.assertEqual(preview.update_candidates, 0)
+        self.assertEqual(preview.service_rows, 4)
+        self.assertEqual(result.created, 2)
+        self.assertEqual(result.updated, 0)
+        self.assertEqual(result.encounters_created, 4)
+        ivanov = self.db.execute(select(Client).where(Client.last_name == "Иванов")).scalar_one()
+        encounters = self.db.execute(
+            select(Encounter).where(Encounter.client_id == ivanov.id).order_by(Encounter.id)
+        ).scalars().all()
+        # Своя строка журнала на каждую услугу, все в один день и один медцентр —
+        # карточка и договор соберут их вместе.
+        self.assertEqual(len(encounters), 3)
+        self.assertEqual({encounter.encounter_date for encounter in encounters}, {date(2026, 7, 29)})
+        self.assertEqual({encounter.center_id for encounter in encounters}, {1})
+
+    def test_repeated_rows_of_an_existing_client_count_one_update(self):
+        with patch(
+            "app.api.v1.routes.imports.read_client_excel_rows",
+            return_value=[self._row()],
+        ):
+            commit_client_excel_import(self.request, db=self.db)
+
+        rows = [self._row(row_number=number) for number in (2, 3)]
+        with patch(
+            "app.api.v1.routes.imports.read_client_excel_rows",
+            return_value=rows,
+        ):
+            preview = preview_client_excel_import(self.request, db=self.db)
+            result = commit_client_excel_import(self.request, db=self.db)
+
+        self.assertEqual(preview.created_candidates, 0)
+        self.assertEqual(preview.update_candidates, 1)
+        self.assertEqual(result.created, 0)
+        self.assertEqual(result.updated, 1)
+        self.assertEqual(result.encounters_created, 2)
+
     def test_unknown_service_warns_but_still_imports_client(self):
         row = self._row(service="Несуществующая услуга")
         with patch(
