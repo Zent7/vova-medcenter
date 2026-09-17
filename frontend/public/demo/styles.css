@@ -1637,6 +1637,25 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   transform: rotate(45deg) translate(-1px, -1px);
 }
 
+/* Выбор врачей в карточке услуги: невыбранный врач — пустой квадрат, выбранный — залитый с галочкой. */
+.service-doctor-chip:not(.client-service-chip--active) .client-service-chip__check {
+  border-color: var(--line);
+  background: #ffffff;
+}
+
+.service-doctor-chip:not(.client-service-chip--active) .client-service-chip__check::before {
+  display: none;
+}
+
+.service-doctor-chip:hover {
+  border-color: rgba(12, 125, 123, 0.35);
+}
+
+.service-doctor-chip:focus-within {
+  outline: 2px solid rgba(12, 125, 123, 0.45);
+  outline-offset: 1px;
+}
+
 .client-payment-block {
   display: grid;
   gap: 7px;

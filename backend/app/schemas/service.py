@@ -18,6 +18,16 @@ class ServiceRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ServiceCreate(BaseModel):
+    category_id: int | None = None
+    name: str
+    price: Decimal = Decimal("0")
+    is_active: bool = True
+    requires_sequence: bool = False
+    recall_after_days: int | None = None
+    doctor_role_ids: list[int] = []
+
+
 class ServiceUpdate(BaseModel):
     category_id: int | None = None
     name: str | None = None

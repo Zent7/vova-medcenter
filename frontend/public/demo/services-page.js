@@ -197,21 +197,25 @@ function openServiceModal(serviceId = null) {
         </label>
 
         <div class="client-services-block">
-          <div class="client-services-block__title">Врачи, входящие в услугу</div>
+          <div class="client-services-block__title">
+            Врачи, входящие в услугу
+            <span class="muted" id="serviceDoctorCount">· выбрано: ${selectedDoctorIds.size}</span>
+          </div>
           <div class="client-services-list">
             ${doctorRoles
               .slice()
               .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
               .map(
                 (role) => `
-                  <label class="client-service-chip">
+                  <label class="client-service-chip service-doctor-chip ${selectedDoctorIds.has(String(role.id)) ? "client-service-chip--active" : ""}">
                     <input
                       type="checkbox"
                       name="doctorRoleIds"
                       value="${role.id}"
                       ${selectedDoctorIds.has(String(role.id)) ? "checked" : ""}
                     />
-                    <span>${escapeHtml(role.name)}</span>
+                    <span class="client-service-chip__text">${escapeHtml(role.name)}</span>
+                    <span class="client-service-chip__check" aria-hidden="true"></span>
                   </label>
                 `,
               )
@@ -240,6 +244,14 @@ function openServiceModal(serviceId = null) {
 
   cancel?.addEventListener("click", () => {
     actionModal.classList.add("hidden");
+  });
+
+  form?.addEventListener("change", (event) => {
+    const checkbox = event.target;
+    if (checkbox?.name !== "doctorRoleIds") return;
+    checkbox.closest(".client-service-chip")?.classList.toggle("client-service-chip--active", checkbox.checked);
+    const counter = document.getElementById("serviceDoctorCount");
+    if (counter) counter.textContent = `· выбрано: ${form.querySelectorAll('input[name="doctorRoleIds"]:checked').length}`;
   });
 
   form?.addEventListener("submit", async (event) => {
@@ -282,6 +294,26 @@ function openServiceModal(serviceId = null) {
         if (serverIndex >= 0) window.data.serverServices[serverIndex] = targetService;
       } catch (error) {
         showToast(window.humanizeApiError ? window.humanizeApiError(error, "Не удалось сохранить услугу") : "Не удалось сохранить услугу");
+        return;
+      }
+    } else if (!editingService && window.apiRequest) {
+      try {
+        const created = await window.apiRequest("/services", {
+          method: "POST",
+          body: JSON.stringify({
+            category_id: targetService.groupId,
+            name: targetService.name,
+            price: targetService.price,
+            is_active: targetService.isActive,
+            recall_after_days: targetService.recallAfterDays,
+            doctor_role_ids: targetService.doctorRoleIds,
+          }),
+        });
+        const createdService = window.mapApiService ? window.mapApiService(created) : { ...targetService, id: created.id, backendId: created.id };
+        structuredServices.push(createdService);
+        if (Array.isArray(window.data?.serverServices)) window.data.serverServices.push(createdService);
+      } catch (error) {
+        showToast(window.humanizeApiError ? window.humanizeApiError(error, "Не удалось добавить услугу") : "Не удалось добавить услугу");
         return;
       }
     } else if (!editingService) {

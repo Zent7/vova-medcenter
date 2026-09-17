@@ -1,10 +1,12 @@
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.service import Service, ServiceDoctorRole
-from app.schemas.service import ServiceRead, ServiceUpdate
+from app.schemas.service import ServiceCreate, ServiceRead, ServiceUpdate
 
 router = APIRouter()
 
@@ -71,6 +73,30 @@ def list_services(db: Session = Depends(get_db)) -> list[ServiceRead]:
         payload = ServiceRead.model_validate(item)
         payload.doctor_role_ids = roles_by_service.get(item.id, [])
         result.append(payload)
+    return result
+
+
+@router.post("", response_model=ServiceRead, status_code=status.HTTP_201_CREATED)
+def create_service(payload: ServiceCreate, db: Session = Depends(get_db)) -> ServiceRead:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Укажите наименование услуги")
+
+    data = payload.model_dump(exclude={"doctor_role_ids"})
+    data["name"] = name
+    service = Service(code=f"custom-{uuid4().hex[:16]}", **data)
+    db.add(service)
+    db.flush()
+
+    doctor_role_ids = list(dict.fromkeys(payload.doctor_role_ids))
+    for doctor_role_id in doctor_role_ids:
+        db.add(ServiceDoctorRole(service_id=service.id, doctor_role_id=doctor_role_id))
+
+    db.commit()
+    db.refresh(service)
+
+    result = ServiceRead.model_validate(service)
+    result.doctor_role_ids = doctor_role_ids
     return result
 
 
