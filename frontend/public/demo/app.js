@@ -13722,6 +13722,7 @@ window.mapApiService = mapApiService;
 window.mapApiClient = mapApiClient;
 window.upsertClientInMemory = upsertClientInMemory;
 window.showClientInDashboardResults = showClientInDashboardResults;
+window.resetDashboardClientSelection = resetDashboardClientSelection;
 window.refreshDashboardEncounterRows = () => loadClientsFromBackend(appState.clientSearch);
 window.parseRuDateToIso = parseRuDateToIso;
 window.loadDashboardDoctorStatuses = loadDashboardDoctorStatuses;

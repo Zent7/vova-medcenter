@@ -1788,16 +1788,18 @@ function openClientModal(clientId = null, options = {}) {
       window.persistDemoState?.();
     }
 
-    actionModal.classList.add("hidden");
-    if (shouldOpenContract) {
-      appState.page = "dashboard";
-    }
-    renderApp();
+    actionModal.classList.add("hidden");
+    // После сохранения оператор возвращается на чистую Главную, как по кнопке меню.
+    appState.page = "dashboard";
     if (shouldOpenContract) {
+      renderApp();
       // Договор один на все услуги дня: backend сам соберёт их со всех строк журнала.
+      // Клиента договор берёт из выделения, поэтому Главную очищаем только после него.
       await window.openDemoDocument?.("contract", { autoOpenFile: true });
+      window.resetDashboardClientSelection?.();
       return;
     }
+    window.resetDashboardClientSelection?.();
     showToast(
       createdVisits.length > 1
         ? `Сохранено обращений: ${createdVisits.length}`
