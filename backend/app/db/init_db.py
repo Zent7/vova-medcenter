@@ -10,6 +10,7 @@ from app.models.blank_form import (
 )
 from app.models import *  # noqa: F401,F403
 from app.services.seed import seed_reference_data
+from app.services.template_catalog import retire_outdated_template_overrides
 from sqlalchemy import inspect, select, text
 
 
@@ -488,5 +489,7 @@ def init_db() -> None:
     ensure_document_template_blank_columns()
     seed_blank_types()
     seed_sport_conclusion_phrases()
+    # До синхронизации каталога: она заново вычислит путь к файлу бланка.
+    retire_outdated_template_overrides()
     with SessionLocal() as db:
         seed_reference_data(db)

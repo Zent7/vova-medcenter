@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 from pathlib import Path
 import re
+import zipfile
 
 from app.core.config import settings
 from app.services.new_xls_templates import LEGACY_XLS_TEMPLATE_BY_FILE, NEW_XLS_TEMPLATE_BY_FILE
@@ -127,6 +129,43 @@ def template_has_override(file_name: str) -> bool:
 def resolve_catalog_template_path(file_name: str) -> Path:
     override_path = get_template_override_path(file_name)
     return override_path if override_path.is_file() else get_templates_root() / file_name
+
+
+# Клиентская версия шаблона лежит в хранилище и перекрывает встроенную, а
+# деплой хранилище не трогает: правка бланка в коде до печати не доходит, пока
+# кто-нибудь не нажмёт «Вернуть исходный». Для бланков из этого списка снимаем
+# устаревшую версию сами — но только пока в ней нет метки, ради которой бланк
+# и переделывали, чтобы не тронуть версию, уже собранную по новой форме.
+OUTDATED_TEMPLATE_OVERRIDE_TOKENS = {
+    "095У_справка_шаблон.docx": "[Certificate095EducationInstitution]",
+}
+
+
+def docx_text_contains(path: Path, token: str) -> bool:
+    """True, если в тексте .docx есть метка — даже разрезанная Word на куски."""
+    with zipfile.ZipFile(path) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+    return token in re.sub(r"<[^>]+>", "", document_xml)
+
+
+def retire_outdated_template_overrides() -> None:
+    """Отложить клиентские версии бланков, в которых нет новых меток полей."""
+    for file_name, required_token in OUTDATED_TEMPLATE_OVERRIDE_TOKENS.items():
+        try:
+            override_path = get_template_override_path(file_name)
+        except ValueError:
+            continue
+        if not override_path.is_file() or not (get_templates_root() / file_name).is_file():
+            continue
+        try:
+            if docx_text_contains(override_path, required_token):
+                continue
+            # Файл не удаляем: заказчик правил его сам, и по имени с суффиксом
+            # приложение его уже не подхватит, а вернуть версию можно вручную.
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            override_path.rename(override_path.with_name(f"{override_path.name}.retired-{stamp}"))
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile, UnicodeDecodeError):
+            continue
 
 
 def template_supports_layout_editing(file_name: str) -> bool:

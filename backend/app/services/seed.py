@@ -274,6 +274,12 @@ SERVICE_RECALL_AFTER_DAYS = {
     44: 365,
 }
 
+# Прейскурант приехал из заказчикова файла «для программы», и seed остаётся его
+# источником правды: цену услуги он переписывает при каждом старте. У ФЛГ такой
+# цены нет — заказчик проставляет её сам на странице услуг, поэтому её ставим
+# только при заведении услуги, иначе перезапуск бэкенда обнулял бы введённую.
+SERVICE_PRICE_SET_ON_CREATE_ONLY = {45}
+
 DEPRECATED_SERVICE_LEGACY_IDS = {9, 12, 36, 39, 41}
 SERVICE_CATALOG = [item for item in SERVICE_CATALOG if item[0] not in DEPRECATED_SERVICE_LEGACY_IDS]
 SERVICE_DOCTOR_ROLE_IDS = {
@@ -730,6 +736,7 @@ def _ensure_service_catalog(db: Session) -> None:
         if service is None:
             service = db.execute(select(Service).where(Service.legacy_source_id == legacy_id)).scalar_one_or_none()
 
+        is_new_service = service is None
         if service is None:
             service = Service(code=code)
             db.add(service)
@@ -737,7 +744,8 @@ def _ensure_service_catalog(db: Session) -> None:
         service.legacy_source_id = legacy_id
         service.category_id = category_by_group_id[group_id]
         service.name = name
-        service.price = Decimal(price)
+        if is_new_service or legacy_id not in SERVICE_PRICE_SET_ON_CREATE_ONLY:
+            service.price = Decimal(price)
         service.recall_after_days = SERVICE_RECALL_AFTER_DAYS.get(legacy_id)
         service.is_active = True
         db.flush()
