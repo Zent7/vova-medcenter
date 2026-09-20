@@ -1403,6 +1403,31 @@
                 </div>
               </div>
 
+              ${chairmanType !== "certificate095" ? "" : `
+              <div class="chairman-row chairman-row--education">
+                <label class="chairman-row-label">Учебное заведение:</label>
+                <input class="doctor-classic-input" type="text" name="educationInstitution" value="${escapeHtml(fields.educationInstitution ?? "")}" />
+              </div>
+
+              <div class="chairman-row chairman-row--illness-diagnosis">
+                <label class="chairman-row-label">Диагноз заболевания:</label>
+                <textarea class="doctor-classic-textarea chairman-textarea chairman-textarea--small" name="illnessDiagnosis">${escapeHtml(fields.illnessDiagnosis ?? "")}</textarea>
+              </div>
+
+              <div class="chairman-row chairman-row--sick-leave">
+                <label class="chairman-row-label">Болел по:</label>
+                <input class="doctor-classic-input" type="text" name="sickLeaveEndDate" data-date-mask value="${escapeHtml(fields.sickLeaveEndDate ?? "")}" />
+              </div>
+
+              <div class="chairman-row chairman-row--sick-leave-extension">
+                <label class="chairman-row-label">Продлено с — по:</label>
+                <div class="chairman-sick-leave-extension">
+                  <input class="doctor-classic-input" type="text" name="sickLeaveExtensionStartDate" data-date-mask value="${escapeHtml(fields.sickLeaveExtensionStartDate ?? "")}" />
+                  <input class="doctor-classic-input" type="text" name="sickLeaveExtensionEndDate" data-date-mask value="${escapeHtml(fields.sickLeaveExtensionEndDate ?? "")}" />
+                </div>
+              </div>
+              `}
+
               <div class="chairman-row chairman-row--diagnosis">
                 <label class="chairman-row-label">Диагноз:</label>
                 <textarea class="doctor-classic-textarea chairman-textarea chairman-textarea--diagnosis" name="diagnosis">${escapeHtml(fields.diagnosis ?? "")}</textarea>

@@ -3397,6 +3397,13 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   grid-template-columns: repeat(2, minmax(0, max-content));
 }
 
+/* Две даты продления справки 095/у стоят в одной строке: «с» и «по». */
+.chairman-sick-leave-extension {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .doctor-classic-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 210px;

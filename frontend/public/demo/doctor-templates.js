@@ -838,6 +838,13 @@
     { key: "vaccinationRefusal", label: "Подписан отказ от прививок", type: "checkbox", defaultValue: false },
     { key: "needsKekReferral", label: "Нуждается в направлении на КЭК", type: "checkbox", defaultValue: false },
 
+    // Строки справки 095/у: их председатель заполняет от руки на бланке.
+    { key: "educationInstitution", label: "Наименование учебного заведения", type: "text", defaultValue: "" },
+    { key: "illnessDiagnosis", label: "Диагноз заболевания", type: "textarea", defaultValue: "" },
+    { key: "sickLeaveEndDate", label: "Дата окончания заболевания", type: "text", defaultValue: "" },
+    { key: "sickLeaveExtensionStartDate", label: "Продление: с", type: "text", defaultValue: "" },
+    { key: "sickLeaveExtensionEndDate", label: "Продление: по", type: "text", defaultValue: "" },
+
     { key: "examDate", label: "Дата экзамена", type: "text", defaultValue: "" },
     { key: "logotypeNumber", label: "№ Логотипа", type: "text", defaultValue: "" },
     { key: "commissionNumber", label: "№ Атт.комиссии", type: "text", defaultValue: "" },

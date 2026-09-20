@@ -202,17 +202,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 30,
-      doctorRoleIds: [4, 2, 1, 13]
-    },
-    {
-      id: 9,
-      name: "Справка 002 ЧОД (для охраны)",
-      groupId: 7,
-      price: 3500,
-      notes: "",
-      isActive: true,
-      sortOrder: 40,
-      doctorRoleIds: [1, 7]
+      doctorRoleIds: [4, 2, 3, 1, 13]
     },
     {
       id: 3,
@@ -242,7 +232,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 70,
-      doctorRoleIds: [4, 2, 1, 13]
+      doctorRoleIds: [4, 2, 3, 1, 13]
     },
     {
       id: 4,
@@ -253,16 +243,6 @@ window.servicesData = {
       isActive: true,
       sortOrder: 80,
       doctorRoleIds: [1]
-    },
-    {
-      id: 12,
-      name: "Справка формы 086у",
-      groupId: 7,
-      price: 2200,
-      notes: "",
-      isActive: true,
-      sortOrder: 90,
-      doctorRoleIds: [6, 1, 10, 4, 7, 5, 13]
     },
     {
       id: 30,
@@ -316,7 +296,7 @@ window.servicesData = {
     },
     {
       id: 43,
-      name: "СЭМТ-196 без ФЛГ",
+      name: "Справка по форме СЭМД-196 без ФЛГ",
       groupId: 7,
       price: 2500,
       notes: "",
@@ -326,13 +306,23 @@ window.servicesData = {
     },
     {
       id: 44,
-      name: "СЭМТ-196 с ФЛГ",
+      name: "Справка по форме СЭМД-196 с ФЛГ",
       groupId: 7,
       price: 3500,
       notes: "ФЛГ — флюорография",
       isActive: true,
       sortOrder: 170,
       doctorRoleIds: [1, 13]
+    },
+    {
+      id: 45,
+      name: "ФЛЮОРОГРАФИЯ",
+      groupId: 7,
+      price: 0,
+      notes: "ФЛГ",
+      isActive: true,
+      sortOrder: 180,
+      doctorRoleIds: []
     },
     {
       id: 13,

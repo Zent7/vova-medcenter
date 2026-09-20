@@ -5301,6 +5301,20 @@ def _certificate_086_doctor_context_overrides(client: Client, exams: list[Doctor
     }
 
 
+def _certificate_095_context_overrides(exams: list[DoctorExam]) -> dict[str, str]:
+    """Строки справки 095/у, которые председатель заполняет в своей карточке."""
+
+    chairman = _exam_map(exams).get("chairman")
+    fields = dict(chairman.fields_json or {}) if chairman is not None else {}
+    return {
+        "Certificate095EducationInstitution": _first_field_value(fields, "educationInstitution"),
+        "Certificate095Diagnosis": _first_field_value(fields, "illnessDiagnosis"),
+        "Certificate095SickLeaveEnd": _first_field_value(fields, "sickLeaveEndDate"),
+        "Certificate095ExtensionStart": _first_field_value(fields, "sickLeaveExtensionStartDate"),
+        "Certificate095ExtensionEnd": _first_field_value(fields, "sickLeaveExtensionEndDate"),
+    }
+
+
 def _document_doctor_name_for_context(exams: list[DoctorExam]) -> str:
     doctor_names: list[str] = []
     chairman_doctor = ""
@@ -5394,6 +5408,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         context_overrides = _medical_record_context_overrides(medical_record)
         context_overrides.update(_prof_29n_doctor_context_overrides(client, []))
         context_overrides.update(_certificate_086_doctor_context_overrides(client, []))
+        context_overrides.update(_certificate_095_context_overrides([]))
         return {
             "service_names": service_names,
             "service_rows": service_rows,
@@ -5498,6 +5513,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
     )
     context_overrides.update(_prof_29n_doctor_context_overrides(client, exams))
     context_overrides.update(_certificate_086_doctor_context_overrides(client, exams))
+    context_overrides.update(_certificate_095_context_overrides(exams))
 
     return {
         "service_names": service_names,

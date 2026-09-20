@@ -309,21 +309,15 @@ function initializeFallbackServiceCatalog() {
     });
   }
 
-  data.serverServices = fallback.services.filter((service) => !isHiddenService(service)).map((service) => {
-    const isGuardFallback = isGuardCertificateServiceName(service?.name);
-    const fallbackId = isGuardFallback ? "guard-certificate-fallback" : service.id;
-    return {
-      ...service,
-      id: fallbackId,
-      backendId: isGuardFallback ? null : service.backendId || service.id,
-      legacySourceId: service.legacySourceId || service.legacy_source_id || (isGuardFallback ? 9 : service.id),
-      recallAfterDays: service.recallAfterDays || null,
-      doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
-    };
-  });
+  data.serverServices = fallback.services.filter((service) => !isHiddenService(service)).map((service) => ({
+    ...service,
+    backendId: service.backendId || service.id,
+    legacySourceId: service.legacySourceId || service.legacy_source_id || service.id,
+    recallAfterDays: service.recallAfterDays || null,
+    doctorRoleIds: normalizeDoctorRoleIds(service.doctorRoleIds),
+  }));
   structuredServices = data.serverServices.slice();
   data.serverServicesLoaded = true;
-  ensureGuardCertificateService();
   refreshServiceCatalog();
 }
 
@@ -340,8 +334,6 @@ function decodeEarlyLatin1Utf8Mojibake(value) {
     return str;
   }
 }
-
-const GUARD_CERTIFICATE_DISPLAY_NAME = "Справка 002 ЧОД (для охраны)";
 
 function normalizeGuardCertificateServiceName(name) {
   const raw = String(name || "").trim();
@@ -382,67 +374,10 @@ function getClientAdmissionServiceNames(client) {
   );
 }
 
-function getGuardCertificateFallbackService() {
-  const fallbackService = window.servicesData?.services?.find((service) => isGuardCertificateServiceName(service?.name));
-  const fallbackId = "guard-certificate-fallback";
-  const certificateGroupId = serviceGroups.find((group) => String(group?.name || "").toLowerCase().includes("справ"))?.id;
-  const base = fallbackService || {
-    id: fallbackId,
-    name: GUARD_CERTIFICATE_DISPLAY_NAME,
-    groupId: certificateGroupId || 7,
-    price: 3500,
-    notes: "",
-    isActive: true,
-    sortOrder: 40,
-    doctorRoleIds: [1, 7],
-  };
-  const groupId = certificateGroupId || base.groupId || 7;
-  return {
-    ...base,
-    id: fallbackId,
-    backendId: base.backendId || null,
-    legacySourceId: base.legacySourceId || base.legacy_source_id || 9,
-    groupId,
-    price: Number(base.price || 3500),
-    isActive: base.isActive !== false,
-    recallAfterDays: base.recallAfterDays || null,
-    sortOrder: base.sortOrder || 40,
-    doctorRoleIds: Array.isArray(base.doctorRoleIds) ? base.doctorRoleIds : [1, 7],
-  };
-}
-
-function ensureServiceInList(list, service) {
-  if (!Array.isArray(list)) return false;
-  const hasService = list.some((item) => isGuardCertificateServiceName(item?.name));
-  if (hasService) return false;
-
-  const nextService = { ...service };
-  const insertBeforeIndex = list.findIndex((item) =>
-    String(item?.groupId) === String(nextService.groupId) &&
-    String(item?.name || "").toLowerCase().includes("бассейн")
-  );
-  if (insertBeforeIndex >= 0) {
-    list.splice(insertBeforeIndex, 0, nextService);
-  } else {
-    list.push(nextService);
-  }
-  return true;
-}
-
-function ensureGuardCertificateService() {
-  const service = getGuardCertificateFallbackService();
-  const updatedServerServices = ensureServiceInList(data.serverServices, service);
-  const updatedStructuredServices = ensureServiceInList(structuredServices, service);
-  if (updatedServerServices || updatedStructuredServices) {
-    refreshServiceCatalog();
-  }
-}
-
 loadColumnWidths();
 initializeFallbackServiceCatalog();
 applyPersistedDemoState();
 startAuthIdleWatch();
-ensureGuardCertificateService();
 
 const pageTitle = document.getElementById("page-title");
 const navRoot = document.getElementById("nav");
@@ -635,10 +570,10 @@ const CHAIRMAN_FORM_CONFIGS = {
   },
   semt196: {
     type: "semt196",
-    label: "Председатель: справка СЭМТ-196",
+    label: "Председатель: справка СЭМД-196",
     templateType: "semt196",
     printMode: "document",
-    note: "Подтягивается шаблон справки СЭМТ-196.",
+    note: "Подтягивается шаблон справки СЭМД-196.",
   },
   gsu: {
     type: "gsu",
@@ -1780,7 +1715,13 @@ function getChairmanFormTypeForVisit(visit) {
   if (serviceText.includes("082") || serviceText.includes("границ")) return "certificate082";
   if (serviceText.includes("086")) return "certificate086";
   if (serviceText.includes("095")) return "certificate095";
-  if (serviceText.includes("сэмт") || serviceText.includes("semt") || serviceText.includes("196")) return "semt196";
+  if (
+    serviceText.includes("сэмд") ||
+    serviceText.includes("сэнд") ||
+    serviceText.includes("сэмт") ||
+    serviceText.includes("semt") ||
+    serviceText.includes("196")
+  ) return "semt196";
   if (
     services.some((service) => Number(service?.legacySourceId ?? service?.legacy_source_id ?? service?.id) === 2) ||
     serviceText.includes("001") ||
@@ -3205,7 +3146,6 @@ async function loadServicesFromBackend() {
     data.serverServices = Array.isArray(services) ? services.map(mapApiService).filter((service) => !isHiddenService(service)) : [];
     structuredServices = data.serverServices.slice();
     data.serverServicesLoaded = true;
-    ensureGuardCertificateService();
     refreshServiceCatalog();
     renderApp();
   } catch (error) {
@@ -9247,7 +9187,13 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "082") return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
   if (normalizedType === "086") return find086Template();
   if (normalizedType === "095") return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
-  if (normalizedType === "semt196") return findDocxSafely(["сэмт196_шаблон", "сэмт-196_шаблон"], ["сэмт", "196"], []);
+  if (normalizedType === "semt196") {
+    return findDocxSafely(
+      ["сэмд196_шаблон", "сэмд-196_шаблон", "сэмт196_шаблон", "сэмт-196_шаблон"],
+      ["сэмд", "сэмт", "196"],
+      [],
+    );
+  }
   if (normalizedType === "gsu") return findNewXls(["гс новый формат"]);
   if (normalizedType === "gostaina") return findNewXls(["гт"]);
   if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);
@@ -9272,7 +9218,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     );
   }
   if (normalizedType === "chod" || normalizedType === "guard") {
-    return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
+    return findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   }
   if (normalizedType === "prof_ambulatory") {
     return findProfAmbulatoryTemplate() || findDocxSafely(
@@ -9302,7 +9248,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (serviceText.includes("гостайн") || serviceText.includes("гос.тайн")) return findNewXls(["гт"]);
   if (serviceText.includes("342") || serviceText.includes("псих. освид") || serviceText.includes("псих освид")) return findXls(["справка_342н_псих_освид", "342", "псих"]);
   if (serviceText.includes("гсу") || serviceText.includes("госслуж")) return findNewXls(["гс новый формат"]);
-  if (serviceText.includes("охран") || serviceText.includes("чод")) return findDocxSafely(["охрана_шаблон"], ["охрана"], []) || findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
+  if (serviceText.includes("охран") || serviceText.includes("чод")) return findChodXlsTemplate() || findTemplateSafely(xmlTemplates, ["чод_новый", "чод"], ["чод"], []);
   if (serviceText.includes("трактор")) return findNewXls(["трактор лиц ст"]) || null;
   if (serviceText.includes("спорт")) return findNewXls(["спорт"]);
   if (serviceText.includes("экг")) return findStandaloneEkgTemplate();
@@ -9388,7 +9334,7 @@ const CHAIRMAN_CERTIFICATE_PRINT_SERIES = new Map([
   ["070", "070у"],
   ["082", "082у"],
   ["095", "095у"],
-  ["semt196", "СЭМТ-196"],
+  ["semt196", "СЭНД"],
 ]);
 
 const CHAIRMAN_CERTIFICATE_PRINT_GROUPS = new Map([
@@ -9400,9 +9346,9 @@ const CHAIRMAN_CERTIFICATE_PRINT_GROUPS = new Map([
   ["certificate072", { currentType: "072", items: [["072", "072 у СКК"], ["070", "070у"]] }],
   ["certificate070", { currentType: "070", items: [["072", "072 у СКК"], ["070", "070у"]] }],
   ["certificate082", { currentType: "082", items: [["082", "Справка 082у"]] }],
-  ["certificate095", { currentType: "095", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
-  ["certificate086", { currentType: "086", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
-  ["semt196", { currentType: "semt196", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМТ-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+  ["certificate095", { currentType: "095", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМД-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+  ["certificate086", { currentType: "086", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМД-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
+  ["semt196", { currentType: "semt196", items: [["095", "Справка 095у"], ["086", "Справка 086у"], ["semt196", "Справка СЭМД-196"], ["prof_ambulatory", "Амб. карта 25У"]] }],
 ]);
 
 function getChairmanCertificatePrintSeries(type, client = null) {
@@ -9414,7 +9360,7 @@ function getChairmanBlankSeriesForPrintKind(printKind) {
   return CHAIRMAN_PRINT_BLANK_SERIES.get(String(printKind || "").toLowerCase()) || "";
 }
 
-const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "086У", "095У", "СЭМТ-196"]);
+const CHAIRMAN_AUTO_CREATE_BLANK_SERIES = new Set(["29Н", "БАСС", "СПОРТ", "ГТО", "ГТ", "ГС", "072У", "070У", "082У", "086У", "095У", "СЭНД"]);
 
 // Справка ЛМК печатается на чистом листе А4: номерной бланк ей не нужен,
 // порядковый номер подставляет бэкенд при генерации документа.
@@ -9960,10 +9906,15 @@ const SERVICE_SERIES_OVERRIDES = new Map([
   ["капельница", "КАПЕЛЬНИЦА"],
   ["лмк справка", "ЛМК"],
   ["морская медицинская комиссия", "МОРСКАЯ"],
-  ["сэмт-196", "СЭМТ-196"],
-  ["сэмт 196", "СЭМТ-196"],
-  ["сэмт-196 без флг", "СЭМТ-196"],
-  ["сэмт-196 с флг", "СЭМТ-196"],
+  ["справка по форме сэмд-196", "СЭНД"],
+  ["справка по форме сэмд-196 без флг", "СЭНД"],
+  ["справка по форме сэмд-196 с флг", "СЭНД"],
+  ["сэмд-196", "СЭНД"],
+  ["сэмт-196", "СЭНД"],
+  ["сэмт 196", "СЭНД"],
+  ["сэмт-196 без флг", "СЭНД"],
+  ["сэмт-196 с флг", "СЭНД"],
+  ["флюорография", "ФЛГ"],
   ["узи брюшной полости", "УЗИ ОБП"],
   ["узи молочных желез", "УЗИ МЖ"],
   ["узи предстательной железы", "УЗИ ПЖ"],
@@ -9978,10 +9929,8 @@ const SERVICE_ABBREVIATION_BY_LEGACY_ID = new Map([
   [5, "спорт"],
   [7, "071у"],
   [8, "ВУ (водительская)"],
-  [9, "002 (чод)"],
   [10, "082у"],
   [11, "ГТ"],
-  [12, "086у"],
   [16, "Проф"],
   [18, "ЛМК-Н"],
   [19, "ЛМК-ПР"],
@@ -9993,8 +9942,9 @@ const SERVICE_ABBREVIATION_BY_LEGACY_ID = new Map([
   [38, "Морская"],
   [40, "342н псих осв"],
   [42, "ЛМК справка"],
-  [43, "СЭМТ-196"],
-  [44, "СЭМТ-196"],
+  [43, "СЭНД"],
+  [44, "СЭНД"],
+  [45, "ФЛГ"],
 ]);
 
 function getStoredDriverPrintSeries() {

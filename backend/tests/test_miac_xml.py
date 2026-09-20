@@ -194,7 +194,6 @@ class MiacXmlTests(unittest.TestCase):
         self.assertTrue(template_is_active_by_default("ГИМС_шаблон_для_загрузки_из_файла.xml"))
         self.assertFalse(template_is_active_by_default("Водительская_шаблон.xml"))
         self.assertFalse(template_is_active_by_default("Чод.xml"))
-        self.assertTrue(template_is_active_by_default("Охрана_шаблон.docx"))
 
 
 class MiacBlankReuseTests(unittest.TestCase):
