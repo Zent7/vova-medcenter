@@ -10034,15 +10034,6 @@ function isNumberedCertificatePrintType(type) {
   return new Set(["086", "095"]).has(String(type || "").toLowerCase());
 }
 
-// Справка 086у печатается со сквозной автонумерацией: типографские бланки
-// для неё не заводятся. У 095у номер по-прежнему берётся из партии,
-// заведённой в разделе «Бланки».
-const PREENTERED_CERTIFICATE_PRINT_TYPES = new Set(["095"]);
-
-function certificateRequiresPreenteredBlank(type) {
-  return PREENTERED_CERTIFICATE_PRINT_TYPES.has(String(type || "").toLowerCase());
-}
-
 function isNumberedCertificatePrintSeries(series) {
   return isNumberedCertificatePrintType(getDriverPrintCertificateType(series));
 }
@@ -10888,13 +10879,12 @@ async function openDriverPrintFlow(options = {}) {
           return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         };
         const shouldAutoCreateImmediately =
-          !certificateRequiresPreenteredBlank(flowState.selectedCertificateType) &&
           !isPreenteredBlankSeries(requestedSeries) &&
           !canAutoCreateChairmanBlankSeries(requestedSeries);
         try {
           flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
         } catch (error) {
-          if (certificateRequiresPreenteredBlank(flowState.selectedCertificateType) || !canAutoCreateChairmanBlankSeries(requestedSeries)) {
+          if (!canAutoCreateChairmanBlankSeries(requestedSeries)) {
             throw error;
           }
           flowState.currentBlank = await fetchNextBlank(true);
@@ -10964,9 +10954,7 @@ async function openDriverPrintFlow(options = {}) {
           flowState.seriesOptions,
         );
         const requestedSeries = lookupSeries || flowState.selectedSeries;
-        const autoCreate =
-          !certificateRequiresPreenteredBlank(flowState.selectedCertificateType) &&
-          !isPreenteredBlankSeries(requestedSeries);
+        const autoCreate = !isPreenteredBlankSeries(requestedSeries);
 
         if (currentBlank.status === "free") {
           await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/spoil`, {
@@ -13144,14 +13132,13 @@ function bindContentEvents() {
           });
           let blank = null;
           const shouldAutoCreateImmediately =
-            !certificateRequiresPreenteredBlank(certificateType) &&
             !isPreenteredBlankSeries(normalizedSeries) &&
             !canAutoCreateChairmanBlankSeries(lookupSeries);
           try {
             if (shouldAutoCreateImmediately) query.set("auto_create", "true");
             blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
           } catch (error) {
-            if (certificateRequiresPreenteredBlank(certificateType) || !canAutoCreateChairmanBlankSeries(lookupSeries)) {
+            if (!canAutoCreateChairmanBlankSeries(lookupSeries)) {
               throw error;
             }
             query.set("auto_create", "true");
@@ -13350,13 +13337,10 @@ function bindContentEvents() {
               : certificateType
                 ? chairmanPrintBlankState.selectedSeries || getChairmanCertificatePrintSeries(certificateType, client)
                 : chairmanPrintBlankState.selectedSeries || getChairmanBlankSeriesForPrintKind(printKind);
-          // 086у печатается со сквозной автонумерацией — номер ей можно
-          // присвоить прямо при печати. 095у выдаётся на типографском бланке,
-          // поэтому её номер по-прежнему подбирают кнопкой «Найти номер».
+          // 086у и 095у печатаются со сквозной автонумерацией — номер им
+          // присваивается прямо при печати, без нажатия «Найти номер».
           const autoNumberedCertificate =
-            Boolean(certificateType) &&
-            isNumberedCertificatePrintType(certificateType) &&
-            !certificateRequiresPreenteredBlank(certificateType);
+            Boolean(certificateType) && isNumberedCertificatePrintType(certificateType);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (!autoNumberedDocument && autoNumberedCertificate && !selectedBlank?.id) {

@@ -34,8 +34,6 @@ const DECLARATIONS = [
   "getChairmanNumberedCertificateSeries",
   "opensNumberedCertificatePrintWindow",
   "isNumberedCertificatePrintType",
-  "PREENTERED_CERTIFICATE_PRINT_TYPES",
-  "certificateRequiresPreenteredBlank",
 ];
 
 const printRules = new Function(
@@ -44,7 +42,6 @@ const printRules = new Function(
   return {
     opensNumberedCertificatePrintWindow,
     isNumberedCertificatePrintType,
-    certificateRequiresPreenteredBlank,
   };`,
 )();
 
@@ -81,13 +78,15 @@ test("печать из карточки председателя спрашив
   assert.match(printSource, /opensNumberedCertificatePrintWindow\(printType, printKind\)/);
 });
 
-// Номер 086у сквозной и типографских бланков у неё нет, поэтому его можно
-// присвоить прямо при печати; 095у печатается на заведённом бланке.
-test("номер 086у присваивается при печати, а 095у требует «Найти номер»", () => {
-  const isAutoNumbered = (type) =>
-    printRules.isNumberedCertificatePrintType(type) && !printRules.certificateRequiresPreenteredBlank(type);
-  assert.equal(isAutoNumbered("086"), true);
-  assert.equal(isAutoNumbered("095"), false);
-  assert.match(printSource, /const autoNumberedCertificate =/);
+// Номер 086у и 095у сквозной, поэтому его присваивают прямо при печати:
+// без заведённых бланков справку не заставляют сначала жать «Найти номер».
+test("номер 086у и 095у присваивается при печати без «Найти номер»", () => {
+  for (const type of ["086", "095"]) {
+    assert.equal(printRules.isNumberedCertificatePrintType(type), true);
+  }
+  assert.match(
+    printSource,
+    /const autoNumberedCertificate =\s*Boolean\(certificateType\) && isNumberedCertificatePrintType\(certificateType\);/,
+  );
   assert.match(printSource, /!autoNumberedDocument && autoNumberedCertificate && !selectedBlank\?\.id/);
 });

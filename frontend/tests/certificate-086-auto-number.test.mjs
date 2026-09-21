@@ -38,8 +38,6 @@ const DECLARATIONS = [
   "isPreenteredBlankSeries",
   "CHAIRMAN_AUTO_CREATE_BLANK_SERIES",
   "canAutoCreateChairmanBlankSeries",
-  "PREENTERED_CERTIFICATE_PRINT_TYPES",
-  "certificateRequiresPreenteredBlank",
   "isNumberedCertificatePrintType",
   "getNumberedCertificateLookupSeriesForType",
   "resolveNumberedCertificateLookupSeries",
@@ -49,7 +47,6 @@ const blankRules = new Function(
   DECLARATIONS.map(extractDeclaration).join("\n\n") +
     `
   return {
-    certificateRequiresPreenteredBlank,
     canAutoCreateChairmanBlankSeries,
     isPreenteredBlankSeries,
     resolveNumberedCertificateLookupSeries,
@@ -76,7 +73,6 @@ const chairmanLookupSource = sourceBetween(
 );
 
 test("086у нумеруется автоматически и не требует заведённого диапазона", () => {
-  assert.equal(blankRules.certificateRequiresPreenteredBlank("086"), false);
   assert.equal(blankRules.isPreenteredBlankSeries("086У"), false);
 
   // Из карточки печати серия приходит с пометкой пола — искать и создавать
@@ -88,14 +84,22 @@ test("086у нумеруется автоматически и не требуе
   }
 });
 
-test("095у по-прежнему берёт номер только из заведённого диапазона", () => {
-  assert.equal(blankRules.certificateRequiresPreenteredBlank("095"), true);
-  assert.equal(blankRules.resolveNumberedCertificateLookupSeries("095у", "095", []), "095У");
+// Свободных бланков 095у в медцентре может не быть вовсе — номер тогда
+// выдаётся автоматически, как у 086у.
+test("095у нумеруется автоматически и не требует заведённого диапазона", () => {
+  assert.equal(blankRules.isPreenteredBlankSeries("095У"), false);
+
+  for (const series of ["095У", "095у"]) {
+    const lookupSeries = blankRules.resolveNumberedCertificateLookupSeries(series, "095", []);
+    assert.equal(lookupSeries, "095У", `Серия поиска для ${series}`);
+    assert.equal(blankRules.canAutoCreateChairmanBlankSeries(lookupSeries), true, `Автономер для ${series}`);
+  }
 });
 
-test("подбор номера справки опирается на признак заведённых бланков", () => {
+test("без свободного бланка подбор номера справки выдаёт автономер", () => {
   for (const source of [printFlowSource, chairmanLookupSource]) {
-    assert.match(source, /certificateRequiresPreenteredBlank\(/);
+    // Отказ от автономера зависит только от серии, а не от вида справки.
+    assert.match(source, /if \(!canAutoCreateChairmanBlankSeries\((?:requestedSeries|lookupSeries)\)\) \{\s*throw error;/);
     assert.doesNotMatch(source, /isNumberedCertificatePrintType\([^)]*\) \|\| !canAutoCreateChairmanBlankSeries/);
   }
 
