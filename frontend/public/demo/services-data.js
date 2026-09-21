@@ -302,7 +302,7 @@ window.servicesData = {
       notes: "",
       isActive: true,
       sortOrder: 160,
-      doctorRoleIds: [1, 13]
+      doctorRoleIds: [6, 1, 10, 4, 7, 5, 13]
     },
     {
       id: 44,
@@ -312,7 +312,7 @@ window.servicesData = {
       notes: "ФЛГ — флюорография",
       isActive: true,
       sortOrder: 170,
-      doctorRoleIds: [1, 13]
+      doctorRoleIds: [6, 1, 10, 4, 7, 5, 13]
     },
     {
       id: 45,

@@ -10,6 +10,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.document_generator import _generate_docx  # noqa: E402
+from app.services.seed import DOCTOR_ROLES, SERVICE_DOCTOR_ROLE_IDS  # noqa: E402
 from app.services.template_catalog import (  # noqa: E402
     load_template_catalog,
     template_is_listed_on_templates_page,
@@ -22,6 +23,17 @@ TEMPLATES_PATH = Path(__file__).resolve().parents[2] / "assets" / "templates" / 
 MALE_TEMPLATE_PATH = TEMPLATES_PATH / "СЭМД-196.муж_шаблон.docx"
 FEMALE_TEMPLATE_PATH = TEMPLATES_PATH / "СЭМД-196.жен_шаблон.docx"
 MALE_086_TEMPLATE_PATH = TEMPLATES_PATH / "086у.муж_шаблон_2.docx"
+SEMD196_SERVICE_LEGACY_IDS = (43, 44)
+# Строки врачей бланка (как у 086у) и председатель, который выдаёт справку.
+SEMD196_BLANK_DOCTOR_ROLES = {
+    "therapist",
+    "surgeon",
+    "neurologist",
+    "ophthalmologist",
+    "otolaryngologist",
+    "gynecologist",
+    "chairman",
+}
 
 
 def part_text(path: Path, part: str) -> str:
@@ -69,6 +81,13 @@ class Semd196TemplateTests(unittest.TestCase):
             self.assertEqual(catalog[path.name]["template_type"], "docx")
             self.assertTrue(template_is_listed_on_templates_page(path.name))
             self.assertEqual(template_visit_type_code(f"{catalog[path.name]['name']} {path.name}"), "086")
+
+    def test_semd196_services_send_the_client_to_every_doctor_on_the_blank(self):
+        # Без осмотра строка врача печатается с фамилией, набранной в бланке.
+        role_code_by_legacy_id = {legacy_id: code for legacy_id, code, _, _ in DOCTOR_ROLES}
+        for service_id in SEMD196_SERVICE_LEGACY_IDS:
+            roles = {role_code_by_legacy_id[role_id] for role_id in SERVICE_DOCTOR_ROLE_IDS[service_id]}
+            self.assertEqual(roles, SEMD196_BLANK_DOCTOR_ROLES, service_id)
 
     def test_header_names_semd_instead_of_the_cancelled_086_form(self):
         for path in (MALE_TEMPLATE_PATH, FEMALE_TEMPLATE_PATH):
