@@ -27,6 +27,7 @@
   --excel-col-ophthalmologist: clamp(34px, 2.4vw, 46px);
   --excel-col-therapist: clamp(34px, 2.4vw, 46px);
   --excel-col-psychiatrist: clamp(34px, 2.4vw, 46px);
+  --excel-col-narcologist: clamp(34px, 2.4vw, 46px);
   --excel-col-infectionist: clamp(34px, 2.4vw, 46px);
   --excel-col-phthisiatrician: clamp(34px, 2.4vw, 46px);
   --excel-col-uzist: clamp(34px, 2.4vw, 46px);
@@ -2483,6 +2484,7 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
     var(--excel-col-ophthalmologist)
     var(--excel-col-therapist)
     var(--excel-col-psychiatrist)
+    var(--excel-col-narcologist)
     var(--excel-col-infectionist)
     var(--excel-col-phthisiatrician)
     var(--excel-col-uzist)
@@ -2607,7 +2609,7 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   border-radius: 999px;
 }
 
-.sketch-table__grid--head > span:nth-child(n + 7):nth-child(-n + 20) {
+.sketch-table__grid--head > span:nth-child(n + 7):nth-child(-n + 21) {
   writing-mode: vertical-rl;
   text-orientation: mixed;
   min-height: 92px;
@@ -2617,7 +2619,7 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   letter-spacing: 0.02em;
 }
 
-.sketch-table__grid--head > span:nth-child(n + 7):nth-child(-n + 20) .col-resize-handle {
+.sketch-table__grid--head > span:nth-child(n + 7):nth-child(-n + 21) .col-resize-handle {
   width: 8px;
 }
 
@@ -2698,7 +2700,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   animation: dashboard-table-skeleton-pulse 1.2s ease-in-out infinite;
 }
 
-.sketch-table__grid--skeleton > span:nth-child(n + 7):nth-child(-n + 20) .dashboard-table-skeleton-bar {
+.sketch-table__grid--skeleton > span:nth-child(n + 7):nth-child(-n + 21) .dashboard-table-skeleton-bar {
   width: 8px;
   margin-inline: auto;
 }

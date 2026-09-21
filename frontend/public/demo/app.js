@@ -432,6 +432,7 @@ const columnKeys = [
   "ophthalmologist",
   "therapist",
   "psychiatrist",
+  "narcologist",
   "infectionist",
   "phthisiatrician",
   "uzist",
@@ -452,7 +453,7 @@ const doctorRoleByExcelColumn = {
   ophthalmologist: "ophthalmologist",
   therapist: "therapist",
   psychiatrist: "psychiatrist",
-  "psychiatrist-narcologist": "psychiatrist",
+  narcologist: "psychiatrist-narcologist",
   infectionist: "infectionist",
   phthisiatrician: "phthisiatrist",
   uzist: "uzist",
@@ -5874,6 +5875,7 @@ function buildExcelRows(clients) {
       ophthalmologist: markDoctor("ophthalmologist"),
       therapist: markDoctor("therapist"),
       psychiatrist: markDoctor("psychiatrist"),
+      narcologist: markDoctor("psychiatrist-narcologist"),
       infectionist: markDoctor("infectionist"),
       phthisiatrician: markDoctor("phthisiatrist"),
       uzist: markDoctor("uzist"),
@@ -6219,6 +6221,7 @@ function renderSketchHome() {
     "Офтальмолог",
     "Терапевт",
     "Психиатр",
+    "Психиатр-нарколог",
     "Инфекционист",
     "Фтизиатр",
     "Узист",
@@ -6240,6 +6243,7 @@ function renderSketchHome() {
     "Офтальмолог",
     "Терапевт",
     "Психиатр",
+    "Психиатр-нарколог",
     "Инфекционист",
     "Фтизиатр",
     "Узист",
@@ -6391,6 +6395,7 @@ function renderSketchHome() {
                           ${renderExcelDoctorCell(row, "ophthalmologist")}
                           ${renderExcelDoctorCell(row, "therapist")}
                           ${renderExcelDoctorCell(row, "psychiatrist")}
+                          ${renderExcelDoctorCell(row, "narcologist")}
                           ${renderExcelDoctorCell(row, "infectionist")}
                           ${renderExcelDoctorCell(row, "phthisiatrician")}
                           ${renderExcelDoctorCell(row, "uzist")}
