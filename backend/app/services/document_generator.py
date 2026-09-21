@@ -72,7 +72,7 @@ from app.services.new_xls_templates import (
     new_xls_markers,
     strip_new_xls_placeholder_padding,
 )
-from app.services.template_catalog import get_templates_root
+from app.services.template_catalog import resolve_template_file
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
@@ -3708,40 +3708,71 @@ def _generate_prof_amb_xlsx(
     target_book.save(output_path)
 
 
-def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None) -> None:
+XLS_PRINT_VARIANT_SHEET_NAMES: dict[str, tuple[str, ...]] = {
+    "driver_front": DRIVER_XLS_FRONT_SHEET_NAMES,
+    "driver_back": DRIVER_XLS_BACK_SHEET_NAMES,
+    "tractor_front": ("Тр.Лиц", "Тракторная Лицевая"),
+    "tractor_back": ("Тр.Об", "Тракторная оборотная"),
+    "ambulatory_extract": ("ПЗ2",),
+    "prof_ambulatory_extract": ("ПЗ2",),
+    "prof_ambulatory": ("Амб", "Амб !"),
+    "070": ("CKK",),
+    "072": ("CKK72",),
+    "086": ("086",),
+    "certificate_086": ("086",),
+    "pool": ("Бас",),
+    "sport": ("Спорт",),
+    "gto": ("ГТО",),
+    "gsu": ("ГС",),
+    "gostaina": ("ГТ",),
+    "gims": ("Суда",),
+    "lmk": (" ЛМК!",),
+    "guard": ("ЧОД",),
+    "chod": ("ЧОД",),
+    "ekg": ("ЭЭГ",),
+    "journal_344": ("Журн344",),
+    "journal344": ("Журн344",),
+    "spoiled": ("Испорч",),
+}
+
+
+def _print_variant_sheet_names(print_variant: str | None) -> tuple[str, ...]:
+    """Листы, которые печатает вариант; пустой кортеж — вариант не задан."""
     variant = str(print_variant or "").strip().lower()
     if not variant:
-        return
-
-    sheets_by_variant = {
-        "driver_front": DRIVER_XLS_FRONT_SHEET_NAMES,
-        "driver_back": DRIVER_XLS_BACK_SHEET_NAMES,
-        "tractor_front": ("Тр.Лиц", "Тракторная Лицевая"),
-        "tractor_back": ("Тр.Об", "Тракторная оборотная"),
-        "ambulatory_extract": ("ПЗ2",),
-        "prof_ambulatory_extract": ("ПЗ2",),
-        "prof_ambulatory": ("Амб", "Амб !"),
-        "070": ("CKK",),
-        "072": ("CKK72",),
-        "086": ("086",),
-        "certificate_086": ("086",),
-        "pool": ("Бас",),
-        "sport": ("Спорт",),
-        "gto": ("ГТО",),
-        "gsu": ("ГС",),
-        "gostaina": ("ГТ",),
-        "gims": ("Суда",),
-        "lmk": (" ЛМК!",),
-        "guard": ("ЧОД",),
-        "chod": ("ЧОД",),
-        "ekg": ("ЭЭГ",),
-        "journal_344": ("Журн344",),
-        "journal344": ("Журн344",),
-        "spoiled": ("Испорч",),
-    }
-    target_sheet_names = sheets_by_variant.get(variant)
+        return ()
+    target_sheet_names = XLS_PRINT_VARIANT_SHEET_NAMES.get(variant)
     if not target_sheet_names:
         raise ValueError(f"Неизвестный вариант печати: {print_variant}")
+    return target_sheet_names
+
+
+def _require_print_variant_sheet(book, print_variant: str | None) -> None:
+    """Убедиться, что весь шаблон — печатный лист варианта, не пересохраняя его.
+
+    Бланк со свободным макетом состоит из одного печатного листа. Раньше лишние
+    листы отрезали, пересохраняя готовый файл через xlwt, а xlwt сбрасывает
+    область печати, ориентацию, поля и масштаб: в услуге печатался не тот
+    бланк, что заказчик настроил на странице «Шаблоны».
+    """
+    target_sheet_names = _print_variant_sheet_names(print_variant)
+    if not target_sheet_names:
+        return
+    sheet_names = book.sheet_names()
+    if not any(sheet_name in target_sheet_names for sheet_name in sheet_names):
+        raise ValueError(f"В шаблоне не найден лист для печати: {target_sheet_names[0]}")
+    extra_sheet_names = [sheet_name for sheet_name in sheet_names if sheet_name not in target_sheet_names]
+    if extra_sheet_names:
+        raise ValueError(
+            f"Шаблон должен содержать только печатный лист «{target_sheet_names[0]}», "
+            f"лишние листы: {', '.join(extra_sheet_names)}"
+        )
+
+
+def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None) -> None:
+    target_sheet_names = _print_variant_sheet_names(print_variant)
+    if not target_sheet_names:
+        return
 
     if hasattr(target_book, "keep_only_sheets"):
         target_book.keep_only_sheets(target_sheet_names)
@@ -3766,29 +3797,6 @@ def _apply_print_variant_to_xls_workbook(target_book, print_variant: str | None)
     target_book._Workbook__worksheets = [kept_sheet]
     target_book._Workbook__worksheet_idx_from_name = {getattr(kept_sheet, "name", target_sheet_names[0]): 0}
     target_book._Workbook__active_sheet = 0
-
-
-def _apply_print_variant_to_saved_xls_file(output_path: Path, print_variant: str | None) -> None:
-    if not str(print_variant or "").strip():
-        return
-
-    source_book = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
-    target_book = copy_xls_workbook(source_book)
-    _apply_print_variant_to_xls_workbook(target_book, print_variant)
-
-    temporary_file = tempfile.NamedTemporaryFile(
-        prefix=".print_variant_",
-        suffix=".xls",
-        dir=output_path.parent,
-        delete=False,
-    )
-    temporary_path = Path(temporary_file.name)
-    temporary_file.close()
-    try:
-        target_book.save(str(temporary_path))
-        temporary_path.replace(output_path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
 
 
 def _generate_xls(
@@ -4136,49 +4144,6 @@ def _patch_new_xls_placeholders(
     output_path.write_bytes(file_bytes)
 
 
-# Первые пользовательские копии 071у были сохранены до того, как в лицевую
-# сторону добавили эти две строки. В них остальные служебные метки целы, а
-# четыре ячейки результатов пусты. Во время печати берём встроенную актуальную
-# версию лишь для этой точно распознаваемой старой копии. Так сохраняются
-# правильный макет и настройки печати, а новые результаты появляются без
-# ручного сброса шаблона.
-_TRACTOR_FRONT_MISSING_RESULT_CELLS = frozenset(
-    {
-        (39, 12),
-        (39, 39),
-        (41, 12),
-        (41, 39),
-    }
-)
-
-
-def _new_xls_missing_marker_coordinates(source_book, spec: NewXlsTemplateSpec) -> frozenset[tuple[int, int]]:
-    source_sheet = source_book.sheet_by_name(spec.sheet_name)
-    missing: set[tuple[int, int]] = set()
-    for coordinate in spec.dynamic_cells:
-        value = str(source_sheet.cell_value(*coordinate) or "")
-        if not any(marker in value for marker in new_xls_markers(spec, coordinate)):
-            missing.add(coordinate)
-    return frozenset(missing)
-
-
-def _copy_current_tractor_front_template_if_needed(
-    output_path: Path,
-    source_book,
-    spec: NewXlsTemplateSpec,
-) -> bool:
-    if spec.file_name.casefold() != "трактор лиц ст.xls":
-        return False
-    if _new_xls_missing_marker_coordinates(source_book, spec) != _TRACTOR_FRONT_MISSING_RESULT_CELLS:
-        return False
-
-    bundled_template = get_templates_root() / spec.file_name
-    if not bundled_template.is_file():
-        return False
-    shutil.copy2(bundled_template, output_path)
-    return True
-
-
 def _patch_legacy_xls_placeholders(
     output_path: Path,
     spec: LegacyXlsTemplateSpec,
@@ -4352,6 +4317,60 @@ def _patch_xls_hidden_columns(
         offset = payload_end
 
     if patched_cols:
+        output_path.write_bytes(file_bytes)
+
+
+_XLS_PRINT_AREA_BUILTIN_NAME = 0x06
+_XLS_AREA_3D_TOKENS = (0x3B, 0x5B, 0x7B)
+
+
+def _patch_xls_print_area_last_column(output_path: Path, *, sheet_index: int, last_col: int) -> None:
+    """Сдвинуть правую границу области печати листа к last_col, не пересохраняя файл.
+
+    Трогаем только область из одного прямоугольника: так её задаёт Excel, и
+    её граница лежит в формуле имени Print_Area на постоянном месте.
+    """
+    original_bytes = output_path.read_bytes()
+    file_bytes = bytearray(original_bytes)
+    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
+    patched = False
+    offset = 0
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream) or record_id == 0x000A:
+            break
+        offset = payload_end
+        if record_id != 0x0018 or payload_length < 16:
+            continue
+        options, _, name_length, formula_length, _, sheet_number = struct.unpack_from(
+            "<HBBHHH", workbook_stream, payload_start
+        )
+        name_start = payload_start + 15
+        formula_start = name_start + name_length * (2 if workbook_stream[payload_start + 14] & 0x01 else 1)
+        if (
+            not options & 0x0020
+            or name_length != 1
+            or workbook_stream[name_start] != _XLS_PRINT_AREA_BUILTIN_NAME
+            or sheet_number != sheet_index + 1
+            or formula_length != 11
+            or formula_start + formula_length > payload_end
+            or workbook_stream[formula_start] not in _XLS_AREA_3D_TOKENS
+        ):
+            continue
+        first_col, area_last_col = struct.unpack_from("<HH", workbook_stream, formula_start + 7)
+        if (first_col & 0x3FFF) > last_col or (area_last_col & 0x3FFF) <= last_col:
+            continue
+        _write_new_xls_stream_bytes(
+            file_bytes,
+            sectors,
+            formula_start + 9,
+            struct.pack("<H", (area_last_col & 0xC000) | last_col),
+        )
+        patched = True
+
+    if patched:
         output_path.write_bytes(file_bytes)
 
 
@@ -4555,9 +4574,15 @@ def _patch_driver_saved_xls_layout(output_path: Path) -> None:
     sheet_names = workbook.sheet_names()
     for sheet_index, sheet_name in enumerate(sheet_names):
         if sheet_name in DRIVER_XLS_FRONT_SHEET_NAMES:
-            _patch_xls_hidden_columns(output_path, sheet_index=sheet_index, start_col=27, end_col=65)
+            first_hidden_col = 27
         elif sheet_name in DRIVER_XLS_BACK_SHEET_NAMES:
-            _patch_xls_hidden_columns(output_path, sheet_index=sheet_index, start_col=34, end_col=65)
+            first_hidden_col = 34
+        else:
+            continue
+        _patch_xls_hidden_columns(output_path, sheet_index=sheet_index, start_col=first_hidden_col, end_col=65)
+        # Скрытую копию справки Excel всё равно раскладывает на страницы, если
+        # она внутри области печати, и они выходят из принтера пустыми листами.
+        _patch_xls_print_area_last_column(output_path, sheet_index=sheet_index, last_col=first_hidden_col - 1)
 
 
 def _generate_preserved_new_xls(
@@ -4611,8 +4636,7 @@ def _generate_preserved_new_xls(
             )
             for coordinate in spec.dynamic_cells
         }
-        if not _copy_current_tractor_front_template_if_needed(output_path, source_book, spec):
-            shutil.copy2(template_path, output_path)
+        shutil.copy2(template_path, output_path)
         _patch_new_xls_placeholders(output_path, spec, values)
     finally:
         temporary_path.unlink(missing_ok=True)
@@ -4708,6 +4732,7 @@ def _generate_preserved_legacy_xls(
             formatting_info=True,
         )
         marker_locations = legacy_xls_marker_locations(marker_book, spec)
+        _require_print_variant_sheet(marker_book, print_variant)
         # Generate all printable sheets so a two-sided VU template retains
         # values on both sides. The caller/user chooses the sheet when printing.
         _generate_unpreserved_runtime_xls(
@@ -4766,7 +4791,6 @@ def _generate_preserved_legacy_xls(
                 managed_rows=managed_rows,
                 hidden_rows=hidden_rows,
             )
-        _apply_print_variant_to_saved_xls_file(output_path, print_variant)
         _patch_driver_saved_xls_layout(output_path)
         _patch_driver_saved_xls_category_marks(output_path, marker_locations, values, category_mark_plan)
     finally:
@@ -5656,7 +5680,9 @@ def generate_document(
         if encounter is None or encounter.deleted_at is not None:
             raise ValueError("Обращение не найдено")
 
-    template_path = Path(template.file_path)
+    # Тот же файл, что отдаёт страница «Шаблоны»: клиентская версия, если она
+    # есть, даже когда путь в базе ещё указывает на встроенный шаблон.
+    template_path = resolve_template_file(template) or Path(template.file_path)
     output_dir = Path(settings.generated_documents_dir)
     if template.template_type == "xml":
         output_dir = output_dir / "xml" / _xml_export_date_folder()

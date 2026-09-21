@@ -3,8 +3,15 @@ from pathlib import Path
 import re
 import zipfile
 
+import xlrd
+
 from app.core.config import settings
-from app.services.new_xls_templates import LEGACY_XLS_TEMPLATE_BY_FILE, NEW_XLS_TEMPLATE_BY_FILE
+from app.services.new_xls_templates import (
+    LEGACY_XLS_TEMPLATE_BY_FILE,
+    NEW_XLS_TEMPLATE_BY_FILE,
+    validate_editable_xls_template,
+    validate_legacy_editable_xls_template,
+)
 
 
 SUPPORTED_TEMPLATE_EXTENSIONS = {".docx", ".xml", ".xls", ".xlsx"}
@@ -135,11 +142,54 @@ def resolve_catalog_template_path(file_name: str) -> Path:
     return override_path if override_path.is_file() else get_templates_root() / file_name
 
 
+def _repair_mojibake(value: str) -> str:
+    try:
+        return value.encode("latin1").decode("utf-8")
+    except UnicodeError:
+        return value
+
+
+def resolve_template_file(template) -> Path | None:
+    """Файл, который и отдаёт страница «Шаблоны», и заполняет печать.
+
+    Клиентская версия из хранилища перекрывает встроенную. Путь из базы —
+    лишь запасной: его запоминает синхронизация каталога, и он может отстать
+    от хранилища. Печать и скачивание берут файл только отсюда, чтобы в услуге
+    не оказалось другого бланка, чем тот, что заказчик правил.
+    """
+    candidates: list[Path] = []
+    try:
+        candidates.append(get_template_override_path(template.file_name))
+    except ValueError:
+        pass
+    if template.file_path:
+        candidates.append(Path(template.file_path))
+
+    root = get_templates_root()
+    names = [template.file_name]
+    repaired_name = _repair_mojibake(template.file_name)
+    if repaired_name != template.file_name:
+        names.append(repaired_name)
+
+    for name in names:
+        if name:
+            candidates.append(root / name)
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_file():
+            return resolved
+    return None
+
+
 # Клиентская версия шаблона лежит в хранилище и перекрывает встроенную, а
 # деплой хранилище не трогает: правка бланка в коде до печати не доходит, пока
-# кто-нибудь не нажмёт «Вернуть исходный». Для бланков из этого списка снимаем
-# устаревшую версию сами — но только пока в ней нет метки, ради которой бланк
-# и переделывали, чтобы не тронуть версию, уже собранную по новой форме.
+# кто-нибудь не нажмёт «Вернуть исходный». Устаревшую версию снимаем сами:
+# Word-бланк из этого списка — пока в нём нет метки, ради которой его
+# переделывали, а Excel-бланк со свободным макетом — когда в нём не хватает
+# метки поля, добавленного во встроенный шаблон. Такую версию печать
+# заполнить не может, а подменять её встроенной нельзя: тогда на странице
+# «Шаблоны» лежал бы один бланк, а в услуге печатался другой.
 OUTDATED_TEMPLATE_OVERRIDE_TOKENS = {
     "095У_справка_шаблон.docx": "[Certificate095EducationInstitution]",
 }
@@ -152,9 +202,45 @@ def docx_text_contains(path: Path, token: str) -> bool:
     return token in re.sub(r"<[^>]+>", "", document_xml)
 
 
+def xls_override_misses_current_fields(file_name: str, path: Path) -> bool:
+    """True, если клиентская XLS-версия не проходит проверку текущих меток полей."""
+    spec = NEW_XLS_TEMPLATE_BY_FILE.get(file_name.casefold())
+    legacy_spec = LEGACY_XLS_TEMPLATE_BY_FILE.get(file_name.casefold())
+    if spec is None and legacy_spec is None:
+        return False
+    try:
+        xlrd.open_workbook(file_contents=path.read_bytes(), formatting_info=True)
+    except Exception:
+        # Нечитаемый файл не трогаем: печать сама сообщит, что с ним не так.
+        return False
+    try:
+        if spec is not None:
+            validate_editable_xls_template(path, spec)
+        else:
+            validate_legacy_editable_xls_template(path, legacy_spec)
+    except ValueError:
+        return True
+    return False
+
+
+def _override_is_outdated(file_name: str, override_path: Path) -> bool:
+    required_token = OUTDATED_TEMPLATE_OVERRIDE_TOKENS.get(file_name)
+    if required_token is not None:
+        return not docx_text_contains(override_path, required_token)
+    return xls_override_misses_current_fields(file_name, override_path)
+
+
+def _retirable_override_file_names() -> tuple[str, ...]:
+    xls_file_names = sorted(
+        {spec.file_name for spec in NEW_XLS_TEMPLATE_BY_FILE.values()}
+        | {spec.file_name for spec in LEGACY_XLS_TEMPLATE_BY_FILE.values()}
+    )
+    return (*OUTDATED_TEMPLATE_OVERRIDE_TOKENS, *xls_file_names)
+
+
 def retire_outdated_template_overrides() -> None:
     """Отложить клиентские версии бланков, в которых нет новых меток полей."""
-    for file_name, required_token in OUTDATED_TEMPLATE_OVERRIDE_TOKENS.items():
+    for file_name in _retirable_override_file_names():
         try:
             override_path = get_template_override_path(file_name)
         except ValueError:
@@ -162,7 +248,7 @@ def retire_outdated_template_overrides() -> None:
         if not override_path.is_file() or not (get_templates_root() / file_name).is_file():
             continue
         try:
-            if docx_text_contains(override_path, required_token):
+            if not _override_is_outdated(file_name, override_path):
                 continue
             # Файл не удаляем: заказчик правил его сам, и по имени с суффиксом
             # приложение его уже не подхватит, а вернуть версию можно вручную.

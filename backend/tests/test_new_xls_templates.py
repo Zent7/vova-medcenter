@@ -716,7 +716,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
             )
             self.assertEqual(generated_sheet.cell_value(*source_coordinate), "")
 
-    def test_tractor_front_with_pre_result_markers_prints_the_new_result_rows(self):
+    def test_tractor_front_without_result_markers_is_not_swapped_for_the_bundled_one(self):
+        """Старую копию 071у печать не подменяет встроенной: её откладывают при старте."""
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Тр.Лиц")
         missing_result_cells = ((39, 12), (39, 39), (41, 12), (41, 39))
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -730,21 +731,16 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 outdated_sheet.write(*coordinate, "")
             outdated_book.save(str(outdated_path))
 
-            _generate_runtime_xls(
-                outdated_path,
-                output_path,
-                self.context,
-                self.client,
-                self.encounter,
-                {"exams": self.exams},
-                print_variant=spec.print_variant,
-            )
-
-            sheet = xlrd.open_workbook(str(output_path)).sheet_by_name(spec.sheet_name)
-            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(39, 12)), "ЭЭГ Без Патологии")
-            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(39, 39)), "ЭЭГ Без Патологии")
-            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(41, 12)), "Не Установлено")
-            self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(41, 39)), "Не Установлено")
+            with self.assertRaisesRegex(ValueError, r"\[Инструментальные \(лев\)\]"):
+                _generate_runtime_xls(
+                    outdated_path,
+                    output_path,
+                    self.context,
+                    self.client,
+                    self.encounter,
+                    {"exams": self.exams},
+                    print_variant=spec.print_variant,
+                )
 
     def test_validation_rejects_missing_and_duplicate_markers(self):
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")

@@ -155,6 +155,8 @@ The core business feature. Entry point: `app/services/document_generator.py::gen
 
 **Generated files** are recorded in `generated_documents` table and stored on disk. Contract templates go into `storage/generated/contracts/`.
 
+**One file for the templates page and for printing.** The customer edits templates by downloading them on the «Шаблоны» page and uploading a copy, which lands in `DOCUMENT_TEMPLATE_OVERRIDES_DIR` and overrides the bundled file. `template_catalog.resolve_template_file()` picks that copy first, and both the download route and `generate_document()` go through it — never read `DocumentTemplate.file_path` directly, it is only a cached fallback. Free-layout XLS templates (`NEW_XLS_TEMPLATE_SPECS`, `LEGACY_XLS_TEMPLATE_SPECS`) are printed by copying the file and patching bytes in place; never re-save a generated free-layout file through `xlutils`/`xlwt`, which drops the print area, orientation, margins, scale and headers the customer set. When a spec gains a field, customer copies without its marker are renamed to `*.retired-<timestamp>` at startup (`retire_outdated_template_overrides()`) instead of being swapped for the bundled file at print time.
+
 ## Frontend Architecture
 
 **Stack**: Vite serving the approved delivery demo UI.

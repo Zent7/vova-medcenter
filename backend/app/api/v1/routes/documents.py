@@ -37,6 +37,7 @@ from app.services.template_catalog import (
     SUPPORTED_TEMPLATE_EXTENSIONS,
     get_template_override_path,
     get_templates_root,
+    resolve_template_file,
     sync_document_template_catalog,
     template_display_position,
     template_has_override,
@@ -58,13 +59,6 @@ _DOCUMENT_MEDIA_TYPES = {
 _PRINT_TICKET_TTL_SECONDS = 600
 _print_ticket_lock = Lock()
 _print_tickets: dict[str, tuple[Path, datetime]] = {}
-
-
-def _repair_mojibake(value: str) -> str:
-    try:
-        return value.encode("latin1").decode("utf-8")
-    except UnicodeError:
-        return value
 
 
 def _document_media_type(file_path: Path) -> str:
@@ -126,32 +120,6 @@ def require_template_file_access(current_user: User = Depends(get_current_user))
     return current_user
 
 
-def _resolve_template_file(template: DocumentTemplate) -> Path | None:
-    candidates: list[Path] = []
-    try:
-        candidates.append(get_template_override_path(template.file_name))
-    except ValueError:
-        pass
-    if template.file_path:
-        candidates.append(Path(template.file_path))
-
-    root = get_templates_root()
-    names = [template.file_name]
-    repaired_name = _repair_mojibake(template.file_name)
-    if repaired_name != template.file_name:
-        names.append(repaired_name)
-
-    for name in names:
-        if name:
-            candidates.append(root / name)
-
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved.is_file():
-            return resolved
-    return None
-
-
 def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
     return DocumentTemplateRead.model_validate(template).model_copy(
         update={
@@ -199,7 +167,7 @@ def open_document_template(
     if template is None or not template.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    file_path = _resolve_template_file(template)
+    file_path = resolve_template_file(template)
     if file_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл шаблона не найден")
 
@@ -223,7 +191,7 @@ def replace_document_template(
     if template is None or not template.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    current_path = _resolve_template_file(template) or Path(template.file_path).resolve()
+    current_path = resolve_template_file(template) or Path(template.file_path).resolve()
     source_suffix = Path(file.filename or "").suffix.lower()
     target_suffix = current_path.suffix.lower()
     editable_spec = NEW_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
