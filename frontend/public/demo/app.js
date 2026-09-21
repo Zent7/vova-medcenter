@@ -9144,6 +9144,14 @@ function pickDocumentTemplate(type, visit = null, client = null) {
     }
     return findDocxSafely(["086у.муж_шаблон_2", "086у.жен_шаблон"], ["086"], []);
   };
+  // Бумажная копия СЭМД-196 собрана из тех же бланков 086у, поэтому бланк
+  // выбирается по полу так же: у женщин в справке есть строка гинеколога.
+  const findSemd196Template = () => {
+    const sex = getClientSexKey();
+    if (sex === "male") return findDocxSafely(["сэмд-196.муж_шаблон"], ["сэмд-196.муж"], ["жен"]);
+    if (sex === "female") return findDocxSafely(["сэмд-196.жен_шаблон"], ["сэмд-196.жен"], ["муж"]);
+    return findDocxSafely(["сэмд-196.муж_шаблон", "сэмд-196.жен_шаблон"], ["сэмд"], []);
+  };
   const findAmbulatoryExtractTemplate = () =>
     findTemplateSafely(
       xlsTemplates,
@@ -9192,13 +9200,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "082") return findDocxSafely(["082у_шаблон"], ["082у"], ["13082"]);
   if (normalizedType === "086") return find086Template();
   if (normalizedType === "095") return findDocxSafely(["095у_справка_шаблон"], ["095"], []);
-  if (normalizedType === "semt196") {
-    return findDocxSafely(
-      ["сэмд196_шаблон", "сэмд-196_шаблон", "сэмт196_шаблон", "сэмт-196_шаблон"],
-      ["сэмд", "сэмт", "196"],
-      [],
-    );
-  }
+  if (normalizedType === "semt196") return findSemd196Template();
   if (normalizedType === "gsu") return findNewXls(["гс новый формат"]);
   if (normalizedType === "gostaina") return findNewXls(["гт"]);
   if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);

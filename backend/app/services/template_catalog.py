@@ -33,6 +33,10 @@ SERVICE_LIST_TEMPLATE_ORDER: tuple[tuple[str, str], ...] = (
     ("водительская обратн ст.xls", "ВУ (водительская) оборотная"),
     ("086у.жен_шаблон.docx", "086у (Ж)"),
     ("086у.муж_шаблон_2.docx", "086у (М)"),
+    # Бумажная копия СЭМД-196: бланки 086у заказчика без шапки отменённой
+    # формы 086/у (приказ 834н утратил силу с 01.09.2025).
+    ("СЭМД-196.жен_шаблон.docx", "СЭМД-196 (Ж)"),
+    ("СЭМД-196.муж_шаблон.docx", "СЭМД-196 (М)"),
     ("ГС НОВЫЙ ФОРМАТ.xls", "ГС"),
     ("ГТ.xls", "ГТ"),
     ("СКК 72 новый формат.xls", "072 у СКК"),
@@ -234,7 +238,7 @@ def template_visit_type_code(template_name: str) -> str | None:
         return "guard"
     if "лмк" in normalized:
         return "lmk_new"
-    if "086" in normalized:
+    if "086" in normalized or "сэмд" in normalized:
         return "086"
     if "амб" in normalized or "профосмотр" in normalized or "заключение29н" in normalized or "мед.карта" in normalized:
         return "prof"
