@@ -6536,7 +6536,7 @@ function renderClientImportPage() {
           </div>
           <a
             class="primary-button"
-            href="./client-import-template.xlsx?v=20260825-factory-template-v1"
+            href="./client-import-template.xlsx?v=20260922-import-template-borders-v1"
             download="Шаблон для загрузки клиентов.xlsx"
           >Скачать шаблон Excel</a>
         </div>

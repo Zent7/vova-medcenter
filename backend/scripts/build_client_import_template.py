@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -21,6 +21,10 @@ DATA_ROWS = 300
 HEADER_FILL = PatternFill("solid", fgColor="FF0C7D7B")
 HEADER_FONT = Font(bold=True, color="FFFFFFFF")
 REQUIRED_FILL = PatternFill("solid", fgColor="FFFFF2CC")
+# Рамка у каждой ячейки таблицы. Сетку листа заливка закрывает, поэтому без
+# рамки жёлтые колонки сливаются в сплошные полосы и строки не видно.
+CELL_SIDE = Side(style="thin", color="FFD1D5DB")
+CELL_BORDER = Border(left=CELL_SIDE, right=CELL_SIDE, top=CELL_SIDE, bottom=CELL_SIDE)
 TITLE_FONT = Font(bold=True, size=14)
 SUBTITLE_FONT = Font(bold=True)
 
@@ -71,18 +75,19 @@ def build_workbook() -> Workbook:
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = CELL_BORDER
         sheet.column_dimensions[letter].width = width
         for row in range(2, DATA_ROWS + 2):
             data_cell = sheet.cell(row=row, column=index)
             # Текстовый формат: дата и СНИЛС должны сохраниться так, как их
             # набрали, а не превратиться в число вида 31882.
             data_cell.number_format = "@"
+            data_cell.border = CELL_BORDER
             if required:
                 data_cell.fill = REQUIRED_FILL
 
     sheet.row_dimensions[1].height = 34
     sheet.freeze_panes = "A2"
-    sheet.sheet_view.showGridLines = False
 
     service_validation = DataValidation(
         type="list", formula1='"' + ",".join(SERVICE_VALUES) + '"', allow_blank=True
