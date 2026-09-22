@@ -40,6 +40,7 @@ test("the customer service list keeps its order and wording", () => {
     "амб карта",
     "бассейн",
     "спорт",
+    "ГТО",
     "гимс",
     "071у Лицевая",
     "071у оборотная",

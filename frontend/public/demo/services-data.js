@@ -236,7 +236,7 @@ window.servicesData = {
     },
     {
       id: 4,
-      name: "Справка ГТО 1144",
+      name: "справка ГТО",
       groupId: 7,
       price: 1500,
       notes: "",

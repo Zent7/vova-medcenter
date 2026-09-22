@@ -9205,7 +9205,7 @@ function pickDocumentTemplate(type, visit = null, client = null) {
   if (normalizedType === "gostaina") return findNewXls(["гт"]);
   if (normalizedType === "psych342") return findXls(["справка_342н_псих_освид", "342", "псих"]);
   if (normalizedType === "ambulatory_extract") return findAmbulatoryExtractTemplate() || findXls(["выписка", "амб"]);
-  if (normalizedType === "gto") return findDocxSafely(["гто1144_шаблон"], ["гто1144", "1144", "гто"], []);
+  if (normalizedType === "gto") return findDocxSafely(["гто_шаблон"], ["гто"], []);
   if (normalizedType === "pool") return findDocxSafely(["cправкабассейн_шаблон", "справкабассейн_шаблон"], ["бассейн"], []);
   if (normalizedType === "sport") return findNewXls(["спорт"]);
   if (normalizedType === "ekg") return findStandaloneEkgTemplate();
@@ -9897,6 +9897,7 @@ const SERVICE_SERIES_OVERRIDES = new Map([
   ["справка для работы с гостайной формы 989н", "ГТ"],
   ["справка 342н (псих. освид.)", "342н псих осв"],
   ["справка гто 1144", "ГТО"],
+  ["справка гто", "ГТО"],
   ["справка для поступления 086у", "086у"],
   ["справка формы 086у", "086у"],
   ["086", "086у"],

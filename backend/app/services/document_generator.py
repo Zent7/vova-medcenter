@@ -124,6 +124,7 @@ CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
         "гс новый формат.xls",
         "гт.xls",
         "гто1144_шаблон.docx",
+        "гто_шаблон.docx",
         "скк 070 новый формат.xls",
         "скк 72 новый формат.xls",
         "спорт.xls",
@@ -4990,6 +4991,21 @@ def _chairman_certificate_date_context_overrides(
     return _chairman_exam_date_context_overrides(exams)
 
 
+def _gto_context_overrides(
+    template: DocumentTemplate,
+    exams: list[DoctorExam],
+    context: dict[str, str],
+) -> dict[str, str]:
+    if "гто_шаблон.docx" not in _template_file_names(template):
+        return {}
+    issue_date = _parse_chairman_exam_date(context.get("VisitDate"))
+    therapist = _exam_map(exams).get("therapist")
+    return {
+        "GtoValidUntil": _add_calendar_months(issue_date, 12).strftime("%d.%m.%Y") if issue_date else "",
+        "GtoTherapistDoctor": _exam_doctor_name(therapist),
+    }
+
+
 def _pool_doctor_context_overrides(
     template: DocumentTemplate,
     exams: list[DoctorExam],
@@ -5849,6 +5865,7 @@ def generate_document(
         )
         context.update(_chairman_certificate_date_context_overrides(template, document_exams))
         context.update(_pool_doctor_context_overrides(template, document_exams, context))
+        context.update(_gto_context_overrides(template, document_exams, context))
         context.setdefault("CertificateNumber", "")
         sequential_number = ""
         if blank_form is not None:

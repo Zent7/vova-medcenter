@@ -86,3 +86,21 @@ test("СЭМД-196 печатается своим бланком, выбран�
   assert.equal(pickTemplate("086", null, CLIENTS.male)?.file_name, "086у.муж_шаблон_2.docx");
   assert.equal(pickTemplate("086", null, CLIENTS.female)?.file_name, "086у.жен_шаблон.docx");
 });
+
+
+test("ГТО выбирает новый бланк даже при наличии старого 1144", () => {
+  const oldTemplate = { id: 999, name: "ГТО 1144", file_name: "ГТО1144_шаблон.docx", template_type: "docx" };
+  const pickTemplate = createTemplatePicker([oldTemplate, ...bundledTemplates()]);
+  assert.equal(pickTemplate("gto", null, CLIENTS.male)?.file_name, "ГТО_шаблон.docx");
+});
+
+test("в таблице услуга называется ГТО", () => {
+  const mapping = sourceBetween(appSource, "const SERVICE_SERIES_OVERRIDES", "function getStoredDriverPrintSeries");
+  const abbreviation = sourceBetween(appSource, "function buildServiceSeriesAbbreviation", "function getAutoServiceSeriesOptions");
+  const context = vm.createContext({});
+  vm.runInContext(`${mapping}
+${abbreviation}
+this.abbreviate = buildServiceSeriesAbbreviation;`, context);
+  assert.equal(context.abbreviate({ name: "справка ГТО", legacySourceId: 4 }), "ГТО");
+  assert.equal(context.abbreviate({ name: "справка ГТО" }), "ГТО");
+});
