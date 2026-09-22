@@ -58,6 +58,43 @@ def certificate_doctor_roles(categories: object) -> set[str]:
     return roles
 
 
+# Категории удостоверения тракториста-машиниста для справки 071у — те же, что
+# TRACTOR_CATEGORY_OPTIONS в demo/app.js. Без выбора отмечены все.
+TRACTOR_CATEGORY_KEYS = ("AI", "AII", "AIII", "AIV", "B", "C", "D", "E", "F")
+TRACTOR_EXTENDED_CATEGORIES = {"C", "D", "E"}
+TRACTOR_BASE_DOCTOR_ROLES = {"therapist", "ophthalmologist", "psychiatrist", "psychiatrist-narcologist"}
+# Категории набирают и кириллицей, и арабскими цифрами: «А1», «В, С».
+_TRACTOR_CATEGORY_LETTERS = str.maketrans({"А": "A", "Б": "B", "В": "B", "С": "C", "Д": "D", "Е": "E", "Ф": "F"})
+_TRACTOR_CATEGORY_ALIASES = {"A1": "AI", "A2": "AII", "A3": "AIII", "A4": "AIV"}
+
+
+def tractor_category_tokens(value: object) -> set[str]:
+    tokens: set[str] = set()
+    for token in re.findall(r"[A-Za-zА-Яа-я0-9]+", str(value or "")):
+        latin = token.upper().translate(_TRACTOR_CATEGORY_LETTERS)
+        latin = _TRACTOR_CATEGORY_ALIASES.get(latin, latin)
+        if latin in TRACTOR_CATEGORY_KEYS:
+            tokens.add(latin)
+    return tokens
+
+
+def tractor_certificate_doctor_roles(categories: object) -> set[str]:
+    """На любые категории — терапевт, офтальмолог, психиатр и нарколог,
+    на C, D и E к ним добавляются невролог и отоларинголог."""
+    roles = set(TRACTOR_BASE_DOCTOR_ROLES)
+    if tractor_category_tokens(categories) & TRACTOR_EXTENDED_CATEGORIES:
+        roles.update({"neurologist", "otolaryngologist"})
+    return roles
+
+
 def is_driver_or_tractor_service(service: object) -> bool:
     name = str(getattr(service, "name", "") or "").lower()
     return getattr(service, "legacy_source_id", None) in {7, 8, 29} or "водител" in name or "трактор" in name or "071" in name
+
+
+def is_tractor_service(service: object) -> bool:
+    name = str(getattr(service, "name", "") or "").lower()
+    legacy_source_id = getattr(service, "legacy_source_id", None)
+    if legacy_source_id in {8, 29} or "водител" in name:
+        return False
+    return legacy_source_id == 7 or "трактор" in name or "071" in name

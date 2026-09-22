@@ -50,6 +50,7 @@ from app.services.blank_forms import (
     reuse_blank_for_existing_document,
 )
 from app.services.doctor_directory import get_center_doctor_names
+from app.services.driver_rules import TRACTOR_CATEGORY_KEYS, TRACTOR_EXTENDED_CATEGORIES
 from app.services.driver_rules import driver_category_tokens as _driver_category_tokens
 from app.services.driver_rules import expand_implied_driver_categories as _expand_implied_driver_categories
 from app.services.document_context import (
@@ -2214,10 +2215,17 @@ def _driver_exam_line(exam: DoctorExam | None, client: Client, role_id: str) -> 
     return f"{doctor} Противопоказания Отсутствуют"
 
 
-def _driver_certificate_lines(client: Client, exams_by_role: dict[str, DoctorExam]) -> list[str]:
+def _driver_certificate_lines(
+    client: Client,
+    exams_by_role: dict[str, DoctorExam],
+    *,
+    tractor: bool = False,
+) -> list[str]:
     exams = list(exams_by_role.values())
     selected = _driver_categories_for_documents(client, exams)
     extended = bool(selected & {"C", "D", "CE", "DE", "C1", "D1", "C1E", "D1E", "Tm", "Tb"})
+    if tractor:
+        extended = _tractor_certificate_extended(exams, fallback=extended)
     chairman = _driver_latest_chairman(exams)
     fields = (chairman.fields_json or {}) if chairman else {}
     lines = [
@@ -2229,6 +2237,30 @@ def _driver_certificate_lines(client: Client, exams_by_role: dict[str, DoctorExa
         "ЭЭГ Без Патологии" if extended else "Не Установлено",
         "" if _truthy_driver_value(fields.get("licenseRevoked")) else "Не Установлено",
     ]
+
+
+TRACTOR_CATEGORY_FIELD_KEYS = {category: f"tractorCategory{category}" for category in TRACTOR_CATEGORY_KEYS}
+
+
+def _tractor_categories_from_chairman(fields: dict) -> set[str] | None:
+    if not any(field_key in fields for field_key in TRACTOR_CATEGORY_FIELD_KEYS.values()):
+        return None
+    return {
+        category
+        for category, field_key in TRACTOR_CATEGORY_FIELD_KEYS.items()
+        if _truthy_driver_value(fields.get(field_key))
+    }
+
+
+# Невролог и ЛОР на лицевой тракторной справки печатаются на категории C, D и E
+# из карточки председателя. Карточка, сохранённая до тракторных категорий,
+# печатается как раньше — по водительским галочкам (fallback).
+def _tractor_certificate_extended(exams: list[DoctorExam], *, fallback: bool) -> bool:
+    chairman = _driver_completed_chairman(exams)
+    categories = _tractor_categories_from_chairman(chairman.fields_json or {}) if chairman else None
+    if categories is None:
+        return fallback
+    return bool(categories & TRACTOR_EXTENDED_CATEGORIES)
 
 
 DRIVER_XLS_CATEGORY_KEYS = ("A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E")
@@ -2630,7 +2662,7 @@ def _fill_driver_xls_sheets(
 
 
 def _fill_tractor_xls_sheets(source_book, target_book, exams_by_role: dict[str, DoctorExam], client: Client) -> None:
-    tractor_lines = _driver_certificate_lines(client, exams_by_role)
+    tractor_lines = _driver_certificate_lines(client, exams_by_role, tractor=True)
     front_source, front_target, _ = _sheet_pair(source_book, target_book, "Тракторная Лицевая")
     if front_source and front_target:
         _write_xls_pairs(
@@ -3138,7 +3170,11 @@ def _fill_new_tractor_front_xls_sheet(
         context.get("BlankFullNumber"),
         context.get("ReferenceNumber"),
     )
-    exam_lines = _driver_certificate_lines(client, exams_by_role) if context.get("ClientCalc") or exams_by_role else [""] * 6
+    exam_lines = (
+        _driver_certificate_lines(client, exams_by_role, tractor=True)
+        if context.get("ClientCalc") or exams_by_role
+        else [""] * 6
+    )
 
     values = [
         ((7, 3), blank_number),

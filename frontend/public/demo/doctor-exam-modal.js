@@ -1257,6 +1257,10 @@
     const noteValue = emptyLegacyValue(fields.note, ["прио/"]);
     const fieldOptions = (key) => template.fields.find((field) => field.key === key)?.options || [];
     const isDriverChairmanFlow = chairmanInfo.printMode === "driver-flow";
+    // У тракторной справки вместо категорий ВУ — категории тракториста-машиниста.
+    const tractorCategoryChecks = chairmanType === "tractor"
+      ? window.getChairmanTractorCategoryChecks?.(fields) || []
+      : null;
     const hideDriverDetails = [
       "sport",
       "pool",
@@ -1483,6 +1487,11 @@
                 <div class="chairman-columns">
                   <div class="chairman-column">
                     <div class="chairman-column-title">Категории</div>
+                    ${tractorCategoryChecks
+                      ? tractorCategoryChecks
+                          .map(({ category, fieldKey, checked }) => renderCheckboxField(fieldKey, checked, category))
+                          .join("")
+                      : `
                     ${renderCheckboxField("categoryA", !!fields.categoryA, "A")}
                     ${renderCheckboxField("categoryB", !!fields.categoryB, "B")}
                     ${renderCheckboxField("categoryC", !!fields.categoryC, "C")}
@@ -1499,6 +1508,7 @@
                     ${renderCheckboxField("categoryD1", !!fields.categoryD1, "D1")}
                     ${renderCheckboxField("categoryC1E", !!fields.categoryC1E, "C1E")}
                     ${renderCheckboxField("categoryD1E", !!fields.categoryD1E, "D1E")}
+                    `}
                     ${renderCheckboxField("categoryTractor", !!fields.categoryTractor, "тракторы (п.8.)")}
                     ${renderCheckboxField("categoryBoat", !!fields.categoryBoat, "лайнеры и катера (п.9)")}
                     ${isDriverChairmanFlow ? "" : renderCheckboxField("categorySailing", !!fields.categorySailing, "парусный спорт")}

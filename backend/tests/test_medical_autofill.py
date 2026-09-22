@@ -22,6 +22,10 @@ from app.models.service import DoctorRole, Service, ServiceDoctorRole  # noqa: E
 from app.services.medical_autofill import autofill_completed_doctors_for_service  # noqa: E402
 
 
+TRACTOR_BASE_DOCTORS = {"therapist", "ophthalmologist", "psychiatrist", "psychiatrist-narcologist"}
+TRACTOR_ALL_DOCTORS = TRACTOR_BASE_DOCTORS | {"neurologist", "otolaryngologist"}
+
+
 class MedicalAutofillTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite:///:memory:")
@@ -92,13 +96,14 @@ class MedicalAutofillTests(unittest.TestCase):
         ).scalars().all()
         self.assertEqual([exam.doctor_role_id for exam in exams], ["surgeon"])
 
-    def check_certificate(self, legacy_id, categories, expected, notes_override=None):
+    def check_certificate(self, legacy_id, categories, expected, notes_override=None, admission_category="C D"):
         service = self.db.get(Service, 1)
         service.legacy_source_id = legacy_id
         encounter = self.db.get(Encounter, 1)
         encounter.suppressed_doctor_role_ids = []
-        self.db.get(Client, 1).admission_category = "C D"
-        for index, code in enumerate(("ophthalmologist", "neurologist", "otolaryngologist"), start=3):
+        self.db.get(Client, 1).admission_category = admission_category
+        service_roles = ("ophthalmologist", "neurologist", "otolaryngologist", "psychiatrist", "psychiatrist-narcologist")
+        for index, code in enumerate(service_roles, start=3):
             self.db.add(DoctorRole(id=index, code=code, name=code))
             self.db.add(ServiceDoctorRole(service_id=1, doctor_role_id=index))
         self.db.add(EncounterService(encounter_id=1, service_id=1,
@@ -113,14 +118,23 @@ class MedicalAutofillTests(unittest.TestCase):
     def test_driver_ab_ignores_full_service_list_and_stale_client_categories(self):
         self.check_certificate(8, ["A", "B"], {"therapist", "ophthalmologist"})
 
-    def test_tractor_ab_uses_two_doctors(self):
-        self.check_certificate(7, "А, Б", {"therapist", "ophthalmologist"})
+    def test_tractor_base_categories_add_psychiatrist_and_narcologist(self):
+        self.check_certificate(7, ["AI", "AII", "AIII", "AIV", "B", "F"], TRACTOR_BASE_DOCTORS)
+
+    def test_tractor_categories_typed_in_cyrillic_and_digits(self):
+        self.check_certificate(7, "А1, В", TRACTOR_BASE_DOCTORS)
 
     def test_driver_cd_uses_four_doctors(self):
         self.check_certificate(29, ["C", "D"], {"therapist", "ophthalmologist", "neurologist", "otolaryngologist"})
 
-    def test_tractor_cd_uses_four_doctors(self):
-        self.check_certificate(7, "А, В, С, Д", {"therapist", "ophthalmologist", "neurologist", "otolaryngologist"})
+    def test_tractor_e_adds_neurologist_and_otolaryngologist(self):
+        self.check_certificate(7, ["B", "E"], TRACTOR_ALL_DOCTORS)
+
+    def test_tractor_cyrillic_c_adds_neurologist_and_otolaryngologist(self):
+        self.check_certificate(7, "В, С", TRACTOR_ALL_DOCTORS)
+
+    def test_tractor_without_categories_goes_to_every_doctor_despite_driver_client_categories(self):
+        self.check_certificate(7, None, TRACTOR_ALL_DOCTORS, notes_override="Импортировано из Excel", admission_category="B")
 
     def test_legacy_invalid_notes_use_client_categories(self):
         self.check_certificate(8, None, {"therapist", "ophthalmologist", "neurologist", "otolaryngologist"}, notes_override="not json")

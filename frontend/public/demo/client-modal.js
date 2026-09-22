@@ -11,6 +11,11 @@ const CLIENT_DRIVER_CATEGORY_ROWS = [
   ["A1", "B1", "C1", "D1", "C1E", "D1E"],
 ];
 const CLIENT_DRIVER_CATEGORY_OPTIONS = CLIENT_DRIVER_CATEGORY_ROWS.flat();
+// Категории тракторной справки 071у, те же, что TRACTOR_CATEGORY_OPTIONS в app.js.
+const CLIENT_TRACTOR_CATEGORY_ROWS = [
+  ["AI", "AII", "AIII", "AIV"],
+  ["B", "C", "D", "E", "F"],
+];
 const CLIENT_DRIVER_LIMITATIONS = [
   "Категории A, M, A1, B1",
   "Категории B, BE, B1",
@@ -479,6 +484,23 @@ function isClientDriverPanelRendered() {
   return Boolean(actionModalContent?.querySelector('input[name="clientDriverCategory"]'));
 }
 
+function getClientCertificateKind(service) {
+  return isTractorService(service) ? "tractor" : "driver";
+}
+
+// Какие категории показать в панели. Отмеченное в ней переносим, только если
+// панель нарисована для справки того же вида: у водительской и тракторной
+// категории разные. Иначе — сохранённые у услуги или её умолчание.
+function getClientCertificateCategoriesForPanel(selectedServices = [], driverDetail = {}) {
+  const service = getClientSelectedDriverService(selectedServices);
+  const renderedKind = actionModalContent?.querySelector("[data-client-certificate-kind]")?.dataset.clientCertificateKind;
+  if (service && isClientDriverPanelRendered() && renderedKind === getClientCertificateKind(service)) {
+    return getClientDriverCategoriesFromForm();
+  }
+  if (Array.isArray(driverDetail.categories)) return driverDetail.categories;
+  return service ? getCertificateDefaultCategories(service) : CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
+}
+
 function getStoredClientDriverDetail(selectedServices = []) {
   const selectedDriverService = getClientSelectedDriverService(selectedServices);
   if (!selectedDriverService) return {};
@@ -512,11 +534,15 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
   const selectedDriverService = getClientSelectedDriverService(selectedServices);
   if (!selectedDriverService) return "";
 
-  const normalizedCategories = Array.isArray(selectedCategories)
-    ? (typeof normalizeDriverCategories === "function"
-        ? normalizeDriverCategories(selectedCategories)
-        : getClientDriverCategoryOptions().filter((item) => selectedCategories.includes(item)))
-    : CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
+  const isTractor = isTractorService(selectedDriverService);
+  const categoryRows = isTractor ? CLIENT_TRACTOR_CATEGORY_ROWS : CLIENT_DRIVER_CATEGORY_ROWS;
+  const normalizedCategories = isTractor
+    ? normalizeTractorCategories(Array.isArray(selectedCategories) ? selectedCategories : TRACTOR_DEFAULT_CATEGORIES)
+    : Array.isArray(selectedCategories)
+      ? (typeof normalizeDriverCategories === "function"
+          ? normalizeDriverCategories(selectedCategories)
+          : getClientDriverCategoryOptions().filter((item) => selectedCategories.includes(item)))
+      : CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
 
 
 
@@ -531,11 +557,11 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
   const boatFitChecked = Boolean(driverDetail.boatFit);
 
   return `
-    <div class="client-driver-classic">
+    <div class="client-driver-classic" data-client-certificate-kind="${isTractor ? "tractor" : "driver"}">
       <div class="client-driver-tabs">
         <button type="button">Основное</button>
-        <button type="button" class="active">Водительская</button>
-        <button type="button">Тракторная</button>
+        <button type="button" class="${isTractor ? "" : "active"}">Водительская</button>
+        <button type="button" class="${isTractor ? "active" : ""}">Тракторная</button>
       </div>
 
       <div class="client-driver-layout">
@@ -560,13 +586,13 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
 
         <div class="client-driver-categories">
           <div class="client-driver-category-row client-driver-category-row--top">
-            ${CLIENT_DRIVER_CATEGORY_ROWS[0].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${(categoryRows[0] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
           </div>
           <div class="client-driver-category-row">
-            ${CLIENT_DRIVER_CATEGORY_ROWS[1].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${(categoryRows[1] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
           </div>
           <div class="client-driver-category-row">
-            ${CLIENT_DRIVER_CATEGORY_ROWS[2].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${(categoryRows[2] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
 
 
 
@@ -578,7 +604,7 @@ function renderClientDriverClassicPanel(selectedServices = [], selectedCategorie
 
 
 
-            ${CLIENT_DRIVER_CATEGORY_ROWS[3].map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+            ${(categoryRows[3] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
           </div>
         </div>
 
@@ -618,9 +644,7 @@ function refreshClientDriverPanel() {
   if (!container) return;
   const selectedServices = getClientModalSelectedServicesFromDom();
   const selectedDriverDetail = getClientDriverDetailFromForm(selectedServices);
-  const selectedCategories = isClientDriverPanelRendered()
-    ? getClientDriverCategoriesFromForm()
-    : (Array.isArray(selectedDriverDetail.categories) ? selectedDriverDetail.categories : CLIENT_DRIVER_DEFAULT_CATEGORIES);
+  const selectedCategories = getClientCertificateCategoriesForPanel(selectedServices, selectedDriverDetail);
   container.innerHTML = renderClientDriverClassicPanel(selectedServices, selectedCategories, selectedDriverDetail);
   bindClientDriverCategoryCheckboxes();
 }
@@ -798,8 +822,8 @@ function removeClientSelectedService(serviceName = "") {
 
   const driverContainer = document.getElementById("clientDriverPanelContainer");
   if (driverContainer) {
-    const driverCategories = getClientDriverCategoriesFromForm();
     const driverDetail = getClientDriverDetailFromForm(selectedNow);
+    const driverCategories = getClientCertificateCategoriesForPanel(selectedNow, driverDetail);
     driverContainer.innerHTML = renderClientDriverClassicPanel(selectedNow, driverCategories, driverDetail);
     bindClientDriverCategoryCheckboxes();
   }
@@ -845,7 +869,10 @@ function buildClientServiceDetails(selectedServices = []) {
 
   const selectedDriverService = getClientSelectedDriverService(selectedServices);
   if (selectedDriverService) {
-    const categories = normalizeDriverCategories(getClientDriverCategoriesFromForm());
+    const categories = normalizeCertificateCategories(
+      selectedDriverService,
+      getClientCertificateCategoriesForPanel(selectedServices, getStoredClientDriverDetail(selectedServices)),
+    );
     const indications = getClientDriverFlagsFromForm("clientDriverIndication");
     const limitations = getClientDriverFlagsFromForm("clientDriverLimit");
     const boatFit = Boolean(actionModalContent.querySelector('input[name="clientDriverBoatFit"]')?.checked);
@@ -858,7 +885,7 @@ function buildClientServiceDetails(selectedServices = []) {
       boatFit,
       licenseRevoked: Boolean(actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked),
       unitPrice: Number(details[serviceId]?.unitPrice ?? (isDriverService(selectedDriverService) ? getDriverCategoryPrice(categories) : getDefaultServiceUnitPrice(selectedDriverService))),
-      autoDoctorRoles: getDriverRoleCodes(categories),
+      autoDoctorRoles: getCertificateRoleCodes(selectedDriverService, categories),
     };
   }
 
@@ -1129,9 +1156,10 @@ function openClientModal(clientId = null, options = {}) {
   // Открытая заново карточка показывает ровно те категории, ограничения и
   // показания, которые уже были выбраны для этого обращения.
   const initialDriverDetail = getStoredClientDriverDetail(initialSelectedServices);
+  const initialDriverService = getClientSelectedDriverService(initialSelectedServices);
   const initialDriverCategories = Array.isArray(initialDriverDetail.categories)
     ? initialDriverDetail.categories
-    : CLIENT_DRIVER_DEFAULT_CATEGORIES;
+    : (initialDriverService ? getCertificateDefaultCategories(initialDriverService) : CLIENT_DRIVER_DEFAULT_CATEGORIES);
   clientModalSubmitAction = "save";
   const modalTitle = encounterMode
     ? "Новое обращение"

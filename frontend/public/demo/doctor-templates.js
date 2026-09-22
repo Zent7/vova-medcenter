@@ -874,6 +874,17 @@
     { key: "categoryD1", label: "D1", type: "checkbox", defaultValue: false },
     { key: "categoryC1E", label: "C1E", type: "checkbox", defaultValue: false },
     { key: "categoryD1E", label: "D1E", type: "checkbox", defaultValue: false },
+    // Категории тракторной справки 071у. Как и у клиента, по умолчанию
+    // отмечены все.
+    { key: "tractorCategoryAI", label: "AI", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryAII", label: "AII", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryAIII", label: "AIII", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryAIV", label: "AIV", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryB", label: "B", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryC", label: "C", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryD", label: "D", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryE", label: "E", type: "checkbox", defaultValue: true },
+    { key: "tractorCategoryF", label: "F", type: "checkbox", defaultValue: true },
     { key: "categoryTractor", label: "тракторы (п.8.)", type: "checkbox", defaultValue: false },
     { key: "categoryBoat", label: "лайнеры и катера (п.9)", type: "checkbox", defaultValue: false },
     { key: "categorySailing", label: "парусный спорт", type: "checkbox", defaultValue: false },

@@ -636,8 +636,25 @@ const CHAIRMAN_FORM_CONFIGS = {
 const DRIVER_BASE_CATEGORIES = new Set(["A", "B", "M", "A1", "B1"]);
 const DRIVER_DEFAULT_CATEGORIES = ["B"];
 const DRIVER_CATEGORY_OPTIONS = ["A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E"];
+// У тракторной 071у свои категории — удостоверения тракториста-машиниста,
+// а не водительского. При выборе услуги отмечены все.
+const TRACTOR_CATEGORY_OPTIONS = ["AI", "AII", "AIII", "AIV", "B", "C", "D", "E", "F"];
+const TRACTOR_DEFAULT_CATEGORIES = TRACTOR_CATEGORY_OPTIONS;
 const DRIVER_CATEGORY_ADVANCED_ROLES = ["therapist", "ophthalmologist", "neurologist", "otolaryngologist", "chairman"];
 const DRIVER_CATEGORY_BASE_ROLES = ["therapist", "ophthalmologist", "chairman"];
+// На тракторную на любые категории идут терапевт, офтальмолог, психиатр и
+// нарколог, на C, D и E к ним добавляются невролог и отоларинголог.
+const TRACTOR_EXTENDED_CATEGORIES = new Set(["C", "D", "E"]);
+const TRACTOR_CATEGORY_BASE_ROLES = ["therapist", "psychiatrist", "psychiatrist-narcologist", "ophthalmologist", "chairman"];
+const TRACTOR_CATEGORY_ADVANCED_ROLES = [
+  "therapist",
+  "psychiatrist",
+  "psychiatrist-narcologist",
+  "ophthalmologist",
+  "neurologist",
+  "otolaryngologist",
+  "chairman",
+];
 const OPERATOR_SERVICE_PRIORITY_BY_LEGACY_ID = new Map([
   [8, 1],
   [29, 2],
@@ -1841,6 +1858,24 @@ function normalizeDriverCategories(categories) {
   return DRIVER_CATEGORY_OPTIONS.filter((item) => expanded.has(item));
 }
 
+// Тракторные категории тоже набирают кириллицей и арабскими цифрами
+// («А1», «В, С»). Правило повторяет tractor_category_tokens на бэкенде.
+const TRACTOR_CATEGORY_LETTER_ALIASES = { "А": "A", "Б": "B", "В": "B", "С": "C", "Д": "D", "Е": "E", "Ф": "F" };
+const TRACTOR_CATEGORY_ALIASES = { A1: "AI", A2: "AII", A3: "AIII", A4: "AIV" };
+
+function normalizeTractorCategoryToken(token) {
+  const latin = Array.from(String(token || "").trim().toUpperCase())
+    .map((letter) => TRACTOR_CATEGORY_LETTER_ALIASES[letter] || letter)
+    .join("");
+  return TRACTOR_CATEGORY_ALIASES[latin] || latin;
+}
+
+function normalizeTractorCategories(categories) {
+  const source = Array.isArray(categories) ? categories : String(categories || "").split(/[\s,;/]+/);
+  const selected = new Set(source.map(normalizeTractorCategoryToken).filter(Boolean));
+  return TRACTOR_CATEGORY_OPTIONS.filter((category) => selected.has(category));
+}
+
 function getDriverCategoryPrice(categories = []) {
   const normalized = normalizeDriverCategories(categories);
   if (!normalized.length) return 0;
@@ -1860,6 +1895,31 @@ function getDriverRoleCodes(categories = []) {
   if (!normalized.length) return [];
   const extended = normalized.some((category) => ["C", "D", "CE", "DE", "C1", "D1", "C1E", "D1E", "Tm", "Tb"].includes(category));
   return extended ? DRIVER_CATEGORY_ADVANCED_ROLES : DRIVER_CATEGORY_BASE_ROLES;
+}
+
+function getTractorRoleCodes(categories = []) {
+  const normalized = normalizeTractorCategories(categories);
+  if (!normalized.length) return [];
+  const extended = normalized.some((category) => TRACTOR_EXTENDED_CATEGORIES.has(category));
+  return extended ? TRACTOR_CATEGORY_ADVANCED_ROLES : TRACTOR_CATEGORY_BASE_ROLES;
+}
+
+// Панель категорий общая для водительской и тракторной справки, а набор
+// категорий, умолчание и врачи у каждой свои.
+function getCertificateCategoryOptions(service) {
+  return isTractorService(service) ? TRACTOR_CATEGORY_OPTIONS : DRIVER_CATEGORY_OPTIONS;
+}
+
+function getCertificateDefaultCategories(service) {
+  return (isTractorService(service) ? TRACTOR_DEFAULT_CATEGORIES : DRIVER_DEFAULT_CATEGORIES).slice();
+}
+
+function normalizeCertificateCategories(service, categories) {
+  return isTractorService(service) ? normalizeTractorCategories(categories) : normalizeDriverCategories(categories);
+}
+
+function getCertificateRoleCodes(service, categories = []) {
+  return isTractorService(service) ? getTractorRoleCodes(categories) : getDriverRoleCodes(categories);
 }
 
 const DRIVER_INDICATION_FIELD_TO_LABEL = {
@@ -1970,6 +2030,7 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
 
   return {
     ...fields,
+    ...(hasCategoryOverrides ? buildTractorCategoryChairmanFields(sourceCategories) : {}),
     serviceNames: Array.isArray(visit?.serviceNames) ? visit.serviceNames.join(", ") : (fields.serviceNames || ""),
     driverCategories: hasCategoryOverrides ? categories.join(", ") : (fields.driverCategories || ""),
     categoryA: hasCategoryOverrides ? categories.includes("A") : Boolean(fields.categoryA),
@@ -2013,6 +2074,37 @@ function applyDriverSelectionsToChairmanFields(fields = {}, detail = {}, visit =
   };
 }
 
+function getTractorCategoryFieldKey(category) {
+  return `tractorCategory${category}`;
+}
+
+function buildTractorCategoryChairmanFields(categories = []) {
+  const selected = normalizeTractorCategories(categories);
+  return Object.fromEntries(
+    TRACTOR_CATEGORY_OPTIONS.map((category) => [getTractorCategoryFieldKey(category), selected.includes(category)]),
+  );
+}
+
+// Галочки категорий в карточке председателя тракторной справки. В карточке,
+// сохранённой до тракторных категорий, их нет: B, C и D берём из её
+// водительских галочек — по ним на лицевой стороне печатались невролог и ЛОР.
+function getChairmanTractorCategories(fields = {}) {
+  const hasTractorFields = TRACTOR_CATEGORY_OPTIONS.some((category) =>
+    Object.hasOwn(fields, getTractorCategoryFieldKey(category)),
+  );
+  if (!hasTractorFields) return normalizeTractorCategories(collectChairmanDriverCategories(fields));
+  return TRACTOR_CATEGORY_OPTIONS.filter((category) => Boolean(fields[getTractorCategoryFieldKey(category)]));
+}
+
+function getChairmanTractorCategoryChecks(fields = {}) {
+  const selected = getChairmanTractorCategories(fields);
+  return TRACTOR_CATEGORY_OPTIONS.map((category) => ({
+    category,
+    fieldKey: getTractorCategoryFieldKey(category),
+    checked: selected.includes(category),
+  }));
+}
+
 function getDriverDetailFromVisit(visit) {
   if (!visit) return {};
   const serviceDetails = getVisitServiceDetails(visit);
@@ -2043,10 +2135,15 @@ function getDoctorRoleCodeById(roleId) {
 
 function getDoctorRoleCodeSetFromService(service, detail = {}, client = null) {
   if (!service) return new Set();
-  // Тракторная 071у заполняется по тем же правилам, что и водительская:
-  // на А и В — только терапевт с офтальмологом, на С и D добавляются
-  // невролог с отоларингологом. Список врачей услуги здесь не годится.
-  if (isDriverService(service) || isTractorService(service)) {
+  // Врачей справки назначают её категории, а не список врачей услуги.
+  // Тракторная 071у: терапевт, офтальмолог, психиатр и нарколог, на C, D и E
+  // добавляются невролог с отоларингологом. Без выбора — все категории.
+  if (isTractorService(service)) {
+    return new Set([...getTractorRoleCodes(detail.categories || TRACTOR_DEFAULT_CATEGORIES), "chairman"]);
+  }
+  // Водительская: на А и В — только терапевт с офтальмологом, на С и D
+  // добавляются невролог с отоларингологом.
+  if (isDriverService(service)) {
     return new Set([...getDriverRoleCodes(normalizeDriverCategories(detail.categories || DRIVER_DEFAULT_CATEGORIES)), "chairman"]);
   }
 
@@ -7533,7 +7630,10 @@ function renderVisitServicePicker(activeVisit) {
     .find((service) => isDriverService(service) || isTractorService(service));
   const selectedDriverId = selectedDriverService ? getServiceToken(selectedDriverService) : null;
   const driverDetail = selectedDriverId ? serviceDetails[selectedDriverId] || {} : {};
-  const driverCategories = normalizeDriverCategories(driverDetail.categories || activeVisit?.admissionCategory || getSelectedClient()?.admissionCategory || getSelectedClient()?.category);
+  // Категории клиента водительские, тракторной они не подходят.
+  const driverCategories = isTractorService(selectedDriverService)
+    ? normalizeTractorCategories(driverDetail.categories || TRACTOR_DEFAULT_CATEGORIES)
+    : normalizeDriverCategories(driverDetail.categories || activeVisit?.admissionCategory || getSelectedClient()?.admissionCategory || getSelectedClient()?.category);
   const driverPrice = Number(driverDetail.unitPrice ?? getVisitDriverServicePrice(selectedDriverService, driverCategories));
 
   return `
@@ -7592,13 +7692,13 @@ function renderVisitServicePicker(activeVisit) {
       ${
         selectedDriverService
           ? `
-            <div class="driver-category-panel">
+            <div class="driver-category-panel" data-category-service-id="${escapeHtml(selectedDriverId)}">
               <div class="driver-category-panel__head">
                 <strong>Категории ${isTractorService(selectedDriverService) ? "тракторной" : "водительской"} справки</strong>
                 <span>по ним назначаются врачи и считается цена</span>
               </div>
               <div class="driver-category-grid">
-                ${DRIVER_CATEGORY_OPTIONS.map(
+                ${getCertificateCategoryOptions(selectedDriverService).map(
                   (category) => `
                     <label class="driver-category-chip">
                       <input type="checkbox" name="driverCategory" value="${category}" ${driverCategories.includes(category) ? "checked" : ""} />
@@ -7614,7 +7714,7 @@ function renderVisitServicePicker(activeVisit) {
                 </label>
                 <div>
                   <span>Назначатся</span>
-                  <strong>${getDriverRoleCodes(driverCategories).map((code) => escapeHtml(getDoctorDisplayName(code))).join(", ")}</strong>
+                  <strong>${getCertificateRoleCodes(selectedDriverService, driverCategories).map((code) => escapeHtml(getDoctorDisplayName(code))).join(", ")}</strong>
                 </div>
               </div>
             </div>
@@ -11875,22 +11975,31 @@ function readOperatorVisitForm(form) {
     };
   });
 
-  const driverServiceId = serviceIds.find((serviceId) => {
-    const service = getServiceById(serviceId);
-    return isDriverService(service) || isTractorService(service);
-  });
+  // Панель категорий рисуется для одной справки. Только что отмеченная справка
+  // приходит без панели: у неё остаются прежние категории, а у новой
+  // тракторной отмечены все.
+  const categoryPanelServiceId = String(form.querySelector("[data-category-service-id]")?.dataset.categoryServiceId || "");
+  const driverServiceId = serviceIds.includes(categoryPanelServiceId)
+    ? categoryPanelServiceId
+    : serviceIds.find((serviceId) => {
+        const service = getServiceById(serviceId);
+        return isDriverService(service) || isTractorService(service);
+      });
   if (driverServiceId) {
     const driverService = getServiceById(driverServiceId);
-    const categories = Array.from(form.querySelectorAll('input[name="driverCategory"]:checked'))
-      .map((input) => input.value)
-      .filter(Boolean);
-    const normalizedCategories = normalizeDriverCategories(categories);
-    const driverPriceInput = String(formData.get("driverPrice") || "").replace(",", ".");
+    const hasCategoryPanel = driverServiceId === categoryPanelServiceId;
+    const categories = hasCategoryPanel
+      ? Array.from(form.querySelectorAll('input[name="driverCategory"]:checked'))
+          .map((input) => input.value)
+          .filter(Boolean)
+      : (serviceDetails[driverServiceId].categories ?? (isTractorService(driverService) ? TRACTOR_DEFAULT_CATEGORIES : []));
+    const normalizedCategories = normalizeCertificateCategories(driverService, categories);
+    const driverPriceInput = hasCategoryPanel ? String(formData.get("driverPrice") || "").replace(",", ".") : "";
     serviceDetails[driverServiceId] = {
       ...(serviceDetails[driverServiceId] || {}),
       categories: normalizedCategories,
       unitPrice: Number(driverPriceInput) || getVisitDriverServicePrice(driverService, normalizedCategories),
-      autoDoctorRoles: getDriverRoleCodes(normalizedCategories),
+      autoDoctorRoles: getCertificateRoleCodes(driverService, normalizedCategories),
     };
   }
 

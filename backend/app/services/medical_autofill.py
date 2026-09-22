@@ -12,7 +12,13 @@ from app.models.medical_record import MedicalRecord, MedicalRecordEntry
 from app.models.service import DoctorRole, Service, ServiceDoctorRole
 from app.models.template_phrase import TemplatePhrase
 from app.services.doctor_rules import should_include_doctor_role_for_client_sex
-from app.services.driver_rules import certificate_doctor_roles, is_driver_or_tractor_service
+from app.services.driver_rules import (
+    TRACTOR_CATEGORY_KEYS,
+    certificate_doctor_roles,
+    is_driver_or_tractor_service,
+    is_tractor_service,
+    tractor_certificate_doctor_roles,
+)
 
 
 NO_COMPLAINTS_TEXT = "в момент осмотра жалоб нет"
@@ -199,9 +205,14 @@ def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, se
             if isinstance(detail, dict) and "categories" in detail:
                 has_categories = True
                 selected.append(detail["categories"])
-        if not has_categories:
-            selected = [db.scalar(select(Client.admission_category).where(Client.id == encounter.client_id))]
-        allowed = certificate_doctor_roles(selected)
+        if is_tractor_service(service):
+            # Категории клиента водительские. Тракторная без выбранных
+            # категорий идёт на все, как отмечено при выборе услуги.
+            allowed = tractor_certificate_doctor_roles(selected if has_categories else TRACTOR_CATEGORY_KEYS)
+        else:
+            if not has_categories:
+                selected = [db.scalar(select(Client.admission_category).where(Client.id == encounter.client_id))]
+            allowed = certificate_doctor_roles(selected)
         roles = [role for role in roles if role.code in allowed]
     roles = [role for role in roles if role.code not in suppressed_role_ids]
     if not roles:
