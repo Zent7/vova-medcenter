@@ -10549,8 +10549,6 @@ async function openDriverPrintFlow(options = {}) {
     return `
       <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_front" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Печатать лицевую часть</button>
       <button type="button" class="driver-print-classic__button" data-driver-print-variant="driver_back" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Печатать оборот</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_front" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Лицевая трактора</button>
-      <button type="button" class="driver-print-classic__button" data-driver-print-variant="tractor_back" ${flowState.loading || !flowState.currentBlank || !flowState.template ? "disabled" : ""}>Оборот трактора</button>
     `;
   };
 
