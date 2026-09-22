@@ -18,6 +18,7 @@ from app.services.document_generator import (  # noqa: E402
     _build_miac_driver_xml,
     _build_miac_gims_xml,
     _build_miac_guard_xml,
+    _generate_miac_xml,
     _resolve_miac_issued_blank,
     generate_document,
 )
@@ -52,6 +53,8 @@ def make_client(*, address_text="г. Тверь", registration_text=""):
         address_text=address_text,
         registration_text=registration_text,
         snils="123-456-789 01",
+        admission_category="",
+        indications="",
     )
 
 
@@ -117,12 +120,91 @@ class MiacXmlTests(unittest.TestCase):
         self.assertEqual(request.findtext("mb:conclusion/mb:medConclusion/mb:indication", namespaces=ns), "true")
         self.assertEqual(request.findtext("mb:conclusion/mb:medConclusion/mb:restriction", namespaces=ns), "true")
         self.assertEqual(request.findtext("mb:category/mb:category/mb:categoryA", namespaces=ns), "true")
-        self.assertEqual(request.findtext("mb:category/mb:subCategory/mb:subCategoryA1", namespaces=ns), "false")
+        # A открывает A1 и M, как на бумажной справке.
+        self.assertEqual(request.findtext("mb:category/mb:category/mb:categoryM", namespaces=ns), "true")
+        self.assertEqual(request.findtext("mb:category/mb:subCategory/mb:subCategoryA1", namespaces=ns), "true")
         self.assertEqual(request.findtext("mb:category/mb:subCategory/mb:subCategoryB1", namespaces=ns), "true")
         self.assertEqual(request.findtext("mb:restrictions/mb:catAM", namespaces=ns), "false")
         self.assertEqual(request.findtext("mb:restrictions/mb:catBBE", namespaces=ns), "true")
         self.assertIn(b"&amp;", xml_bytes)
         self.assertIn(b"&lt;", xml_bytes)
+
+    def driver_request(self, client, exams):
+        tree = _build_miac_driver_xml(client, make_blank(), exams)
+        ns = {"soapenv": SOAP_NS, "mb": MIAC_NS}
+        return tree.getroot().find("soapenv:Body/mb:fillGibddBlankV4Request", ns), ns
+
+    def test_driver_xml_matches_customer_sample_for_category_b(self):
+        """Образец заказчика «Верная водительская»: B, терапевт и офтальмолог."""
+        request, ns = self.driver_request(
+            make_client(),
+            [
+                make_exam("chairman", fields={"conclusion": "Годен", "categoryB": True}, doctor="Сибирцев Вячеслав Александрович"),
+                make_exam("therapist", fields={"diagnosis": "Здоров"}, doctor="Сибирцев Вячеслав Александрович"),
+                make_exam("ophthalmologist", fields={"objective": "Норма"}, doctor="Цыганок Юлия Сергеевна"),
+            ],
+        )
+        inspection = request.find("mb:conclusion/mb:inspectionResult", ns)
+        self.assertEqual(
+            [(child.tag.split("}")[1], child.text) for child in inspection],
+            [
+                ("therapist", "Сибирцев В. А. Противопоказания Отсутствуют"),
+                ("ophthalmologist", "Цыганок Ю. С. Противопоказания Отсутствуют"),
+                ("psychiatrist", "Обследование врачом-психиатром"),
+                ("narcologist", "Обследование врачом-психиатром-наркологом"),
+                ("neurologist", "Не Установлено"),
+                ("otorhinolaryngologist", "Не Установлено"),
+                ("instrumentalResearch", "Не Установлено"),
+                ("laboratoryTest", "Не Установлено"),
+            ],
+        )
+        categories = request.find("mb:category", ns)
+        marked = [child.tag.split("}")[1] for child in categories.iter() if child.text == "true"]
+        self.assertEqual(marked, ["categoryB", "categoryM", "subCategoryB1"])
+        medical = request.find("mb:conclusion/mb:medConclusion", ns)
+        self.assertEqual(
+            [medical.findtext(f"mb:{tag}", namespaces=ns) for tag in ("contraindication", "indication", "restriction", "returnLicence")],
+            ["false", "false", "false", "false"],
+        )
+        self.assertEqual(medical.findtext("mb:fioDoctor", namespaces=ns), "Сибирцев Вячеслав Александрович")
+
+    def test_driver_xml_for_c_adds_neurologist_ent_eeg_and_licence_return(self):
+        request, ns = self.driver_request(
+            make_client(),
+            [
+                make_exam("chairman", fields={"conclusion": "Годен", "categoryC": True, "licenseRevoked": True}),
+                make_exam("therapist", doctor="Сибирцев Вячеслав Александрович"),
+                make_exam("ophthalmologist", doctor="Цыганок Юлия Сергеевна"),
+                make_exam("neurologist", doctor="Этчанов Сергей"),
+                make_exam("otolaryngologist", doctor="Изория Софья Георгиевна"),
+            ],
+        )
+        inspection = request.find("mb:conclusion/mb:inspectionResult", ns)
+        self.assertEqual(inspection.findtext("mb:neurologist", namespaces=ns), "Этчанов С. Противопоказания Отсутствуют")
+        self.assertEqual(inspection.findtext("mb:otorhinolaryngologist", namespaces=ns), "Изория С. Г. Противопоказания Отсутствуют")
+        self.assertEqual(inspection.findtext("mb:instrumentalResearch", namespaces=ns), "ЭЭГ Без Патологии")
+        # После лишения прав строку анализов на бумаге дописывают от руки, в XML она пустая.
+        self.assertEqual(inspection.findtext("mb:laboratoryTest", namespaces=ns), "")
+        self.assertEqual(request.findtext("mb:conclusion/mb:medConclusion/mb:returnLicence", namespaces=ns), "true")
+        self.assertEqual(request.findtext("mb:category/mb:subCategory/mb:subCategoryC1", namespaces=ns), "true")
+
+    def test_driver_xml_takes_indications_from_client_card_like_the_certificate_back(self):
+        client = make_client()
+        client.indications = "С использованием медицинских изделий для коррекции зрения"
+        request, ns = self.driver_request(client, [make_exam("chairman", fields={"conclusion": "Годен", "categoryB": True})])
+        self.assertEqual(request.findtext("mb:indications/mb:correctVision", namespaces=ns), "true")
+        self.assertEqual(request.findtext("mb:conclusion/mb:medConclusion/mb:indication", namespaces=ns), "true")
+
+    def test_miac_file_is_written_like_the_accepted_sample(self):
+        chairman = make_exam("chairman", fields={"conclusion": "Годен", "categoryB": True})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "driver.xml"
+            _generate_miac_xml(path, kind="driver", client=make_client(), blank_form=make_blank(), exams=[chairman])
+            text = path.read_bytes().decode("utf-8")
+        self.assertTrue(text.startswith('<?xml version="1.0" encoding="UTF-8"?>\n<soapenv:Envelope'))
+        self.assertIn("<mb:duplicateId></mb:duplicateId>", text)
+        self.assertNotIn("/>", text)
+        ET.fromstring(text.encode("utf-8"))
 
     def test_driver_uses_registration_address_as_type_zero(self):
         chairman = make_exam("chairman", fields={"conclusion": "Годен"})
@@ -166,6 +248,7 @@ class MiacXmlTests(unittest.TestCase):
         self.assertEqual(root.tag, f"{{{MIAC_NS}}}fillShipBlankRequset")
         self.assertEqual(root.findtext("mb:blankInfo/mb:id", namespaces=ns), "78 АА 1234567")
         self.assertEqual(root.findtext("mb:blankInfo/mb:duplicate/mb:isDuplicated", namespaces=ns), "false")
+        self.assertIsNone(root.find("mb:blankInfo/mb:duplicate/mb:duplicateId", ns))
         self.assertEqual(root.findtext("mb:clientInfo/mb:surname", namespaces=ns), "Иванов & Партнёры")
         self.assertEqual(root.findtext("mb:clientInfo/mb:birthday", namespaces=ns), "01.02.1980")
         self.assertEqual(root.findtext("mb:clientInfo/mb:snils", namespaces=ns), "12345678901")
@@ -177,6 +260,18 @@ class MiacXmlTests(unittest.TestCase):
         self.assertEqual(medical.findtext("mb:reexaminationAfterBan", namespaces=ns), "true")
         self.assertEqual(medical.findtext("mb:dateConclusion", namespaces=ns), "13.07.2026")
         self.assertEqual(medical.findtext("mb:fioDoctor", namespaces=ns), "Врач & Партнёр")
+
+    def test_gims_xml_reads_license_revocation_and_fit_conclusion_text(self):
+        chairman = make_exam(
+            "chairman",
+            fields={"conclusionText": "Медицинские противопоказания отсутствуют", "licenseRevoked": True},
+        )
+        medical = _build_miac_gims_xml(make_client(), make_blank(), [chairman]).getroot().find(
+            "mb:conclusion/mb:medConclusion", {"mb": MIAC_NS}
+        )
+        ns = {"mb": MIAC_NS}
+        self.assertEqual(medical.findtext("mb:contraindicationToManagement", namespaces=ns), "false")
+        self.assertEqual(medical.findtext("mb:reexaminationAfterBan", namespaces=ns), "true")
 
     def test_gims_xml_requires_snils(self):
         client = make_client()

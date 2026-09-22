@@ -84,6 +84,36 @@ XMLDSIG_NS = "http://www.w3.org/2000/09/xmldsig#"
 MIAC_DRIVER_TEMPLATE = "Водительская(новая).xml"
 MIAC_GUARD_TEMPLATE = "Чод_новый.xml"
 MIAC_GIMS_TEMPLATE = "ГИМС_шаблон_для_загрузки_из_файла.xml"
+# Поля водительского XML МИАЦ и категории справки, которые в них попадают.
+DRIVER_MIAC_CATEGORIES = (
+    ("categoryA", "A"),
+    ("categoryB", "B"),
+    ("categoryC", "C"),
+    ("categoryD", "D"),
+    ("categoryBE", "BE"),
+    ("categoryCE", "CE"),
+    ("categoryDE", "DE"),
+    ("categoryTm", "Tm"),
+    ("categoryTb", "Tb"),
+    ("categoryM", "M"),
+)
+DRIVER_MIAC_SUBCATEGORIES = (
+    ("subCategoryA1", "A1"),
+    ("subCategoryB1", "B1"),
+    ("subCategoryC1", "C1"),
+    ("subCategoryD1", "D1"),
+    ("subCategoryC1E", "C1E"),
+    ("subCategoryD1E", "D1E"),
+)
+# Отметки оборота справки (см. _driver_flag_context_values) и их поля в XML.
+DRIVER_MIAC_RESTRICTION_TOKENS = (("catAM", "TCA"), ("catBBE", "TCB"), ("catCCED", "TCC"))
+DRIVER_MIAC_INDICATION_TOKENS = (
+    ("manual", "ManualControlCalc"),
+    ("automatic", "AutomaticTransmissionCalc"),
+    ("parktronic", "ParkingSystemCalc"),
+    ("correctVision", "VisionTCCalc"),
+    ("lossHearing", "HearingTCCalc"),
+)
 # Справка ЛМК печатается на чистом листе А4, поэтому номерной бланк для неё
 # не расходуется, а порядковый номер подставляется в документ автоматически.
 LMK_CERTIFICATE_TEMPLATE = "ЛМК_справка_шаблон.docx"
@@ -860,11 +890,18 @@ def _validate_miac_values(
         raise ValueError("Невозможно сформировать XML МИАЦ. Заполните: " + ", ".join(missing))
 
 
-def _miac_exam_result(exam: DoctorExam | None) -> str:
-    if exam is None or not exam.is_completed or exam.deleted_at is not None:
-        return ""
-    data = _build_exam_export(exam)
-    return _first_non_empty(data.get("diagnosis"), data.get("objective"), data.get("title"))
+def _miac_is_unfit(fields: dict, conclusion: str) -> bool:
+    """Решение председателя: радиокнопка «Годен/Не годен», без неё — текст заключения.
+
+    «Противопоказания отсутствуют» тоже содержит слово «противопоказан», поэтому
+    по тексту противопоказания считаем выявленными, только если нет отрицания.
+    """
+    decision = _miac_text(fields.get("conclusion") or conclusion).casefold().replace("ё", "е")
+    if decision.startswith(("не годен", "негоден")):
+        return True
+    if "противопоказан" not in decision:
+        return False
+    return not re.search(r"не выявлен|не установлен|не имеет|отсутств|\bнет\b", decision)
 
 
 def _build_miac_guard_xml(
@@ -948,94 +985,58 @@ def _build_miac_driver_xml(
     for tag in ("place", "area", "city", "town", "street", "house", "building", "flat"):
         _miac_mb_add(address_node, tag, address[tag])
 
-    exams_by_role = _exam_map(exams)
+    # XML повторяет бумажную справку: те же строки осмотров, те же категории
+    # (B открывает B1 и M) и те же отметки показаний и ограничений с оборота.
+    therapist, ophthalmologist, neurologist, otolaryngologist, instrumental, laboratory = (
+        _driver_certificate_lines(client, _exam_map(exams))
+    )
+    selected = _driver_categories_for_documents(client, exams)
+    flags = _driver_flag_context_values(client, exams)
+    restriction_values = {tag: bool(flags[token]) for tag, token in DRIVER_MIAC_RESTRICTION_TOKENS}
+    indication_values = {tag: flags[token] == "true" for tag, token in DRIVER_MIAC_INDICATION_TOKENS}
+
     conclusion_node = _miac_mb_add(request, "conclusion")
     inspection = _miac_mb_add(conclusion_node, "inspectionResult")
-    inspection_roles = (
-        ("therapist", "therapist"),
-        ("ophthalmologist", "ophthalmologist"),
-        ("psychiatrist", "psychiatrist"),
-        ("narcologist", "psychiatrist-narcologist"),
-        ("neurologist", "neurologist"),
-        ("otorhinolaryngologist", "otolaryngologist"),
-    )
-    for tag, role in inspection_roles:
-        _miac_mb_add(inspection, tag, _miac_exam_result(exams_by_role.get(role)))
-    _miac_mb_add(
-        inspection,
-        "instrumentalResearch",
-        _exam_field(fields, "instrumentalResearch", "ekgConclusion", "ekg"),
-    )
-    _miac_mb_add(
-        inspection,
-        "laboratoryTest",
-        _exam_field(fields, "laboratoryTest", "laboratoryStudy", "laboratoryTests"),
-    )
+    # Психиатра и нарколога пациент проходит в диспансере. В образце заказчика,
+    # который МИАЦ принял, эти две строки заполнены постоянным текстом.
+    for tag, value in (
+        ("therapist", therapist),
+        ("ophthalmologist", ophthalmologist),
+        ("psychiatrist", "Обследование врачом-психиатром"),
+        ("narcologist", "Обследование врачом-психиатром-наркологом"),
+        ("neurologist", neurologist),
+        ("otorhinolaryngologist", otolaryngologist),
+        ("instrumentalResearch", instrumental),
+        ("laboratoryTest", laboratory),
+    ):
+        _miac_mb_add(inspection, tag, value)
 
-    indication_keys = (
-        "indicationManual",
-        "indicationAutomatic",
-        "indicationAcoustic",
-        "indicationGlasses",
-        "indicationHearingAid",
-    )
-    restriction_keys = ("restrictionAM", "restrictionBBE", "restrictionCCE")
-    decision = _miac_text(fields.get("conclusion") or conclusion).casefold().replace("ё", "е")
     medical = _miac_mb_add(conclusion_node, "medConclusion")
-    _miac_mb_add(
-        medical,
-        "contraindication",
-        _bool_text(decision.startswith("не годен") or decision.startswith("негоден")),
-    )
-    _miac_mb_add(medical, "indication", _bool_text(any(_truthy_driver_value(fields.get(key)) for key in indication_keys)))
-    _miac_mb_add(medical, "restriction", _bool_text(any(_truthy_driver_value(fields.get(key)) for key in restriction_keys)))
-    _miac_mb_add(medical, "returnLicence", "false")
+    _miac_mb_add(medical, "contraindication", _bool_text(_miac_is_unfit(fields, conclusion)))
+    _miac_mb_add(medical, "indication", _bool_text(any(indication_values.values())))
+    _miac_mb_add(medical, "restriction", _bool_text(any(restriction_values.values())))
+    _miac_mb_add(medical, "returnLicence", _bool_text(_truthy_driver_value(fields.get("licenseRevoked"))))
     _miac_mb_add(medical, "dateConclusion", conclusion_date.isoformat())
     _miac_mb_add(medical, "fioDoctor", doctor_name)
 
     category_node = _miac_mb_add(request, "category")
     categories = _miac_mb_add(category_node, "category")
-    category_fields = (
-        ("categoryA", "categoryA"),
-        ("categoryB", "categoryB"),
-        ("categoryC", "categoryC"),
-        ("categoryD", "categoryD"),
-        ("categoryBE", "categoryBE"),
-        ("categoryCE", "categoryCE"),
-        ("categoryDE", "categoryDE"),
-        ("categoryTm", "categoryTram"),
-        ("categoryTb", "categoryTrolleybus"),
-        ("categoryM", "categoryM"),
-        ("cat_tractor", "categoryTractor"),
-    )
-    for tag, field_key in category_fields:
-        _miac_mb_add(categories, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+    for tag, category in DRIVER_MIAC_CATEGORIES:
+        _miac_mb_add(categories, tag, _bool_text(category in selected))
+    _miac_mb_add(categories, "cat_tractor", _bool_text(_truthy_driver_value(fields.get("categoryTractor"))))
     _miac_mb_add(categories, "cat_vehicle", "false")
-    _miac_mb_add(categories, "cat_ship", _bool_text(_truthy_driver_value(fields.get("categoryBoat"))))
+    _miac_mb_add(categories, "cat_ship", flags["DriveShipCalc"])
 
     subcategories = _miac_mb_add(category_node, "subCategory")
-    for tag, field_key in (
-        ("subCategoryA1", "categoryA1"),
-        ("subCategoryB1", "categoryB1"),
-        ("subCategoryC1", "categoryC1"),
-        ("subCategoryD1", "categoryD1"),
-        ("subCategoryC1E", "categoryC1E"),
-        ("subCategoryD1E", "categoryD1E"),
-    ):
-        _miac_mb_add(subcategories, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+    for tag, category in DRIVER_MIAC_SUBCATEGORIES:
+        _miac_mb_add(subcategories, tag, _bool_text(category in selected))
 
     restrictions = _miac_mb_add(request, "restrictions")
-    for tag, field_key in (("catAM", "restrictionAM"), ("catBBE", "restrictionBBE"), ("catCCED", "restrictionCCE")):
-        _miac_mb_add(restrictions, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+    for tag, value in restriction_values.items():
+        _miac_mb_add(restrictions, tag, _bool_text(value))
     indications = _miac_mb_add(request, "indications")
-    for tag, field_key in (
-        ("manual", "indicationManual"),
-        ("automatic", "indicationAutomatic"),
-        ("parktronic", "indicationAcoustic"),
-        ("correctVision", "indicationGlasses"),
-        ("lossHearing", "indicationHearingAid"),
-    ):
-        _miac_mb_add(indications, tag, _bool_text(_truthy_driver_value(fields.get(field_key))))
+    for tag, value in indication_values.items():
+        _miac_mb_add(indications, tag, _bool_text(value))
     return ET.ElementTree(root)
 
 
@@ -1061,8 +1062,6 @@ def _build_miac_gims_xml(
     actual_address = _miac_text(client.address_text)
     address = _miac_address_parts(actual_address or _miac_text(client.registration_text))
     address_type = "1" if actual_address else "0"
-    decision = _miac_text(fields.get("conclusion") or conclusion).casefold().replace("ё", "е")
-    contraindication = decision.startswith("не годен") or decision.startswith("негоден") or "противопоказан" in decision
     restriction_keys = (
         "restrictionOnManagement",
         "restrictionAM",
@@ -1071,14 +1070,15 @@ def _build_miac_gims_xml(
         "restrictionNoHands",
         "restrictionNoLegs",
     )
-    reexamination_keys = ("reexaminationAfterBan", "returnLicence", "returnLicense")
+    # «Лишение прав» отмечают в карточке клиента, председателю оно приходит как licenseRevoked.
+    reexamination_keys = ("reexaminationAfterBan", "licenseRevoked", "returnLicence", "returnLicense")
 
     root = ET.Element(f"{{{MIAC_NS}}}fillShipBlankRequset")
     blank_info = _miac_mb_add(root, "blankInfo")
     _miac_mb_add(blank_info, "id", blank_form.full_number)
+    # В образце ГИМС от МИАЦ у неповторного бланка нет поля duplicateId.
     duplicate = _miac_mb_add(blank_info, "duplicate")
     _miac_mb_add(duplicate, "isDuplicated", "false")
-    _miac_mb_add(duplicate, "duplicateId")
     _miac_mb_add(blank_info, "isSpoiled", "false")
 
     client_info = _miac_mb_add(root, "clientInfo")
@@ -1097,7 +1097,7 @@ def _build_miac_gims_xml(
 
     conclusion_node = _miac_mb_add(root, "conclusion")
     medical = _miac_mb_add(conclusion_node, "medConclusion")
-    _miac_mb_add(medical, "contraindicationToManagement", _bool_text(contraindication))
+    _miac_mb_add(medical, "contraindicationToManagement", _bool_text(_miac_is_unfit(fields, conclusion)))
     _miac_mb_add(
         medical,
         "restrictionOnManagement",
@@ -1128,7 +1128,10 @@ def _generate_miac_xml(
     else:
         tree = _build_miac_guard_xml(client, blank_form, exams)
     ET.indent(tree, space="   ")
-    tree.write(output_path, encoding="utf-8", xml_declaration=True, short_empty_elements=True)
+    # Пишем так же, как образец заказчика, который МИАЦ уже принял: заголовок
+    # в двойных кавычках и пустое поле парой тегов <mb:town></mb:town>.
+    body = ET.tostring(tree.getroot(), encoding="unicode", short_empty_elements=False)
+    output_path.write_bytes(f'<?xml version="1.0" encoding="UTF-8"?>\n{body}\n'.encode("utf-8"))
 
 
 def _resolve_miac_issued_blank(
