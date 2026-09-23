@@ -1955,6 +1955,18 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 
+.client-driver-categories + .client-driver-categories {
+  margin-top: 4px;
+}
+
+.client-driver-categories__label {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  color: #17304a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .client-driver-category-row {
   display: contents;
 }

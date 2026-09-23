@@ -438,14 +438,30 @@ function getClientModalSelectedServicesFromDom() {
   return Array.from(clientModalSelectedServices);
 }
 
-function getClientSelectedDriverService(selectedServices = []) {
-  return selectedServices
-    .map((name) => getServerServiceByName(name) || structuredServices.find((service) => service.name === name))
-    .find((service) => service && (isDriverService(service) || isTractorService(service))) || null;
-}
-
-function getClientDriverCategoriesFromForm() {
-  const categoryInputs = Array.from(actionModalContent.querySelectorAll('input[name="clientDriverCategory"]'));
+// Водительскую и тракторную справку могут взять вместе, у каждой свои
+// категории. Водительская идёт первой: ограничения и показания — её.
+function getClientSelectedCertificateServices(selectedServices = []) {
+  const services = selectedServices
+    .map((name) => getServerServiceByName(name) || structuredServices.find((service) => service.name === name))
+    .filter((service) => service && (isDriverService(service) || isTractorService(service)));
+  return [
+    services.find((service) => !isTractorService(service)),
+    services.find((service) => isTractorService(service)),
+  ].filter(Boolean);
+}
+
+function getClientSelectedDriverService(selectedServices = []) {
+  return getClientSelectedCertificateServices(selectedServices)[0] || null;
+}
+
+// У галочек водительской и тракторной справки разные имена: наборы категорий
+// разные, а B, C и D есть в обоих.
+function getClientCategoryInputName(service) {
+  return isTractorService(service) ? "clientTractorCategory" : "clientDriverCategory";
+}
+
+function getClientDriverCategoriesFromForm(inputName = "clientDriverCategory") {
+  const categoryInputs = Array.from(actionModalContent.querySelectorAll(`input[name="${inputName}"]`));
   if (!categoryInputs.length) return CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
   const checked = categoryInputs.filter((input) => input.checked)
     .map((input) => input.value);
@@ -481,24 +497,19 @@ function getClientDriverFlagsFromForm(fieldName) {
 }
 
 function isClientDriverPanelRendered() {
-  return Boolean(actionModalContent?.querySelector('input[name="clientDriverCategory"]'));
+  return Boolean(actionModalContent?.querySelector(".client-driver-classic"));
 }
 
-function getClientCertificateKind(service) {
-  return isTractorService(service) ? "tractor" : "driver";
-}
-
-// Какие категории показать в панели. Отмеченное в ней переносим, только если
-// панель нарисована для справки того же вида: у водительской и тракторной
-// категории разные. Иначе — сохранённые у услуги или её умолчание.
-function getClientCertificateCategoriesForPanel(selectedServices = [], driverDetail = {}) {
-  const service = getClientSelectedDriverService(selectedServices);
-  const renderedKind = actionModalContent?.querySelector("[data-client-certificate-kind]")?.dataset.clientCertificateKind;
-  if (service && isClientDriverPanelRendered() && renderedKind === getClientCertificateKind(service)) {
-    return getClientDriverCategoriesFromForm();
+// Какие категории показать у справки: отмеченные в её галочках, если они уже
+// нарисованы, иначе сохранённые у услуги или её умолчание. При первой
+// отрисовке карточки форму не читаем — в ней может быть прошлое окно.
+function getClientCertificateCategoriesForPanel(service, detail = {}, readForm = true) {
+  const inputName = getClientCategoryInputName(service);
+  if (readForm && actionModalContent?.querySelector(`input[name="${inputName}"]`)) {
+    return getClientDriverCategoriesFromForm(inputName);
   }
-  if (Array.isArray(driverDetail.categories)) return driverDetail.categories;
-  return service ? getCertificateDefaultCategories(service) : CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
+  if (Array.isArray(detail.categories)) return detail.categories;
+  return getCertificateDefaultCategories(service);
 }
 
 function getStoredClientDriverDetail(selectedServices = []) {
@@ -530,141 +541,116 @@ function renderClientClassicCheckbox(name, value, label, checked = false) {
   `;
 }
 
-function renderClientDriverClassicPanel(selectedServices = [], selectedCategories = CLIENT_DRIVER_DEFAULT_CATEGORIES, driverDetail = {}) {
-  const selectedDriverService = getClientSelectedDriverService(selectedServices);
-  if (!selectedDriverService) return "";
-
-  const isTractor = isTractorService(selectedDriverService);
+function renderClientCertificateCategories(service, categories, withLabel = false) {
+  const isTractor = isTractorService(service);
+  const inputName = getClientCategoryInputName(service);
   const categoryRows = isTractor ? CLIENT_TRACTOR_CATEGORY_ROWS : CLIENT_DRIVER_CATEGORY_ROWS;
-  const normalizedCategories = isTractor
-    ? normalizeTractorCategories(Array.isArray(selectedCategories) ? selectedCategories : TRACTOR_DEFAULT_CATEGORIES)
-    : Array.isArray(selectedCategories)
-      ? (typeof normalizeDriverCategories === "function"
-          ? normalizeDriverCategories(selectedCategories)
-          : getClientDriverCategoryOptions().filter((item) => selectedCategories.includes(item)))
-      : CLIENT_DRIVER_DEFAULT_CATEGORIES.slice();
+  const normalizedCategories = normalizeCertificateCategories(service, categories);
+  return `
+        <div class="client-driver-categories" data-client-certificate-kind="${isTractor ? "tractor" : "driver"}">
+          ${withLabel ? `<span class="client-driver-categories__label">${isTractor ? "Тракторная" : "Водительская"}</span>` : ""}
+          ${categoryRows.map((row, index) => `
+            <div class="client-driver-category-row${index === 0 ? " client-driver-category-row--top" : ""}">
+              ${row.map((category) => renderClientClassicCheckbox(inputName, category, category, normalizedCategories.includes(category))).join("")}
+            </div>
+          `).join("")}
+        </div>
+  `;
+}
 
+function renderClientDriverClassicPanel(selectedServices = [], driverDetail = {}, readForm = true) {
+  const certificateServices = getClientSelectedCertificateServices(selectedServices);
+  const selectedDriverService = certificateServices[0];
+  if (!selectedDriverService) return "";
 
-
+  const isTractor = isTractorService(selectedDriverService);
+  const withLabel = certificateServices.length > 1;
+  const categoriesHtml = certificateServices.map((service, index) => {
+    const detail = index === 0 ? driverDetail : clientModalServiceDetails[getClientServiceDetailKey(service)] || {};
+    return renderClientCertificateCategories(service, getClientCertificateCategoriesForPanel(service, detail, readForm), withLabel);
+  }).join("");
   const selectedLimitations = Array.isArray(driverDetail.limitations) ? driverDetail.limitations : [];
-
-
-
   const selectedIndications = Array.isArray(driverDetail.indications) ? driverDetail.indications : [];
-
-
-
   const boatFitChecked = Boolean(driverDetail.boatFit);
-
-  return `
-    <div class="client-driver-classic" data-client-certificate-kind="${isTractor ? "tractor" : "driver"}">
-      <div class="client-driver-tabs">
+
+  return `
+    <div class="client-driver-classic">
+      <div class="client-driver-tabs">
         <button type="button">Основное</button>
         <button type="button" class="${isTractor ? "" : "active"}">Водительская</button>
         <button type="button" class="${isTractor ? "active" : ""}">Тракторная</button>
-      </div>
-
-      <div class="client-driver-layout">
-        <div class="client-driver-doctors">
+      </div>
+
+      <div class="client-driver-layout">
+        <div class="client-driver-doctors">
           ${["Терапевт", "Офтальмолог", "Невролог", "Оториноларинголог", "Инструментальное исследование"]
-            .map(
-              (label) => `
-                <label class="client-driver-doctor-field">
-                  <span>${label}</span>
-                  <select>
-                    <option>-</option>
-                  </select>
-                </label>
-              `,
-            )
-            .join("")}
-          <label class="client-driver-doctor-field">
+            .map(
+              (label) => `
+                <label class="client-driver-doctor-field">
+                  <span>${label}</span>
+                  <select>
+                    <option>-</option>
+                  </select>
+                </label>
+              `,
+            )
+            .join("")}
+          <label class="client-driver-doctor-field">
             <span>Лабораторные исследования</span>
             <input value="Не установлено" />
-          </label>
-        </div>
-
-        <div class="client-driver-categories">
-          <div class="client-driver-category-row client-driver-category-row--top">
-            ${(categoryRows[0] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
-          </div>
-          <div class="client-driver-category-row">
-            ${(categoryRows[1] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
-          </div>
-          <div class="client-driver-category-row">
-            ${(categoryRows[2] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
+          </label>
+        </div>
 
+        ${categoriesHtml}
 
-
-          </div>
-
-
-
-          <div class="client-driver-category-row">
-
-
-
-            ${(categoryRows[3] || []).map((category) => renderClientClassicCheckbox("clientDriverCategory", category, category, normalizedCategories.includes(category))).join("")}
-          </div>
-        </div>
-
-        <div class="client-driver-box client-driver-box--limits">
+        <div class="client-driver-box client-driver-box--limits">
           <strong>Мед. ограничения к упр-ию ТС</strong>
           ${CLIENT_DRIVER_LIMITATIONS.map((item) => renderClientClassicCheckbox("clientDriverLimit", item, item, isClientDriverFlagSelected(selectedLimitations, item))).join("")}
           <span class="client-driver-red-dot">•</span>
-        </div>
-
-        <div class="client-driver-box client-driver-box--indications">
+        </div>
+
+        <div class="client-driver-box client-driver-box--indications">
           <strong>Мед. показания к упр-ию ТС</strong>
           ${CLIENT_DRIVER_INDICATIONS.map((item) => renderClientClassicCheckbox("clientDriverIndication", item, item, selectedIndications.includes(item))).join("")}
-        </div>
-      </div>
-
+        </div>
+      </div>
+
         <label class="client-driver-revocation">
           <span>Лишение прав</span>
           <input type="checkbox" name="clientDriverLicenseRevoked" ${driverDetail.licenseRevoked ? "checked" : ""} />
         </label>
       <div class="client-driver-footer">
 
-        <label class="client-classic-checkbox client-classic-checkbox--inline">
+        <label class="client-classic-checkbox client-classic-checkbox--inline">
           <span>Годен к упр-ю маломер. судами</span>
           <input type="checkbox" name="clientDriverBoatFit" ${boatFitChecked ? "checked" : ""} />
-        </label>
-        <label class="client-driver-chief">
+        </label>
+        <label class="client-driver-chief">
           <span>Гл.врач</span>
           <input value="Сибирцев Вячеслав Александрович" />
-        </label>
-      </div>
-    </div>
-  `;
-}
-
-function refreshClientDriverPanel() {
-  const container = document.getElementById("clientDriverPanelContainer");
-  if (!container) return;
+        </label>
+      </div>
+    </div>
+  `;
+}
+
+function refreshClientDriverPanel() {
+  const container = document.getElementById("clientDriverPanelContainer");
+  if (!container) return;
   const selectedServices = getClientModalSelectedServicesFromDom();
-  const selectedDriverDetail = getClientDriverDetailFromForm(selectedServices);
-  const selectedCategories = getClientCertificateCategoriesForPanel(selectedServices, selectedDriverDetail);
-  container.innerHTML = renderClientDriverClassicPanel(selectedServices, selectedCategories, selectedDriverDetail);
-  bindClientDriverCategoryCheckboxes();
-}
-
-function bindClientDriverCategoryCheckboxes() {
-  actionModalContent.querySelectorAll('input[name="clientDriverCategory"]').forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      const selectedServices = getClientModalSelectedServicesFromDom();
-      const container = document.getElementById("clientDriverPanelContainer");
-      if (container) {
-        const selectedCategories = getClientDriverCategoriesFromForm();
-        const selectedDriverDetail = getClientDriverDetailFromForm(selectedServices);
-        container.innerHTML = renderClientDriverClassicPanel(selectedServices, selectedCategories, selectedDriverDetail);
-        bindClientDriverCategoryCheckboxes();
-      }
-      refreshClientPaymentPanel({ driverCategoriesChanged: true });
-    });
-  });
-}
-
+  container.innerHTML = renderClientDriverClassicPanel(selectedServices, getClientDriverDetailFromForm(selectedServices));
+  bindClientDriverCategoryCheckboxes();
+}
+
+function bindClientDriverCategoryCheckboxes() {
+  actionModalContent.querySelectorAll('input[name="clientDriverCategory"], input[name="clientTractorCategory"]').forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      refreshClientDriverPanel();
+      refreshClientPaymentPanel({ driverCategoriesChanged: true });
+    });
+  });
+}
+
 function getClientServiceItemsByNames(selectedServices = []) {
   return selectedServices
     .map((name) => getServerServiceByName(name) || structuredServices.find((service) => service.name === name))
@@ -822,9 +808,7 @@ function removeClientSelectedService(serviceName = "") {
 
   const driverContainer = document.getElementById("clientDriverPanelContainer");
   if (driverContainer) {
-    const driverDetail = getClientDriverDetailFromForm(selectedNow);
-    const driverCategories = getClientCertificateCategoriesForPanel(selectedNow, driverDetail);
-    driverContainer.innerHTML = renderClientDriverClassicPanel(selectedNow, driverCategories, driverDetail);
+    driverContainer.innerHTML = renderClientDriverClassicPanel(selectedNow, getClientDriverDetailFromForm(selectedNow));
     bindClientDriverCategoryCheckboxes();
   }
 
@@ -867,28 +851,31 @@ function buildClientServiceDetails(selectedServices = []) {
     };
   });
 
-  const selectedDriverService = getClientSelectedDriverService(selectedServices);
-  if (selectedDriverService) {
+  // Категории, врачи и цена — у каждой справки свои; ограничения и
+  // показания есть только у первой, водительской.
+  getClientSelectedCertificateServices(selectedServices).forEach((service, index) => {
+    const serviceId = getClientServiceDetailKey(service);
     const categories = normalizeCertificateCategories(
-      selectedDriverService,
-      getClientCertificateCategoriesForPanel(selectedServices, getStoredClientDriverDetail(selectedServices)),
+      service,
+      getClientCertificateCategoriesForPanel(service, clientModalServiceDetails[serviceId] || {}),
     );
-    const indications = getClientDriverFlagsFromForm("clientDriverIndication");
-    const limitations = getClientDriverFlagsFromForm("clientDriverLimit");
-    const boatFit = Boolean(actionModalContent.querySelector('input[name="clientDriverBoatFit"]')?.checked);
-    const serviceId = getClientServiceDetailKey(selectedDriverService);
-    details[serviceId] = {
+    const driverFlags = index === 0
+      ? {
+          indications: getClientDriverFlagsFromForm("clientDriverIndication"),
+          limitations: getClientDriverFlagsFromForm("clientDriverLimit"),
+          boatFit: Boolean(actionModalContent.querySelector('input[name="clientDriverBoatFit"]')?.checked),
+          licenseRevoked: Boolean(actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked),
+        }
+      : {};
+    details[serviceId] = {
       ...(details[serviceId] || {}),
       categories,
-      indications,
-      limitations,
-      boatFit,
-      licenseRevoked: Boolean(actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked),
-      unitPrice: Number(details[serviceId]?.unitPrice ?? (isDriverService(selectedDriverService) ? getDriverCategoryPrice(categories) : getDefaultServiceUnitPrice(selectedDriverService))),
-      autoDoctorRoles: getCertificateRoleCodes(selectedDriverService, categories),
-    };
-  }
-
+      ...driverFlags,
+      unitPrice: Number(details[serviceId]?.unitPrice ?? (isDriverService(service) ? getDriverCategoryPrice(categories) : getDefaultServiceUnitPrice(service))),
+      autoDoctorRoles: getCertificateRoleCodes(service, categories),
+    };
+  });
+
   return details;
 }
 
@@ -1156,10 +1143,6 @@ function openClientModal(clientId = null, options = {}) {
   // Открытая заново карточка показывает ровно те категории, ограничения и
   // показания, которые уже были выбраны для этого обращения.
   const initialDriverDetail = getStoredClientDriverDetail(initialSelectedServices);
-  const initialDriverService = getClientSelectedDriverService(initialSelectedServices);
-  const initialDriverCategories = Array.isArray(initialDriverDetail.categories)
-    ? initialDriverDetail.categories
-    : (initialDriverService ? getCertificateDefaultCategories(initialDriverService) : CLIENT_DRIVER_DEFAULT_CATEGORIES);
   clientModalSubmitAction = "save";
   const modalTitle = encounterMode
     ? "Новое обращение"
@@ -1393,7 +1376,7 @@ function openClientModal(clientId = null, options = {}) {
           ${renderClientServiceSelector(initialSelectedServices)}
         </div>
         <div id="clientDriverPanelContainer">
-          ${renderClientDriverClassicPanel(initialSelectedServices, initialDriverCategories, initialDriverDetail)}
+          ${renderClientDriverClassicPanel(initialSelectedServices, initialDriverDetail, false)}
         </div>
         <div id="clientPaymentContainer">
           ${renderClientPaymentRows(initialSelectedServices)}
