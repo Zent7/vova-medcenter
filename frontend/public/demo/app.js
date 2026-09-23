@@ -4173,6 +4173,14 @@ function getCurrentVisitForClient(clientId) {
   return getVisitsForClient(clientId)[0] || null;
 }
 
+// За один день у клиента бывает несколько обращений: ВУ и 071у — это две строки
+// журнала. Печатаем ту, что выбрал оператор: без неё «текущим» оказывается
+// последнее заведённое обращение (071у), и водительская справка уходит в его
+// строку. Договор так выбирает обращение с самого начала.
+function getSelectedJournalVisitForClient(clientId) {
+  return activateClientEncounter(clientId, appState.selectedEncounterId) || getCurrentVisitForClient(clientId);
+}
+
 // Услуги клиента, оформленные за один день в одном медцентре, — одна группа.
 // У каждой услуги своё обращение и своя строка журнала, но карточка клиента
 // показывает их вместе, а договор печатается один на всю группу. Так работает
@@ -4518,7 +4526,12 @@ async function loadEncountersForClient(client) {
       ...mappedVisits,
       ...data.visits.filter((visit) => String(visit.clientId) !== String(client.id) || !visit.backendId),
     ];
-    appState.activeVisitId = mappedVisits[0]?.id || null;
+    // Перезагрузка обращений не должна уводить работу на другую строку журнала:
+    // выбранное обращение остаётся активным, и только без него берём первое.
+    const selectedVisit = mappedVisits.find(
+      (visit) => String(visit.backendId) === String(appState.selectedEncounterId || ""),
+    );
+    appState.activeVisitId = (selectedVisit || mappedVisits[0])?.id || null;
   } catch (error) {
     showToast("Не удалось загрузить историю обращений клиента");
     console.warn("Failed to load encounters", error);
@@ -9756,7 +9769,7 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
     appState.activeVisitId = visit.id;
     persistDemoState();
     window.closeSportCard?.();
-    await openDriverPrintFlow();
+    await openDriverPrintFlow({ client, visit });
     return null;
   }
 
@@ -9768,6 +9781,8 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
     }
     window.closeSportCard?.();
     await openDriverPrintFlow({
+      client,
+      visit,
       ...(certificatePrintFlowOptions || {}),
       ...(numberedCertificateSeries
         ? {
@@ -9812,7 +9827,7 @@ async function openPrintFlowForVisit(client, visit) {
     appState.selectedClientId = client.id;
     appState.activeVisitId = visit.id;
     persistDemoState();
-    await openDriverPrintFlow();
+    await openDriverPrintFlow({ client, visit });
     return;
   }
 
@@ -10465,8 +10480,10 @@ function renderDriverFrontCheckPrompt() {
 
 async function openDriverPrintFlow(options = {}) {
   ensureVisitsStore();
-  const client = getSelectedClient();
-  const visit = client ? getCurrentVisitForClient(client.id) : null;
+  // Окно печати открывают из карточки врача и из журнала, и обращение там уже
+  // известно. Берём его, а не «последнее» обращение клиента.
+  const client = options.client || getSelectedClient();
+  const visit = options.visit || (client ? getSelectedJournalVisitForClient(client.id) : null);
   if (!client || !visit) {
     showToast("Сначала выбери клиента и обращение");
     return;
@@ -10673,6 +10690,8 @@ async function openDriverPrintFlow(options = {}) {
   const restartDriverPrintFlow = async () => {
     await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
     await openDriverPrintFlow({
+      client: flowState.client,
+      visit: flowState.visit,
       preselectedSeries: flowState.selectedSeries,
       certificateTypes: flowState.certificateTypes,
       selectedCertificateType: flowState.selectedCertificateType,
@@ -12892,7 +12911,12 @@ function bindContentEvents() {
         return;
       }
 
-      const activeVisit = getOrCreateDraftVisit(selectedClient.id);
+      // Кнопка врача в шапке открывает карточку выбранной строки журнала, а не
+      // последнего обращения клиента: иначе у пары ВУ + 071у она всегда
+      // открывалась на 071у.
+      const activeVisit =
+        activateClientEncounter(selectedClient.id, appState.selectedEncounterId) ||
+        getOrCreateDraftVisit(selectedClient.id);
       await loadDoctorExamsForClient(selectedClient, activeVisit);
       openDoctorExamCard({
         clientId: selectedClient.id,
@@ -13407,11 +13431,12 @@ function bindContentEvents() {
       const client = exam
         ? getClientPool().find((item) => String(item.id) === String(exam.clientId))
         : getSelectedClient();
-      const visit = exam
-        ? data.visits.find((item) => String(item.id) === String(exam.visitId))
-        : client
-          ? getCurrentVisitForClient(client.id)
-          : null;
+      // Обращение карточки может не оказаться в памяти после фоновой перезагрузки.
+      // Тогда печатаем выбранную строку журнала: без обращения справка ушла бы в
+      // последнее обращение клиента, а у пары ВУ + 071у это чужая строка.
+      const visit =
+        (exam ? data.visits.find((item) => String(item.id) === String(exam.visitId)) : null) ||
+        (client ? getSelectedJournalVisitForClient(client.id) : null);
       const printType = getChairmanTemplatePrintType(visit, printKind);
       const formInfo = getChairmanFormInfo(visit, client);
       if (formInfo.printMode === "driver-flow") {
@@ -13422,7 +13447,7 @@ function bindContentEvents() {
           persistDemoState();
         }
         window.closeDoctorExamCard?.();
-        await window.openDriverPrintFlow?.();
+        await window.openDriverPrintFlow?.({ client, visit });
         return;
       }
 
@@ -13437,6 +13462,8 @@ function bindContentEvents() {
         window.closeDoctorExamCard?.();
         const selectedFlowSeries = chairmanPrintBlankState.selectedSeries || numberedCertificateSeries;
         await window.openDriverPrintFlow?.({
+          client,
+          visit,
           ...(certificatePrintFlowOptions || {}),
           ...(numberedCertificateSeries
             ? {
@@ -13520,7 +13547,7 @@ function bindContentEvents() {
       }
 
       window.closeDoctorExamCard?.();
-      await window.openDriverPrintFlow?.();
+      await window.openDriverPrintFlow?.({ client, visit });
     };
 
     printButton.addEventListener("click", async (event) => {
