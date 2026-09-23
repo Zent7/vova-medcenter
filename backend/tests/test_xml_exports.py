@@ -18,7 +18,17 @@ from app.models.client import Client  # noqa: E402
 from app.models.document_template import DocumentTemplate  # noqa: E402
 from app.models.generated_document import GeneratedDocument  # noqa: E402
 from app.services.document_generator import generate_document  # noqa: E402
+from app.models.blank_form import (  # noqa: E402
+    BLANK_STATUS_ISSUED,
+    BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BlankBatch,
+    BlankForm,
+)
+from app.models.center import Center  # noqa: E402
+from app.models.doctor_exam import DoctorExam  # noqa: E402
+from app.models.encounter import Encounter  # noqa: E402
 from app.services.xml_exports import (  # noqa: E402
+    build_xml_day,
     build_xml_export_archive,
     cleanup_old_xml_exports,
     delete_xml_day,
@@ -213,6 +223,159 @@ class XmlExportsTests(unittest.TestCase):
         self.assertTrue(docx_path.exists())
         self.assertEqual(old_xml.file_delete_reason, "retention")
         self.assertIsNone(fresh_xml.file_deleted_at)
+
+
+class XmlDayBuildTests(XmlExportsTests):
+    def build_day_fixture(self, db, *, issued_at, completed_chairman=True, patient_number=1, last_name="Иванов"):
+        center = Center(code=f"center-{patient_number}", name="Медцентр")
+        client = Client(
+            patient_number=patient_number,
+            last_name=last_name,
+            first_name="Иван",
+            middle_name="Иванович",
+            birth_date=date(1980, 2, 1),
+            address_text="г. Тверь, ул. Советская, д. 1",
+        )
+        db.add_all([center, client])
+        db.flush()
+        encounter = Encounter(
+            center_id=center.id,
+            client_id=client.id,
+            encounter_date=issued_at.date(),
+            payment_type="cash",
+        )
+        db.add(encounter)
+        db.flush()
+        batch = BlankBatch(
+            center_id=center.id,
+            blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+            number_from=patient_number,
+            number_to=patient_number,
+            number_width=7,
+            quantity=1,
+        )
+        db.add(batch)
+        db.flush()
+        blank = BlankForm(
+            batch_id=batch.id,
+            center_id=center.id,
+            blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+            number_value=patient_number,
+            full_number=f"{patient_number:07d}",
+            status=BLANK_STATUS_ISSUED,
+            client_id=client.id,
+            encounter_id=encounter.id,
+            issued_at=issued_at,
+        )
+        db.add(blank)
+        db.add(
+            DoctorExam(
+                client_id=client.id,
+                encounter_id=encounter.id,
+                doctor_role_id="chairman",
+                doctor_name="Петров Пётр Петрович",
+                fields_json={"conclusion": "Годен"},
+                result_text="Годен",
+                is_completed=completed_chairman,
+                completed_at=issued_at if completed_chairman else None,
+            )
+        )
+        db.flush()
+        return client, blank
+
+    def add_driver_xml_template(self, db):
+        return self.add_template(db, "xml", self.templates_dir / "Водительская(новая).xml")
+
+    def test_build_day_creates_xml_for_issued_blanks(self):
+        issued_at = datetime(2026, 9, 22, 9, tzinfo=timezone.utc)
+        with self.session() as db:
+            self.add_driver_xml_template(db)
+            client, blank = self.build_day_fixture(db, issued_at=issued_at)
+            db.commit()
+
+            result = build_xml_day(db, "2026-09-22")
+            db.commit()
+
+            self.assertEqual(result.generated_count, 1)
+            self.assertEqual(result.skipped, [])
+            day = next(item for item in list_xml_export_days(db) if item.date == "2026-09-22")
+            self.assertEqual(day.blank_count, 1)
+            self.assertEqual(day.available_count, 1)
+
+        files = sorted((self.storage_dir / "xml" / "2026-09-22").iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertIn("0000001", files[0].read_text(encoding="utf-8"))
+
+    def test_rebuild_replaces_file_with_corrected_client_data(self):
+        issued_at = datetime(2026, 9, 22, 9, tzinfo=timezone.utc)
+        with self.session() as db:
+            self.add_driver_xml_template(db)
+            client, _ = self.build_day_fixture(db, issued_at=issued_at)
+            db.commit()
+            build_xml_day(db, "2026-09-22")
+            db.commit()
+
+            client.last_name = "Петров"
+            db.commit()
+
+            result = build_xml_day(db, "2026-09-22")
+            db.commit()
+
+            self.assertEqual(result.generated_count, 1)
+            self.assertEqual(result.replaced_count, 1)
+            day = next(item for item in list_xml_export_days(db) if item.date == "2026-09-22")
+            self.assertEqual(day.total_count, 1)
+            self.assertEqual(day.available_count, 1)
+            self.assertEqual(day.deleted_count, 0)
+
+            _, archive = build_xml_export_archive(db, "2026-09-22")
+
+        files = sorted((self.storage_dir / "xml" / "2026-09-22").iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertIn("<mb:surname>Петров</mb:surname>", files[0].read_text(encoding="utf-8"))
+        self.assertNotIn("<mb:surname>Иванов</mb:surname>", files[0].read_text(encoding="utf-8"))
+        self.assertIn(files[0].name.encode("utf-8"), archive)
+
+    def test_build_day_reports_clients_without_completed_chairman(self):
+        issued_at = datetime(2026, 9, 22, 9, tzinfo=timezone.utc)
+        with self.session() as db:
+            self.add_driver_xml_template(db)
+            self.build_day_fixture(db, issued_at=issued_at, completed_chairman=False)
+            db.commit()
+
+            result = build_xml_day(db, "2026-09-22")
+            db.commit()
+
+        self.assertEqual(result.generated_count, 0)
+        self.assertEqual(len(result.skipped), 1)
+        self.assertEqual(result.skipped[0].blank_number, "0000001")
+        self.assertIn("Иванов", result.skipped[0].client_name)
+        self.assertIn("председател", result.skipped[0].reason.lower())
+
+    def test_build_day_keeps_other_days_untouched(self):
+        with self.session() as db:
+            self.add_driver_xml_template(db)
+            self.build_day_fixture(db, issued_at=datetime(2026, 9, 21, 9, tzinfo=timezone.utc), patient_number=1)
+            self.build_day_fixture(
+                db,
+                issued_at=datetime(2026, 9, 22, 9, tzinfo=timezone.utc),
+                patient_number=2,
+                last_name="Сидоров",
+            )
+            db.commit()
+
+            build_xml_day(db, "2026-09-21")
+            db.commit()
+            result = build_xml_day(db, "2026-09-22")
+            db.commit()
+
+            self.assertEqual(result.generated_count, 1)
+            self.assertEqual(result.replaced_count, 0)
+            days = {item.date: item for item in list_xml_export_days(db)}
+
+        self.assertEqual(days["2026-09-21"].available_count, 1)
+        self.assertEqual(days["2026-09-22"].available_count, 1)
+        self.assertTrue((self.storage_dir / "xml" / "2026-09-21").is_dir())
 
 
 if __name__ == "__main__":

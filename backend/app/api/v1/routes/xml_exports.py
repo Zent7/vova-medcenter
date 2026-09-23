@@ -6,8 +6,15 @@ from app.api.v1.routes.auth import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.xml_export import XmlExportCleanupResponse, XmlExportDayRead, XmlExportDeleteResponse
+from app.schemas.xml_export import (
+    XmlExportBuildResponse,
+    XmlExportBuildSkip,
+    XmlExportCleanupResponse,
+    XmlExportDayRead,
+    XmlExportDeleteResponse,
+)
 from app.services.xml_exports import (
+    build_xml_day,
     build_xml_export_archive,
     cleanup_old_xml_exports,
     delete_xml_day,
@@ -24,6 +31,38 @@ def list_days(
     db: Session = Depends(get_db),
 ) -> list[XmlExportDayRead]:
     return [XmlExportDayRead(**day.__dict__) for day in list_xml_export_days(db)]
+
+
+@router.post("/days/{export_date}/build", response_model=XmlExportBuildResponse)
+def build_day(
+    export_date: str,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> XmlExportBuildResponse:
+    try:
+        result = build_xml_day(db, export_date)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except OSError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if result.generated_count:
+        message = f"Сформировано XML: {result.generated_count}."
+    else:
+        message = "За этот день нет готовых клиентов для XML."
+    if result.skipped:
+        message = f"{message} Без XML: {len(result.skipped)}."
+
+    return XmlExportBuildResponse(
+        date=result.date,
+        generated_count=result.generated_count,
+        replaced_count=result.replaced_count,
+        skipped=[XmlExportBuildSkip(**skip.__dict__) for skip in result.skipped],
+        message=message,
+    )
 
 
 @router.get("/days/{export_date}/archive")

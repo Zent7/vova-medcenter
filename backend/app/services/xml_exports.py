@@ -11,8 +11,30 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.blank_form import BLANK_STATUS_ISSUED, BlankForm
+from app.models.client import Client
 from app.models.document_template import DocumentTemplate
+from app.models.encounter import Encounter
 from app.models.generated_document import GeneratedDocument
+from app.services.document_generator import (
+    generate_miac_xml_for_blank,
+    miac_xml_blank_type,
+    miac_xml_templates_by_blank_type,
+)
+
+
+# Файлы, которые заменила повторная сборка дня: в выгрузке их больше нет.
+XML_REBUILT_REASON = "rebuilt"
+
+MIAC_BLANK_TYPES = tuple(
+    blank_type
+    for blank_type in (
+        miac_xml_blank_type("driver"),
+        miac_xml_blank_type("guard"),
+        miac_xml_blank_type("gims"),
+    )
+    if blank_type is not None
+)
 
 
 @dataclass(frozen=True)
@@ -21,12 +43,28 @@ class XmlExportDay:
     total_count: int
     available_count: int
     deleted_count: int
+    blank_count: int = 0
 
 
 @dataclass(frozen=True)
 class XmlDeleteResult:
     deleted_count: int
     missing_count: int
+
+
+@dataclass(frozen=True)
+class XmlBuildSkip:
+    client_name: str
+    blank_number: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class XmlBuildResult:
+    date: str
+    generated_count: int
+    replaced_count: int
+    skipped: list[XmlBuildSkip]
 
 
 def xml_exports_timezone() -> ZoneInfo:
@@ -50,8 +88,8 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _local_export_date(document: GeneratedDocument) -> date:
-    return _as_utc(document.generated_at).astimezone(xml_exports_timezone()).date()
+def _local_date(value: datetime) -> date:
+    return _as_utc(value).astimezone(xml_exports_timezone()).date()
 
 
 def _parse_export_date(value: str) -> date:
@@ -79,11 +117,60 @@ def _xml_documents_query():
     )
 
 
+def _xml_document_days(db: Session) -> list[tuple[GeneratedDocument, date]]:
+    """XML лежит в дне выдачи бланка, а не в дне генерации.
+
+    Иначе пересборка дня на следующее утро переносила бы файлы в новый день, и
+    за вчера выгрузка осталась бы пустой.
+    """
+
+    rows = db.execute(
+        _xml_documents_query()
+        .outerjoin(BlankForm, GeneratedDocument.blank_form_id == BlankForm.id)
+        .add_columns(BlankForm.issued_at)
+    ).all()
+    return [
+        (
+            document,
+            _local_date(issued_at) if issued_at is not None else _local_date(document.generated_at),
+        )
+        for document, issued_at in rows
+    ]
+
+
+def _issued_miac_blanks(db: Session) -> list[BlankForm]:
+    """Выданные бланки ВУ, ЧОД и ГИМС живых клиентов — основа дневной выгрузки."""
+
+    return list(
+        db.execute(
+            select(BlankForm)
+            .join(Client, BlankForm.client_id == Client.id)
+            .join(Encounter, BlankForm.encounter_id == Encounter.id)
+            .where(
+                BlankForm.status == BLANK_STATUS_ISSUED,
+                BlankForm.blank_type.in_(MIAC_BLANK_TYPES),
+                BlankForm.issued_at.is_not(None),
+                Client.deleted_at.is_(None),
+                Encounter.deleted_at.is_(None),
+            )
+            .order_by(BlankForm.issued_at, BlankForm.id)
+        )
+        .scalars()
+        .all()
+    )
+
+
 def list_xml_export_days(db: Session) -> list[XmlExportDay]:
     totals: dict[str, dict[str, int]] = {}
-    for document in db.execute(_xml_documents_query()).scalars().all():
-        day = _local_export_date(document).isoformat()
-        counts = totals.setdefault(day, {"total": 0, "available": 0, "deleted": 0})
+
+    def day_counts(day: str) -> dict[str, int]:
+        return totals.setdefault(day, {"total": 0, "available": 0, "deleted": 0, "blanks": 0})
+
+    for document, export_date in _xml_document_days(db):
+        if document.file_delete_reason == XML_REBUILT_REASON:
+            # Файл заменила пересборка дня, показывать его как удалённый незачем.
+            continue
+        counts = day_counts(export_date.isoformat())
         counts["total"] += 1
         path = _document_path(document)
         if document.file_deleted_at is None and path.is_file() and _is_safe_generated_path(path):
@@ -91,12 +178,16 @@ def list_xml_export_days(db: Session) -> list[XmlExportDay]:
         else:
             counts["deleted"] += 1
 
+    for blank in _issued_miac_blanks(db):
+        day_counts(_local_date(blank.issued_at).isoformat())["blanks"] += 1
+
     return [
         XmlExportDay(
             date=day,
             total_count=counts["total"],
             available_count=counts["available"],
             deleted_count=counts["deleted"],
+            blank_count=counts["blanks"],
         )
         for day, counts in sorted(totals.items(), reverse=True)
     ]
@@ -104,11 +195,7 @@ def list_xml_export_days(db: Session) -> list[XmlExportDay]:
 
 def xml_documents_for_day(db: Session, export_date: str) -> list[GeneratedDocument]:
     target_date = _parse_export_date(export_date)
-    return [
-        document
-        for document in db.execute(_xml_documents_query()).scalars().all()
-        if _local_export_date(document) == target_date
-    ]
+    return [document for document, day in _xml_document_days(db) if day == target_date]
 
 
 def build_xml_export_archive(db: Session, export_date: str) -> tuple[str, bytes]:
@@ -195,10 +282,70 @@ def cleanup_old_xml_exports(db: Session, retention_days: int | None = None) -> X
     cutoff_date = (datetime.combine(datetime.now(tzinfo).date(), time.min, tzinfo=tzinfo) - timedelta(days=days)).date()
     deleted = 0
     missing = 0
-    for document in db.execute(_xml_documents_query()).scalars().all():
-        if _local_export_date(document) >= cutoff_date:
+    for document, export_date in _xml_document_days(db):
+        if export_date >= cutoff_date:
             continue
         result = delete_xml_document_file(db, document, "retention")
         deleted += result.deleted_count
         missing += result.missing_count
     return XmlDeleteResult(deleted_count=deleted, missing_count=missing)
+
+
+def _blank_client_name(db: Session, blank: BlankForm) -> str:
+    client = db.get(Client, blank.client_id) if blank.client_id else None
+    if client is None:
+        return ""
+    parts = [client.last_name, client.first_name, client.middle_name]
+    return " ".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def build_xml_day(db: Session, export_date: str) -> XmlBuildResult:
+    """Собирает XML за день заново по текущим данным готовых клиентов.
+
+    Старые файлы дня заменяются: справку могли перепечатать после правки данных,
+    и в выгрузку должен попасть только последний вариант каждого выданного бланка.
+    """
+
+    target_date = _parse_export_date(export_date)
+    blanks = [blank for blank in _issued_miac_blanks(db) if _local_date(blank.issued_at) == target_date]
+    templates = miac_xml_templates_by_blank_type(db)
+
+    replaced = 0
+    for document, day in _xml_document_days(db):
+        if day != target_date:
+            continue
+        replaced += delete_xml_document_file(db, document, XML_REBUILT_REASON).deleted_count
+
+    output_dir = _xml_root() / target_date.isoformat()
+    generated = 0
+    skipped: list[XmlBuildSkip] = []
+    for blank in blanks:
+        template = templates.get(blank.blank_type)
+        if template is None:
+            skipped.append(
+                XmlBuildSkip(
+                    client_name=_blank_client_name(db, blank),
+                    blank_number=blank.full_number,
+                    reason="Не найден XML-шаблон МИАЦ для этого типа бланка",
+                )
+            )
+            continue
+        try:
+            generate_miac_xml_for_blank(db, template=template, blank_form=blank, output_dir=output_dir)
+        except ValueError as exc:
+            skipped.append(
+                XmlBuildSkip(
+                    client_name=_blank_client_name(db, blank),
+                    blank_number=blank.full_number,
+                    reason=str(exc),
+                )
+            )
+            continue
+        generated += 1
+
+    return XmlBuildResult(
+        date=target_date.isoformat(),
+        generated_count=generated,
+        replaced_count=replaced,
+        skipped=skipped,
+    )

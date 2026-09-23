@@ -3343,6 +3343,11 @@ function isXmlGeneratedDocument(documentItem) {
   return type === "xml" || fileName.endsWith(".xml");
 }
 
+// Файл, который заменила повторная сборка дня: в списках он лишний шум.
+function isSupersededXmlDocument(documentItem) {
+  return String(documentItem?.fileDeleteReason || "") === "rebuilt";
+}
+
 function buildWordProtocolUrl(fileUrl) {
   return `ms-word:ofv|u|${encodeURI(fileUrl)}`;
 }
@@ -3480,6 +3485,12 @@ async function downloadGeneratedDocument(documentItem) {
 
 async function downloadXmlExportDayArchive(exportDate) {
   return downloadAuthorizedFileUrl(buildXmlExportArchiveUrl(exportDate), `xml-export-${exportDate}.zip`);
+}
+
+async function buildXmlExportDay(exportDate) {
+  const result = await apiRequest(`/xml-exports/days/${encodeURIComponent(exportDate)}/build`, { method: "POST" });
+  await loadWorkflowData();
+  return result;
 }
 
 async function deleteXmlExportDay(exportDate) {
@@ -8864,19 +8875,25 @@ function renderXmlExportDaysPanel() {
                   const availableCount = Number(day.available_count || 0);
                   const totalCount = Number(day.total_count || 0);
                   const deletedCount = Number(day.deleted_count || 0);
+                  const blankCount = Number(day.blank_count || 0);
                   return `
                     <div class="chart-list__row">
                       <div>
                         <strong>${escapeHtml(formatApiDate(exportDate) || exportDate)}</strong>
-                        <small>${escapeHtml(`XML: ${availableCount} доступно из ${totalCount}`)}</small>
+                        <small>${escapeHtml(`Выдано бланков: ${blankCount} · XML: ${availableCount} доступно из ${totalCount}`)}</small>
                         ${deletedCount ? `<small class="blank-badge">Удалено: ${escapeHtml(deletedCount)}</small>` : ""}
                       </div>
                       <div class="document-actions">
                         ${
+                          blankCount
+                            ? `<button class="primary-button" data-build-xml-export-day="${escapeHtml(exportDate)}">Сформировать файл</button>`
+                            : ""
+                        }
+                        ${
                           availableCount
                             ? `<button class="ghost-button" data-download-xml-export-day="${escapeHtml(exportDate)}">Скачать ZIP</button>
                                <button class="ghost-button danger-button" data-delete-xml-export-day="${escapeHtml(exportDate)}">Удалить день</button>`
-                            : `<span class="calendar-status calendar-status--done">Файлы удалены</span>`
+                            : `<span class="calendar-status calendar-status--done">${blankCount ? "XML ещё не сформирован" : "Файлы удалены"}</span>`
                         }
                       </div>
                     </div>
@@ -8892,12 +8909,14 @@ function renderXmlExportDaysPanel() {
 }
 
 function renderXmlPage() {
-  const xmlDocuments = (data.generatedDocuments || []).filter(isXmlGeneratedDocument);
+  const xmlDocuments = (data.generatedDocuments || []).filter(
+    (item) => isXmlGeneratedDocument(item) && !isSupersededXmlDocument(item),
+  );
   return `
     ${renderWorkflowLoadState()}
     <section class="card">
       <h3>XML</h3>
-      <p class="muted">Дневные XML-пачки для ручной загрузки на госсайт. XML сохраняются по датам, их можно скачать ZIP-архивом или удалить из хранилища.</p>
+      <p class="muted">Дневные XML-пачки для ручной загрузки на госсайт. «Сформировать файл» собирает XML заново по текущим данным клиентов с выданными за этот день бланками ВУ, ЧОД и ГИМС и сразу отдаёт ZIP: после правки данных и повторной печати справки достаточно нажать кнопку ещё раз.</p>
     </section>
     ${renderXmlExportDaysPanel()}
     ${renderGeneratedDocumentsTable(xmlDocuments)}
@@ -9673,62 +9692,7 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
 
   const documentItem = registerGeneratedDocument(result, type, client, visit);
   await refreshDocumentWorkflowState(clientId, visit.backendId || null);
-  if (shouldAutoGenerateXmlForCertificate(type) && options.autoXml !== false) {
-    await ensureXmlAfterDriverCertificate(client, visit, { blankFormId: result.blank_form_id });
-  }
   return documentItem;
-}
-
-function hasAvailableXmlDocumentForVisit(visit) {
-  if (!visit) return false;
-  const encounterId = visit.backendId || null;
-  return (data.generatedDocuments || []).some((documentItem) => {
-    if (!isXmlGeneratedDocument(documentItem) || documentItem.fileDeletedAt) return false;
-    if (encounterId) return String(documentItem.encounterId || "") === String(encounterId);
-    return String(documentItem.visitId || "") === String(visit.id || "");
-  });
-}
-
-async function ensureXmlDocumentForVisit(client, visit, options = {}) {
-  if (!client || !visit) return null;
-  if (!data.documentTemplatesLoaded) {
-    await loadDocumentTemplatesFromBackend();
-  }
-  if (!pickDocumentTemplate("xml", visit, client)) {
-    return null;
-  }
-  if (!data.workflowDataLoading) {
-    await loadWorkflowData({
-      clientId: client.backendId || client.id || null,
-      encounterId: visit.backendId || null,
-    });
-  }
-  if (hasAvailableXmlDocumentForVisit(visit)) {
-    return null;
-  }
-  return createDocumentForVisit("xml", client, visit, {
-    blankFormId: options.blankFormId || null,
-    autoXml: false,
-  });
-}
-
-async function ensureXmlAfterDriverCertificate(client, visit, options = {}) {
-  try {
-    const xmlDocument = await ensureXmlDocumentForVisit(client, visit, options);
-    if (xmlDocument) {
-      showToast(`XML-файл сформирован: ${xmlDocument.fileName || xmlDocument.title}`);
-    }
-    return xmlDocument;
-  } catch (error) {
-    console.warn("Не удалось автоматически сформировать XML", error);
-    showToast(humanizeApiError(error, "Справка сформирована, но XML автоматически не создался"));
-    return null;
-  }
-}
-
-function shouldAutoGenerateXmlForCertificate(type) {
-  const normalizedType = String(type || "").toLowerCase();
-  return ["driver", "guard", "chod"].includes(normalizedType);
 }
 
 async function printDocumentForVisit(type, client, visit, options = {}) {
@@ -10710,7 +10674,7 @@ async function openDriverPrintFlow(options = {}) {
     }
   };
 
-  const handleStandardPrintResult = async (result, printedDocument, { skipXmlExport = false } = {}) => {
+  const handleStandardPrintResult = async (result, printedDocument) => {
     openActionModal(
       "Результат печати",
       renderDriverPrintResultPrompt({
@@ -10726,9 +10690,6 @@ async function openDriverPrintFlow(options = {}) {
         await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
         actionModal.classList.add("hidden");
         showToast(`Печать подтверждена: ${printedDocument.blankNumber || printedDocument.title}`);
-        if (!skipXmlExport) {
-          await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
-        }
       } catch (error) {
         showToast(humanizeApiError(error, "Не удалось подтвердить печать"));
       }
@@ -10810,24 +10771,18 @@ async function openDriverPrintFlow(options = {}) {
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
       await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-      if (!tractorVariant) {
-        await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
-      }
       if (skipConfirmation) {
         try {
           await markPrintedDocument(result.generated_document_id, true);
           actionModal.classList.add("hidden");
           showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
-          if (!tractorVariant) {
-            await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
-          }
         } catch (error) {
           showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
       } else if (isFrontDriverPrintVariant(variant.id)) {
         await handleFrontPrintResult(result);
       } else {
-        await handleStandardPrintResult(result, printedDocument, { skipXmlExport: tractorVariant });
+        await handleStandardPrintResult(result, printedDocument);
       }
     } catch (error) {
       if (options.targetWindow && !options.targetWindow.closed) {
@@ -10865,9 +10820,6 @@ async function openDriverPrintFlow(options = {}) {
       };
       await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
       showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
-      if (shouldAutoGenerateXmlForCertificate(finalCertificateType)) {
-        await ensureXmlAfterDriverCertificate(client, visit, { blankFormId: flowState.currentBlank.id });
-      }
     } catch (error) {
       if (options.targetWindow && !options.targetWindow.closed) {
         options.targetWindow.close();
@@ -11179,9 +11131,10 @@ function renderDocumentsPage() {
   const activeVisit = selectedClient ? getCurrentVisitForClient(selectedClient.id) : null;
   const visitDocuments = activeVisit ? getDocumentsForVisit(activeVisit.id) : [];
   const backendEncounterId = activeVisit?.backendId || null;
-  const visibleGeneratedDocuments = backendEncounterId
+  const visibleGeneratedDocuments = (backendEncounterId
     ? data.generatedDocuments.filter((item) => String(item.encounterId || "") === String(backendEncounterId))
-    : data.generatedDocuments;
+    : data.generatedDocuments
+  ).filter((item) => !isSupersededXmlDocument(item));
 
   return `
     ${renderWorkflowLoadState()}
@@ -12713,6 +12666,50 @@ function bindContentEvents() {
   contentRoot.querySelectorAll("[data-open-document-id]").forEach((button) => {
     button.addEventListener("click", () => {
       openDemoDocument(button.dataset.openDocumentId);
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-build-xml-export-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const exportDate = button.dataset.buildXmlExportDay || "";
+      if (!exportDate) return;
+      button.disabled = true;
+      try {
+        const result = await buildXmlExportDay(exportDate);
+        const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
+        if (Number(result?.generated_count || 0) > 0) {
+          await downloadXmlExportDayArchive(exportDate);
+        }
+        showToast(result?.message || "XML за день сформированы");
+        if (skipped.length) {
+          openActionModal(
+            `Без XML за ${formatApiDate(exportDate) || exportDate}`,
+            `
+              <p class="muted">Эти клиенты не попали в выгрузку. Дозаполните данные и сформируйте файл заново.</p>
+              <div class="chart-list">
+                ${skipped
+                  .map(
+                    (item) => `
+                      <div class="chart-list__row">
+                        <div>
+                          <strong>${escapeHtml(item.client_name || "Без имени")}${
+                            item.blank_number ? ` · бланк ${escapeHtml(item.blank_number)}` : ""
+                          }</strong>
+                          <small>${escapeHtml(item.reason || "")}</small>
+                        </div>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `,
+          );
+        }
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось сформировать XML за день"));
+      } finally {
+        button.disabled = false;
+      }
     });
   });
 

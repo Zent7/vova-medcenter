@@ -18,7 +18,7 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 import xlrd
 import xlwt
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 from xlrd import xldate
 from xlrd.compdoc import CompDoc
@@ -29,6 +29,8 @@ from app.models.blank_form import (
     BLANK_STATUS_FREE,
     BLANK_STATUS_ISSUED,
     BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
     BlankForm,
 )
 from app.models.center import Center
@@ -1134,6 +1136,90 @@ def _generate_miac_xml(
     # в двойных кавычках и пустое поле парой тегов <mb:town></mb:town>.
     body = ET.tostring(tree.getroot(), encoding="unicode", short_empty_elements=False)
     output_path.write_bytes(f'<?xml version="1.0" encoding="UTF-8"?>\n{body}\n'.encode("utf-8"))
+
+
+def miac_xml_blank_type(kind: str) -> str | None:
+    return {
+        "driver": BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+        "guard": BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE,
+        "gims": BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE,
+    }.get(kind)
+
+
+def miac_xml_templates_by_blank_type(db: Session) -> dict[str, DocumentTemplate]:
+    """Активные XML-шаблоны МИАЦ, разложенные по типу номерного бланка."""
+
+    templates: dict[str, DocumentTemplate] = {}
+    for template in db.execute(
+        select(DocumentTemplate)
+        .where(func.lower(DocumentTemplate.template_type) == "xml")
+        .order_by(DocumentTemplate.is_active.desc(), DocumentTemplate.id.desc())
+    ).scalars().all():
+        kind = _miac_xml_kind(template)
+        blank_type = miac_xml_blank_type(kind) if kind else None
+        if blank_type is not None:
+            templates.setdefault(blank_type, template)
+    return templates
+
+
+def generate_miac_xml_for_blank(
+    db: Session,
+    *,
+    template: DocumentTemplate,
+    blank_form: BlankForm,
+    output_dir: Path,
+) -> GeneratedDocument:
+    """XML МИАЦ по уже выданному бланку из текущих данных базы.
+
+    Без журналов, медкарты и выдачи номеров: их сделала печать справки, а дневную
+    выгрузку пересобирают сколько угодно раз после правки данных клиента.
+    """
+
+    kind = _miac_xml_kind(template)
+    if kind is None:
+        raise ValueError(f"Шаблон {template.name!r} не является XML-шаблоном МИАЦ")
+
+    client = db.get(Client, blank_form.client_id) if blank_form.client_id else None
+    if client is None or client.deleted_at is not None:
+        raise ValueError("Клиент бланка не найден")
+    encounter = db.get(Encounter, blank_form.encounter_id) if blank_form.encounter_id else None
+    if encounter is None or encounter.deleted_at is not None:
+        raise ValueError("Обращение бланка не найдено")
+
+    exams = list(_load_encounter_document_values(db, client, encounter)["exams"])
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file_name = f"{Path(template.file_name).stem}_{client.id}_{blank_form.id}_{timestamp}.xml"
+    output_path = output_dir / output_file_name
+
+    try:
+        _generate_miac_xml(
+            output_path,
+            kind=kind,
+            client=client,
+            blank_form=blank_form,
+            exams=exams,
+        )
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        raise
+
+    generated_document = GeneratedDocument(
+        encounter_id=encounter.id,
+        client_id=client.id,
+        template_id=template.id,
+        document_number=blank_form.full_number,
+        series=blank_form.series,
+        file_name=output_file_name,
+        file_path=str(output_path.resolve()),
+        generated_by_user_id=1,
+        blank_form_id=blank_form.id,
+        blank_number_snapshot=blank_form.full_number,
+    )
+    db.add(generated_document)
+    db.flush()
+    return generated_document
 
 
 def _resolve_miac_issued_blank(
