@@ -10388,6 +10388,12 @@ function isFrontDriverPrintVariant(variantId) {
   return variantId === "driver_front" || variantId === "tractor_front";
 }
 
+// Тракторная справка печатается в том же окне, что водительская, но это другой
+// документ: свой бланк и своя выгрузка. МИАЦ принимает XML только по водительской.
+function isTractorPrintVariant(variantId) {
+  return String(variantId || "").startsWith("tractor");
+}
+
 function renderDriverPrintInstructionPrompt() {
   return `
     <div class="driver-print-instruction">
@@ -10685,7 +10691,7 @@ async function openDriverPrintFlow(options = {}) {
     }
   };
 
-  const handleStandardPrintResult = async (result, printedDocument) => {
+  const handleStandardPrintResult = async (result, printedDocument, { skipXmlExport = false } = {}) => {
     openActionModal(
       "Результат печати",
       renderDriverPrintResultPrompt({
@@ -10701,7 +10707,9 @@ async function openDriverPrintFlow(options = {}) {
         await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
         actionModal.classList.add("hidden");
         showToast(`Печать подтверждена: ${printedDocument.blankNumber || printedDocument.title}`);
-        await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
+        if (!skipXmlExport) {
+          await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
+        }
       } catch (error) {
         showToast(humanizeApiError(error, "Не удалось подтвердить печать"));
       }
@@ -10744,8 +10752,12 @@ async function openDriverPrintFlow(options = {}) {
       tractor_front: TRACTOR_FRONT_TEMPLATE_FILE_NAME,
       tractor_back: TRACTOR_BACK_TEMPLATE_FILE_NAME,
     }[variant.id];
+    // Запасной flowState.template — всегда водительский бланк: его подбирают
+    // при открытии окна. Тракторной справке он не подходит, иначе 071у молча
+    // печатается на водительском бланке. Нет своего файла — говорим об этом.
+    const tractorVariant = isTractorPrintVariant(variant.id);
     const variantTemplate = variantTemplateFileName
-      ? findDocumentTemplateByExactFileName(variantTemplateFileName) || flowState.template
+      ? findDocumentTemplateByExactFileName(variantTemplateFileName) || (tractorVariant ? null : flowState.template)
       : flowState.template;
     if (!variantTemplate) {
       flowState.error = variant.id === "tractor_front"
@@ -10779,20 +10791,24 @@ async function openDriverPrintFlow(options = {}) {
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
       await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-      await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
+      if (!tractorVariant) {
+        await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
+      }
       if (skipConfirmation) {
         try {
           await markPrintedDocument(result.generated_document_id, true);
           actionModal.classList.add("hidden");
           showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
-          await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
+          if (!tractorVariant) {
+            await ensureXmlAfterDriverCertificate(flowState.client, flowState.visit, { blankFormId: result.blank_form_id });
+          }
         } catch (error) {
           showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
       } else if (isFrontDriverPrintVariant(variant.id)) {
         await handleFrontPrintResult(result);
       } else {
-        await handleStandardPrintResult(result, printedDocument);
+        await handleStandardPrintResult(result, printedDocument, { skipXmlExport: tractorVariant });
       }
     } catch (error) {
       if (options.targetWindow && !options.targetWindow.closed) {
