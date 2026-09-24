@@ -3690,10 +3690,17 @@ function upsertClientInMemory(client) {
     data.clients.unshift(mappedClient);
   }
 
-  const backendIndex = data.backendClients.findIndex((item) => String(item.id) === String(mappedClient.id));
-  if (backendIndex >= 0) {
-    data.backendClients[backendIndex] = mergeClient(data.backendClients[backendIndex], mappedClient);
-  } else {
+  // Данные клиента получает каждая его строка журнала. Раньше они ложились
+  // только в первую и затирали её обращение: у пары ВУ + 071у это строка 071у,
+  // и после печати ВУ она показывала категории и бланк водительской справки,
+  // а печать из неё открывала ВУ.
+  let hasDashboardRow = false;
+  data.backendClients.forEach((row, index) => {
+    if (String(row.id) !== String(mappedClient.id)) return;
+    hasDashboardRow = true;
+    data.backendClients[index] = mergeClientIntoDashboardRow(row, mergeClient(row, mappedClient));
+  });
+  if (!hasDashboardRow) {
     data.backendClients.unshift(mappedClient);
   }
 
@@ -4669,17 +4676,32 @@ function getDashboardDoctorStatusVisit(client) {
   };
 }
 
-function getDashboardBlankNumber(client, status = null) {
+// Обращение документа. У загруженного с сервера оно указано, а только что
+// напечатанный знает лишь свою карточку обращения.
+function getDocumentEncounterId(documentItem) {
+  if (documentItem?.encounterId) return String(documentItem.encounterId);
+  const visit = documentItem?.visitId
+    ? data.visits.find((item) => String(item.id) === String(documentItem.visitId))
+    : null;
+  return visit?.backendId ? String(visit.backendId) : "";
+}
+
+// rowEncounterId — обращение строки журнала. У клиента с ВУ и 071у две строки,
+// и бланк у каждой свой: строка обращения показывает только бланк этого
+// обращения, иначе в строке 071у стоял номер водительской справки. Без него
+// берём последний бланк клиента, как в амбулаторной карте.
+function getDashboardBlankNumber(client, status = null, { rowEncounterId = null } = {}) {
   const statusBlankNumber = String(status?.blankNumber || "").trim();
   if (statusBlankNumber) return statusBlankNumber;
 
   const backendClientId = client?.backendId || client?.id;
-  const encounterId = status?.encounterId ? String(status.encounterId) : "";
+  const encounterId = String(rowEncounterId || status?.encounterId || "");
   const documents = [...(data.generatedDocuments || []), ...(data.documents || [])]
     .filter((documentItem) => {
       const blankNumber = String(documentItem?.blankNumber || "").trim();
       if (!blankNumber || documentItem?.cancelledAt) return false;
-      if (encounterId && String(documentItem.encounterId || documentItem.visitId || "") === encounterId) return true;
+      if (encounterId && getDocumentEncounterId(documentItem) === encounterId) return true;
+      if (rowEncounterId) return false;
       return backendClientId && String(documentItem.clientId || "") === String(backendClientId);
     })
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
@@ -4687,8 +4709,8 @@ function getDashboardBlankNumber(client, status = null) {
   return String(documents[0]?.blankNumber || "").trim();
 }
 
-function getDashboardCertificateNumber(client, status = null) {
-  return getDashboardBlankNumber(client, status) || String(client?.referenceNumber || "").trim();
+function getDashboardCertificateNumber(client, status = null, options = {}) {
+  return getDashboardBlankNumber(client, status, options) || String(client?.referenceNumber || "").trim();
 }
 
 function areDashboardDoctorStatusesReady(clients) {
@@ -4798,6 +4820,19 @@ function mergeFullClientWithDashboardRow(client, fullClient) {
       ? client?.latestEncounterCreatedAt || ""
       : fullClient?.latestEncounterCreatedAt || "",
   };
+}
+
+// В журнале у клиента строка на каждое обращение: ВУ и 071у за один день — это
+// две строки. Данные клиента ложатся в каждую, а обращение, услуги, центр и
+// дату строка оставляет свои — и в своём ответе сервера тоже. Списки услуг
+// клиента (services, legacy_payload_json) туда не переносим: «Категории»
+// дописали бы строке 071у серию водительской справки.
+function mergeClientIntoDashboardRow(row, client) {
+  const nextRow = mergeFullClientWithDashboardRow(row, client);
+  const hasEncounter = row?.encounterId !== null && row?.encounterId !== undefined;
+  if (!hasEncounter || !row.rawApiClient) return nextRow;
+  const { services, legacy_payload_json, ...clientFields } = client?.rawApiClient || {};
+  return { ...nextRow, rawApiClient: { ...row.rawApiClient, ...clientFields } };
 }
 
 async function ensureFullClientLoaded(client) {
@@ -5986,7 +6021,7 @@ function buildExcelRows(clients) {
       birthDate: client.birthDate,
       registration: client.registration || client.document || "",
       category: resolveDashboardAdmissionCategory(client, currentVisit),
-      referenceNumber: getDashboardCertificateNumber(client, status),
+      referenceNumber: getDashboardCertificateNumber(client, status, { rowEncounterId: client.encounterId }),
       gynecologist: markDoctor("gynecologist"),
       stomatologist: markDoctor("dentist"),
       dermatologist: markDoctor("dermatologist"),
