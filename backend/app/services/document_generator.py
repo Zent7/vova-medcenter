@@ -75,7 +75,7 @@ from app.services.new_xls_templates import (
     new_xls_markers,
     strip_new_xls_placeholder_padding,
 )
-from app.services.template_catalog import resolve_template_file
+from app.services.template_catalog import get_templates_root, resolve_template_file
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
@@ -2257,22 +2257,22 @@ def _fill_prof_conclusion_29n_sheet(
         target_sheet,
         source_sheet,
         [
-            ((10, 26), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
+            ((19, 13), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
             ((12, 42), str(narcologist.get("doctor") or "")),
-            ((20, 5), context.get("ClientCalc", "")),
-            ((21, 6), _first_non_empty(context.get("SexFull"), context.get("SexCalc"))),
-            ((21, 15), _xls_excel_date(client.birth_date)),
-            ((22, 6), _xls_blank_or_dash(context.get("WorkPlace"))),
-            ((23, 9), _first_non_empty(context.get("CompanyName"), context.get("WorkPlace"))),
-            ((25, 6), _first_non_empty(context.get("Department"), context.get("Subdivision"))),
-            ((27, 13), position),
-            ((27, 42), str(psychiatrist.get("doctor") or "")),
-            ((30, 2), harmfulness),
-            ((33, 14), _health_group_mark(context.get("HealthGroup"))),
-            ((38, 18), signer),
-            ((41, 1), position),
-            ((42, 18), signer),
-            ((44, 3), _xls_excel_date(issue_date)),
+            ((21, 5), context.get("ClientCalc", "")),
+            ((22, 6), _first_non_empty(context.get("SexFull"), context.get("SexCalc"))),
+            ((22, 15), _xls_excel_date(client.birth_date)),
+            ((23, 6), _xls_blank_or_dash(context.get("WorkPlace"))),
+            ((24, 9), _first_non_empty(context.get("CompanyName"), context.get("WorkPlace"))),
+            ((26, 6), _first_non_empty(context.get("Department"), context.get("Subdivision"))),
+            ((28, 13), position),
+            ((28, 42), str(psychiatrist.get("doctor") or "")),
+            ((31, 2), harmfulness),
+            ((34, 14), _health_group_mark(context.get("HealthGroup"))),
+            ((39, 14), signer),
+            ((42, 1), position),
+            ((43, 14), signer),
+            ((45, 7), _xls_excel_date(issue_date)),
         ],
     )
 
@@ -4834,6 +4834,20 @@ def _generate_unpreserved_runtime_xls(
     target_book.save(str(output_path))
 
 
+def _legacy_xls_values_template(template_path: Path, spec: LegacyXlsTemplateSpec) -> Path:
+    """Файл, на котором старый код заполнения считает значения полей.
+
+    Он пишет по клеткам встроенного шаблона (``source_cell``). В копии
+    заказчика, где он переложил поля, на этих клетках бывает середина
+    объединения (xlutils её не копирует, и промежуточная книга ломается),
+    формат General (дата выходит серийным числом) или его собственный текст.
+    Поэтому значения считаем на встроенном шаблоне, а в копию заказчика
+    переносим по меткам.
+    """
+    bundled_path = get_templates_root() / spec.file_name
+    return bundled_path if bundled_path.is_file() else template_path
+
+
 def _generate_preserved_legacy_xls(
     template_path: Path,
     output_path: Path,
@@ -4862,7 +4876,7 @@ def _generate_preserved_legacy_xls(
         # Generate all printable sheets so a two-sided VU template retains
         # values on both sides. The caller/user chooses the sheet when printing.
         _generate_unpreserved_runtime_xls(
-            template_path,
+            _legacy_xls_values_template(template_path, spec),
             temporary_path,
             context,
             client,

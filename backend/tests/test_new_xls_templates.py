@@ -237,6 +237,25 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 book = xlrd.open_workbook(str(TEMPLATES_DIR / file_name), formatting_info=True)
                 self.assertEqual(book.sheet_names(), sheet_names)
 
+    def test_bundled_legacy_templates_keep_every_value_cell_writable(self):
+        """Значения полей считаются на встроенном шаблоне по source_cell.
+
+        xlutils не копирует пустые клетки и середину объединения, поэтому
+        клетка поля во встроенном файле должна быть записью, а в объединении —
+        его левой верхней клеткой. Иначе при переделке бланка печать сломается.
+        """
+        for spec in LEGACY_XLS_TEMPLATE_SPECS:
+            book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+            for field in spec.fields:
+                with self.subTest(template=spec.file_name, field=field.field_id):
+                    sheet = book.sheet_by_name(field.sheet_name)
+                    row_index, col_index = field.source_cell
+                    self.assertLess(col_index, sheet.row_len(row_index))
+                    self.assertNotEqual(sheet.cell_type(row_index, col_index), xlrd.XL_CELL_EMPTY)
+                    for row_low, row_high, col_low, col_high in sheet.merged_cells:
+                        if row_low <= row_index < row_high and col_low <= col_index < col_high:
+                            self.assertEqual((row_index, col_index), (row_low, col_low))
+
     def test_hidden_xls_markers_do_not_use_visible_variation_selectors(self):
         for spec in NEW_XLS_TEMPLATE_SPECS:
             with self.subTest(template=spec.file_name):

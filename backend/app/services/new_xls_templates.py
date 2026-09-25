@@ -637,13 +637,13 @@ _PROF2_FIELDS = _legacy_fields(
 _PROF_CONCLUSION_29N_FIELDS = _legacy_fields(
     "ПРОФОСМОТР",
     (
-        ("blank_number", (10, 26)), ("narcologist", (12, 42)),
-        ("patient_name", (20, 5)), ("sex", (21, 6)), ("birth_date", (21, 15)),
-        ("workplace", (22, 6)), ("company", (23, 9)), ("department", (25, 6)),
-        ("position", (27, 13)), ("psychiatrist", (27, 42)),
-        ("harmfulness", (30, 2)), ("health_group", (33, 14)),
-        ("chairman", (38, 18)), ("position_repeat", (41, 1)),
-        ("occupational_doctor", (42, 18)), ("issue_date", (44, 3)),
+        ("blank_number", (19, 13)), ("narcologist", (12, 42)),
+        ("patient_name", (21, 5)), ("sex", (22, 6)), ("birth_date", (22, 15)),
+        ("workplace", (23, 6)), ("company", (24, 9)), ("department", (26, 6)),
+        ("position", (28, 13)), ("psychiatrist", (28, 42)),
+        ("harmfulness", (31, 2)), ("health_group", (34, 14)),
+        ("chairman", (39, 14)), ("position_repeat", (42, 1)),
+        ("occupational_doctor", (43, 14)), ("issue_date", (45, 7)),
     ),
 )
 
