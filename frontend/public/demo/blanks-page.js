@@ -895,6 +895,8 @@
           await window.apiRequest(`/blanks/forms/${encodeURIComponent(formId)}/release`, {
             method: "POST",
           });
+          // Номер справки журнал берёт и из документов, уже загруженных во вкладку.
+          window.releaseBlankInLoadedDocuments?.(formId);
           window.showToast?.(`Номер ${blankNumber} освобождён`);
           await loadBlanksData({ force: true });
         } catch (error) {
