@@ -4,6 +4,9 @@
 E, F. На любые из них идут терапевт, офтальмолог, психиатр и нарколог, на C, D
 и E — ещё невролог и отоларинголог. Председатель отмечает эти категории в своей
 карточке, и по ним на лицевой стороне печатаются невролог и ЛОР.
+
+На обороте в таблице «Медицинские ограничения» по строке на категорию: там
+«не установлено», пока председатель не отметит ограничение по этой категории.
 """
 
 from __future__ import annotations
@@ -27,7 +30,10 @@ from app.services.driver_rules import (  # noqa: E402
     tractor_category_tokens,
     tractor_certificate_doctor_roles,
 )
-from app.services.new_xls_templates import strip_new_xls_placeholder_padding  # noqa: E402
+from app.services.new_xls_templates import (  # noqa: E402
+    TRACTOR_BACK_RESTRICTION_CELLS,
+    strip_new_xls_placeholder_padding,
+)
 from app.services.seed import DOCTOR_ROLES, SERVICE_DOCTOR_ROLE_IDS  # noqa: E402
 
 
@@ -36,6 +42,8 @@ TRACTOR_SERVICE_LEGACY_ID = 7
 BASE_DOCTORS = {"therapist", "ophthalmologist", "psychiatrist", "psychiatrist-narcologist"}
 ALL_DOCTORS = BASE_DOCTORS | {"neurologist", "otolaryngologist"}
 NOT_SET = "Не Установлено"
+RESTRICTION_SET = "установлено"
+RESTRICTION_NOT_SET = "не\nустановлено"
 PSYCHIATRIST_CONCLUSION = "Психиатрических противопоказаний не выявлено"
 NARCOLOGIST_CONCLUSION = "Наркологических противопоказаний не выявлено"
 
@@ -159,11 +167,24 @@ class TractorFrontSheetTests(unittest.TestCase):
                 actual = [strip_new_xls_placeholder_padding(sheet.cell_value(row, 12)).strip() for row in rows]
                 self.assertEqual(actual, expected)
 
-    def test_back_prints_psychiatrist_and_narcologist(self):
-        sheet = self.generate("трактор об ст.xls", "tractor_back", tractor_fields(*TRACTOR_CATEGORY_KEYS))
-        text = "\n".join(str(sheet.cell_value(row, 18)) for row in (20, 21))
-        self.assertNotIn("[Психиатр", text)
-        self.assertNotIn("[Нарколог", text)
+    def back_restrictions(self, chairman_fields):
+        sheet = self.generate("трактор об ст.xls", "tractor_back", chairman_fields)
+        return {
+            category: [strip_new_xls_placeholder_padding(sheet.cell_value(*cell)) for cell in cells]
+            for category, cells in TRACTOR_BACK_RESTRICTION_CELLS.items()
+        }
+
+    def test_back_prints_not_set_restrictions_on_both_halves(self):
+        restrictions = self.back_restrictions(tractor_fields(*TRACTOR_CATEGORY_KEYS))
+        self.assertEqual(restrictions, {category: [RESTRICTION_NOT_SET] * 2 for category in TRACTOR_CATEGORY_KEYS})
+
+    def test_back_prints_set_for_the_restrictions_of_the_chairman(self):
+        fields = {**tractor_fields(*TRACTOR_CATEGORY_KEYS), "tractorRestrictionC": True, "tractorRestrictionF": True}
+        restrictions = self.back_restrictions(fields)
+        for category in TRACTOR_CATEGORY_KEYS:
+            expected = RESTRICTION_SET if category in {"C", "F"} else RESTRICTION_NOT_SET
+            with self.subTest(category=category):
+                self.assertEqual(restrictions[category], [expected, expected])
 
 
 if __name__ == "__main__":

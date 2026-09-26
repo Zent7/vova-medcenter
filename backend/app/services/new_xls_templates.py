@@ -5,6 +5,8 @@ from pathlib import Path
 
 import xlrd
 
+from app.services.driver_rules import TRACTOR_CATEGORY_KEYS
+
 
 Cell = tuple[int, int]
 PLACEHOLDER_LENGTH = 240
@@ -22,6 +24,15 @@ PLACEHOLDER_LABEL_CLOSE = "]"
 
 def _row_cells(row: int, start_col: int, end_col: int) -> tuple[Cell, ...]:
     return tuple((row, col) for col in range(start_col, end_col + 1))
+
+
+# Оборот 071у: таблица «Медицинские ограничения» — по строке на категорию
+# тракториста AI…F в том же порядке. Отметка стоит в правой графе каждой
+# половины листа: в объединённых Q:S и AK:AM, как в бланке заказчика.
+TRACTOR_BACK_RESTRICTION_CELLS: dict[str, tuple[Cell, Cell]] = {
+    category: ((row, 16), (row, 36))
+    for category, row in zip(TRACTOR_CATEGORY_KEYS, (9, 11, 14, 17, 19, 20, 21, 22, 23))
+}
 
 
 @dataclass(frozen=True)
@@ -251,24 +262,7 @@ NEW_XLS_TEMPLATE_SPECS: tuple[NewXlsTemplateSpec, ...] = (
         print_variant="tractor_back",
         print_pages_tall=1,
         dynamic_cells=(
-            (9, 18),
-            (9, 38),
-            (11, 18),
-            (11, 38),
-            (14, 18),
-            (14, 38),
-            (17, 18),
-            (17, 38),
-            (19, 18),
-            (19, 38),
-            (20, 18),
-            (20, 38),
-            (21, 18),
-            (21, 38),
-            (22, 18),
-            (22, 38),
-            (23, 18),
-            (23, 38),
+            *(cell for cells in TRACTOR_BACK_RESTRICTION_CELLS.values() for cell in cells),
             (36, 5),
             (36, 25),
         ),
@@ -484,15 +478,10 @@ NEW_XLS_FIELD_LABELS: dict[str, dict[Cell, str]] = {
     ),
     "трактор об ст.xls": _sided_labels(
         (
-            ("Терапевт", (9, 18), (9, 38)),
-            ("Окулист", (11, 18), (11, 38)),
-            ("Невролог", (14, 18), (14, 38)),
-            ("ЛОР", (17, 18), (17, 38)),
-            ("Хирург", (19, 18), (19, 38)),
-            ("Психиатр", (20, 18), (20, 38)),
-            ("Нарколог", (21, 18), (21, 38)),
-            ("Гинеколог", (22, 18), (22, 38)),
-            ("Дерматолог", (23, 18), (23, 38)),
+            *(
+                (f"Ограничение {category}", left_cell, right_cell)
+                for category, (left_cell, right_cell) in TRACTOR_BACK_RESTRICTION_CELLS.items()
+            ),
             ("Подписант", (36, 5), (36, 25)),
         )
     ),

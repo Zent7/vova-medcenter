@@ -22,6 +22,7 @@ from app.services.document_generator import (  # noqa: E402
 from app.services.new_xls_templates import (  # noqa: E402
     LEGACY_XLS_TEMPLATE_SPECS,
     NEW_XLS_TEMPLATE_SPECS,
+    TRACTOR_BACK_RESTRICTION_CELLS,
     hidden_legacy_xls_placeholder,
     hidden_new_xls_placeholder,
     legacy_xls_marker_locations,
@@ -576,8 +577,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 (41, 12): "Не Установлено",
             },
             "Тр.Об": {
-                (9, 18): "Годен",
-                (9, 38): "Годен",
+                (9, 16): "не\nустановлено",
+                (9, 36): "не\nустановлено",
                 (36, 5): "Председатель Тестов",
                 (36, 25): "Председатель Тестов",
             },
@@ -631,6 +632,12 @@ class NewXlsTemplatesTests(unittest.TestCase):
         }
         empty_client = SimpleNamespace(birth_date=None)
         empty_encounter = SimpleNamespace(encounter_date=None)
+        # Ограничение 071у без отметки председателя печатается как «не установлено».
+        default_values = {
+            ("трактор об ст.xls", cell): "не\nустановлено"
+            for cells in TRACTOR_BACK_RESTRICTION_CELLS.values()
+            for cell in cells
+        }
         with tempfile.TemporaryDirectory() as temporary_dir:
             for spec in NEW_XLS_TEMPLATE_SPECS:
                 with self.subTest(template=spec.file_name):
@@ -652,7 +659,10 @@ class NewXlsTemplatesTests(unittest.TestCase):
                             if row_index < sheet.nrows and col_index < sheet.ncols
                             else ""
                         )
-                        self.assertEqual(strip_new_xls_placeholder_padding(value), "")
+                        self.assertEqual(
+                            strip_new_xls_placeholder_padding(value),
+                            default_values.get((spec.file_name, coordinate), ""),
+                        )
 
     def test_gt_is_only_bound_to_gostaina_not_gto(self):
         source_book = xlrd.open_workbook(

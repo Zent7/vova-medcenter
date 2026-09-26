@@ -67,6 +67,7 @@ from app.services.new_xls_templates import (
     NEW_XLS_TEMPLATE_BY_SHEET,
     PLACEHOLDER_FILL,
     PLACEHOLDER_LENGTH,
+    TRACTOR_BACK_RESTRICTION_CELLS,
     LegacyXlsTemplateSpec,
     NewXlsTemplateSpec,
     legacy_xls_markers,
@@ -3189,33 +3190,27 @@ def _fill_new_gostaina_xls_sheet(
     )
 
 
+# Медицинские ограничения 071у председатель отмечает по категориям тракториста.
+# Пока ограничение по категории не отмечено, в её строке «не установлено» — с
+# переносом, как в бланке заказчика. Обе половины листа печатаются одинаково.
+TRACTOR_RESTRICTION_FIELD_KEYS = {category: f"tractorRestriction{category}" for category in TRACTOR_CATEGORY_KEYS}
+TRACTOR_BACK_RESTRICTION_SET = "установлено"
+TRACTOR_BACK_RESTRICTION_NOT_SET = "не\nустановлено"
+
+
 def _fill_new_tractor_back_xls_sheet(
     source_sheet,
     target_sheet,
     context: dict[str, str],
     exams_by_role: dict[str, DoctorExam],
 ) -> None:
-    roles = (
-        "therapist",
-        "ophthalmologist",
-        "neurologist",
-        "otolaryngologist",
-        "surgeon",
-        "psychiatrist",
-        "psychiatrist-narcologist",
-        "gynecologist",
-        "dermatologist",
-    )
-    rows = (9, 11, 14, 17, 19, 20, 21, 22, 23)
+    chairman = exams_by_role.get("chairman")
+    fields = (chairman.fields_json or {}) if chairman else {}
     pairs: list[tuple[tuple[int, int], object]] = []
-    for row_index, role_id in zip(rows, roles):
-        value = _new_xls_exam_value(
-            exams_by_role.get(role_id),
-            "conclusion",
-            "result",
-            "diagnosis",
-        )
-        pairs.extend([((row_index, 18), value), ((row_index, 38), value)])
+    for category, cells in TRACTOR_BACK_RESTRICTION_CELLS.items():
+        restricted = _truthy_driver_value(fields.get(TRACTOR_RESTRICTION_FIELD_KEYS[category]))
+        value = TRACTOR_BACK_RESTRICTION_SET if restricted else TRACTOR_BACK_RESTRICTION_NOT_SET
+        pairs.extend((cell, value) for cell in cells)
     signer = _new_xls_signer(context, exams_by_role)
     pairs.extend([((36, 5), signer), ((36, 25), signer)])
     _write_xls_pairs(target_sheet, source_sheet, pairs)

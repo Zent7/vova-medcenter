@@ -29,6 +29,7 @@ vm.runInContext(
     sourceBetween("function applyDriverSelectionsToChairmanFields", "function getDriverDetailFromVisit"),
     "this.apply = applyDriverSelectionsToChairmanFields;",
     "this.checks = getChairmanTractorCategoryChecks;",
+    "this.restrictions = getChairmanTractorRestrictionChecks;",
   ].join("\n"),
   context,
 );
@@ -87,4 +88,32 @@ test("новая карточка председателя отмечает вс
 
 test("окно председателя рисует тракторные галочки только для тракторной", () => {
   assert.match(modalSource, /chairmanType === "tractor"\s*\?\s*window\.getChairmanTractorCategoryChecks\?\.\(fields\)/);
+});
+
+test("председатель 071у отмечает ограничения по каждой тракторной категории", () => {
+  const checks = [...context.restrictions({})];
+  assert.deepEqual(checks.map((item) => item.category), TRACTOR_CATEGORIES);
+  assert.deepEqual(checks.map((item) => item.fieldKey), TRACTOR_CATEGORIES.map((category) => `tractorRestriction${category}`));
+  assert.deepEqual(checks.filter((item) => item.checked), []);
+
+  const marked = [...context.restrictions({ tractorCategoryB: true, tractorRestrictionC: true, tractorRestrictionF: true })];
+  assert.deepEqual(marked.filter((item) => item.checked).map((item) => item.category), ["C", "F"]);
+});
+
+test("новая карточка председателя не отмечает ограничений 071у", () => {
+  for (const category of TRACTOR_CATEGORIES) {
+    assert.ok(
+      templatesSource.includes(`{ key: "tractorRestriction${category}", label: "${category}", type: "checkbox", defaultValue: false }`),
+      `tractorRestriction${category} must be unchecked by default`,
+    );
+  }
+});
+
+test("окно председателя 071у показывает ограничения тракториста вместо ограничений ВУ", () => {
+  assert.match(modalSource, /chairmanType === "tractor"\s*\?\s*renderTractorChecks\(tractorRestrictionChecks\)/);
+});
+
+test("в обращении с ВУ и 071у у председателя есть колонка ограничений 071у", () => {
+  assert.match(modalSource, /chairmanType === "driver" && window\.chairmanExamHasTractorService\?\.\(exam\)/);
+  assert.match(modalSource, /Ограничения 071у:<\/div>\s*\$\{renderTractorChecks\(tractorRestrictionChecks\)\}/);
 });

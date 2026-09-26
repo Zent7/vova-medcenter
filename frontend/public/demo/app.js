@@ -2105,6 +2105,27 @@ function getChairmanTractorCategoryChecks(fields = {}) {
   }));
 }
 
+function getTractorRestrictionFieldKey(category) {
+  return `tractorRestriction${category}`;
+}
+
+// Медицинские ограничения 071у: на обороте по строке на каждую категорию
+// тракториста. Отмеченная печатается «установлено», остальные — «не установлено».
+function getChairmanTractorRestrictionChecks(fields = {}) {
+  return TRACTOR_CATEGORY_OPTIONS.map((category) => ({
+    category,
+    fieldKey: getTractorRestrictionFieldKey(category),
+    checked: Boolean(fields[getTractorRestrictionFieldKey(category)]),
+  }));
+}
+
+// В обращении и с ВУ, и с 071у карточка председателя водительская: ограничения
+// 071у в ней идут отдельной колонкой.
+function chairmanExamHasTractorService(exam) {
+  const visit = exam?.visitId ? data.visits.find((item) => String(item.id) === String(exam.visitId)) : null;
+  return getServicesForVisit(visit).some(isTractorService);
+}
+
 function getDriverDetailFromVisit(visit) {
   if (!visit) return {};
   const serviceDetails = getVisitServiceDetails(visit);

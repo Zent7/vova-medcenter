@@ -1261,6 +1261,14 @@
     const tractorCategoryChecks = chairmanType === "tractor"
       ? window.getChairmanTractorCategoryChecks?.(fields) || []
       : null;
+    // И вместо ограничений ВУ — ограничения по каждой из них, как на обороте 071у.
+    // В обращении и с ВУ, и с 071у они идут отдельной колонкой.
+    const tractorRestrictionChecks =
+      chairmanType === "tractor" || (chairmanType === "driver" && window.chairmanExamHasTractorService?.(exam))
+        ? window.getChairmanTractorRestrictionChecks?.(fields) || []
+        : null;
+    const renderTractorChecks = (checks) =>
+      checks.map(({ category, fieldKey, checked }) => renderCheckboxField(fieldKey, checked, category)).join("");
     const hideDriverDetails = [
       "sport",
       "pool",
@@ -1488,9 +1496,7 @@
                   <div class="chairman-column">
                     <div class="chairman-column-title">Категории</div>
                     ${tractorCategoryChecks
-                      ? tractorCategoryChecks
-                          .map(({ category, fieldKey, checked }) => renderCheckboxField(fieldKey, checked, category))
-                          .join("")
+                      ? renderTractorChecks(tractorCategoryChecks)
                       : `
                     ${renderCheckboxField("categoryA", !!fields.categoryA, "A")}
                     ${renderCheckboxField("categoryB", !!fields.categoryB, "B")}
@@ -1527,12 +1533,22 @@
 
                   <div class="chairman-column">
                     <div class="chairman-column-title">Ограничения:</div>
+                    ${chairmanType === "tractor"
+                      ? renderTractorChecks(tractorRestrictionChecks)
+                      : `
                     ${renderCheckboxField("restrictionAM", !!fields.restrictionAM, "AM")}
                     ${renderCheckboxField("restrictionBBE", !!fields.restrictionBBE, "BBE")}
                     ${renderCheckboxField("restrictionCCE", !!fields.restrictionCCE, "CCE")}
                     ${renderCheckboxField("restrictionNoHands", !!fields.restrictionNoHands, "Без руки")}
                     ${renderCheckboxField("restrictionNoLegs", !!fields.restrictionNoLegs, "Без ноги")}
+                    `}
                   </div>
+                  ${tractorRestrictionChecks && chairmanType !== "tractor" ? `
+                  <div class="chairman-column">
+                    <div class="chairman-column-title">Ограничения 071у:</div>
+                    ${renderTractorChecks(tractorRestrictionChecks)}
+                  </div>
+                  ` : ""}
                 </div>
               </div>
               `}

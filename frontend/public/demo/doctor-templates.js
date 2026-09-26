@@ -902,6 +902,16 @@
     { key: "restrictionCCE", label: "CCE", type: "checkbox", defaultValue: false },
     { key: "restrictionNoHands", label: "Без руки", type: "checkbox", defaultValue: false },
     { key: "restrictionNoLegs", label: "Без ноги", type: "checkbox", defaultValue: false },
+    // Медицинские ограничения 071у — по строке оборота на категорию тракториста.
+    { key: "tractorRestrictionAI", label: "AI", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionAII", label: "AII", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionAIII", label: "AIII", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionAIV", label: "AIV", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionB", label: "B", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionC", label: "C", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionD", label: "D", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionE", label: "E", type: "checkbox", defaultValue: false },
+    { key: "tractorRestrictionF", label: "F", type: "checkbox", defaultValue: false },
 
     { key: "periodicProf", label: "Периодический проф", type: "checkbox", defaultValue: false },
     { key: "stampApplied", label: "Печать поставлена", type: "checkbox", defaultValue: false },

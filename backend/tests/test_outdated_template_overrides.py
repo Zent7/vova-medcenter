@@ -23,7 +23,12 @@ from xlutils.copy import copy as copy_xls_workbook
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services import template_catalog  # noqa: E402
-from app.services.new_xls_templates import NEW_XLS_TEMPLATE_BY_FILE  # noqa: E402
+from app.services.new_xls_templates import (  # noqa: E402
+    NEW_XLS_TEMPLATE_BY_FILE,
+    PLACEHOLDER_FILL,
+    PLACEHOLDER_LENGTH,
+    TRACTOR_BACK_RESTRICTION_CELLS,
+)
 
 
 TEMPLATE_FILE_NAME = "095У_справка_шаблон.docx"
@@ -136,6 +141,19 @@ class OutdatedTemplateOverrideTests(unittest.TestCase):
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
 TRACTOR_FRONT_FILE_NAME = "трактор лиц ст.xls"
 TRACTOR_FRONT_RESULT_CELLS = ((39, 12), (39, 39), (41, 12), (41, 39))
+TRACTOR_BACK_FILE_NAME = "трактор об ст.xls"
+# Прежний оборот 071у печатал в строках ограничений заключения этих врачей.
+TRACTOR_BACK_OLD_DOCTOR_LABELS = (
+    "Терапевт",
+    "Окулист",
+    "Невролог",
+    "ЛОР",
+    "Хирург",
+    "Психиатр",
+    "Нарколог",
+    "Гинеколог",
+    "Дерматолог",
+)
 DRIVER_FRONT_FILE_NAME = "водительская лицевая.xls"
 
 
@@ -180,6 +198,25 @@ class OutdatedXlsTemplateOverrideTests(unittest.TestCase):
         self.assertFalse(override_path.exists())
         self.assertEqual(len(self.retired_files(TRACTOR_FRONT_FILE_NAME)), 1)
 
+    def test_tractor_back_with_the_old_doctor_rows_is_retired(self):
+        """Копия оборота 071у с полями врачей вместо «установлено / не установлено»."""
+        source_book = xlrd.open_workbook(str(TEMPLATES_DIR / TRACTOR_BACK_FILE_NAME), formatting_info=True)
+        outdated_book = copy_xls_workbook(source_book)
+        for label, cells in zip(TRACTOR_BACK_OLD_DOCTOR_LABELS, TRACTOR_BACK_RESTRICTION_CELLS.values()):
+            for coordinate, side in zip(cells, ("лев", "прав")):
+                marker = f"[{label} ({side})]"
+                outdated_book.get_sheet(0).write(
+                    *coordinate,
+                    marker + PLACEHOLDER_FILL * (PLACEHOLDER_LENGTH - len(marker)),
+                )
+        override_path = self.overrides_root / TRACTOR_BACK_FILE_NAME
+        outdated_book.save(str(override_path))
+
+        template_catalog.retire_outdated_template_overrides()
+
+        self.assertFalse(override_path.exists())
+        self.assertEqual(len(self.retired_files(TRACTOR_BACK_FILE_NAME)), 1)
+
     def test_after_retiring_download_and_print_resolve_the_same_bundled_file(self):
         self.write_tractor_front_without_result_markers()
         # Путь в базе мог остаться на клиентской версии со времён загрузки.
@@ -196,7 +233,7 @@ class OutdatedXlsTemplateOverrideTests(unittest.TestCase):
         )
 
     def test_current_copies_of_free_layout_templates_are_kept(self):
-        for file_name in (TRACTOR_FRONT_FILE_NAME, DRIVER_FRONT_FILE_NAME, "трактор об ст.xls"):
+        for file_name in (TRACTOR_FRONT_FILE_NAME, DRIVER_FRONT_FILE_NAME, TRACTOR_BACK_FILE_NAME):
             with self.subTest(file_name=file_name):
                 override_path = self.overrides_root / file_name
                 shutil.copy2(TEMPLATES_DIR / file_name, override_path)
