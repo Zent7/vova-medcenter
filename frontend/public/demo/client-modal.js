@@ -1175,6 +1175,10 @@ function openClientModal(clientId = null, options = {}) {
     editingClient?.documentIssuedBy ||
     "";
   const initialEmail = editingClient?.email || rawClientDocument.email || "";
+  // Клиент из результатов поиска приходит без полиса. Пока полная карточка не
+  // загружена, пустое поле не значит «полиса нет», и сохранение его не стирает.
+  const knowsOmsPolicy = !editingClient || Object.hasOwn(rawClientDocument, "oms_policy");
+  const initialOmsPolicy = rawClientDocument.oms_policy || "";
   const initialProfession =
     editingClient?.profession ||
     rawClientDocument.profession ||
@@ -1336,13 +1340,17 @@ function openClientModal(clientId = null, options = {}) {
             <span>СНИЛС</span>
             <input name="snils" value="${escapeHtml(editingClient?.snils || "")}" />
           </label>
+          <label class="field">
+            <span>Полис ОМС</span>
+            <input name="omsPolicy" maxlength="30" value="${escapeHtml(initialOmsPolicy)}" />
+          </label>
+        </div>
+
+        <div class="client-create-grid client-create-grid--contacts">
           <label class="field">
             <span>Агент</span>
             <input name="agent" value="${escapeHtml(editingClient?.agent || "")}" list="clientAgentSuggestions" />
           </label>
-        </div>
-
-        <div class="client-create-grid client-create-grid--contacts">
           <label class="field">
             <span>Профессия</span>
             <input name="profession" value="${escapeHtml(initialProfession)}" list="clientProfessionSuggestions" />
@@ -1529,6 +1537,7 @@ function openClientModal(clientId = null, options = {}) {
       : formData.get("gender");
     const normalizedGender = String(submittedGender || "").toLowerCase();
     const formSex = normalizedGender === "f" || normalizedGender.startsWith("ж") ? "F" : "M";
+    const omsPolicy = String(formData.get("omsPolicy") || "").trim();
 
     const isCreated = !editingClient;
 
@@ -1625,6 +1634,7 @@ function openClientModal(clientId = null, options = {}) {
           document_issued_by: String(formData.get("issuedBy") || "").trim() || null,
           document_issued_date: passportDateIso || null,
           snils: String(formData.get("snils") || "").trim() || null,
+          ...(knowsOmsPolicy || omsPolicy ? { oms_policy: omsPolicy || null } : {}),
           address_text: addressText || null,
           profession: String(formData.get("profession") || "").trim() || null,
           work_place: String(formData.get("workPlace") || "").trim() || null,

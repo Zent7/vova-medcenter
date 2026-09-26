@@ -49,7 +49,7 @@ def normalize_payload(payload: ClientCreate | ClientUpdate) -> dict:
     data = payload.model_dump()
     # Older clients may omit these optional fields when editing another detail.
     if isinstance(payload, ClientUpdate):
-        for key in ("citizenship", "arrival_country"):
+        for key in ("citizenship", "arrival_country", "oms_policy"):
             if key not in payload.model_fields_set:
                 data.pop(key, None)
     for key, value in list(data.items()):

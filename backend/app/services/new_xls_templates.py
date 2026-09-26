@@ -624,6 +624,14 @@ _PZ2_DOCTOR_FIELDS = tuple(
     for slot, row in enumerate(_PZ2_DOCTOR_ROWS, start=1)
     for key, col in (("sequence", 42), ("name", 44), ("date", 54), ("conclusion", 63))
 )
+# One digit of the 16-digit policy per box of the «5. Номер страхового полиса
+# ОМС» grid. They go last in the spec because the older hidden markers are
+# numbered by field position.
+_PZ2_OMS_CELLS = _row_cells(33, 15, 30)
+_PZ2_OMS_FIELDS = tuple(
+    LegacyXlsField(f"oms_{index}", "ПЗ2", cell)
+    for index, cell in enumerate(_PZ2_OMS_CELLS, start=1)
+)
 
 _PROF2_FIELDS = _legacy_fields(
     "Проф2",
@@ -651,7 +659,11 @@ LEGACY_XLS_TEMPLATE_SPECS: tuple[LegacyXlsTemplateSpec, ...] = (
     LegacyXlsTemplateSpec("водительская лицевая.xls", ("Водительская Лицевая",), _DRIVER_FRONT_FIELDS),
     LegacyXlsTemplateSpec("водительская обратн ст.xls", ("Водительская Оборотная",), _DRIVER_BACK_FIELDS),
     LegacyXlsTemplateSpec("АМБ_карты_профосмотр_шаблон.xls", ("Амб",), _AMB_HEADER_FIELDS + _AMB_BLOCK_FIELDS),
-    LegacyXlsTemplateSpec("Выписка из Амб карты (профа).xls", ("ПЗ2",), _PZ2_HEADER_FIELDS + _PZ2_DOCTOR_FIELDS),
+    LegacyXlsTemplateSpec(
+        "Выписка из Амб карты (профа).xls",
+        ("ПЗ2",),
+        _PZ2_HEADER_FIELDS + _PZ2_DOCTOR_FIELDS + _PZ2_OMS_FIELDS,
+    ),
     LegacyXlsTemplateSpec("Справка_342н_псих_освид.xls", ("Проф2",), _PROF2_FIELDS),
     LegacyXlsTemplateSpec("ПРОФОСМОТР 29Н.xls", ("ПРОФОСМОТР",), _PROF_CONCLUSION_29N_FIELDS),
 )
@@ -768,6 +780,9 @@ _PZ2_LABELS = {
         ("date", "дата"),
         ("conclusion", "заключение"),
     )
+} | {
+    field.field_id: f"ОМС {index}"
+    for index, field in enumerate(_PZ2_OMS_FIELDS, start=1)
 }
 
 _PROF2_LABELS = {

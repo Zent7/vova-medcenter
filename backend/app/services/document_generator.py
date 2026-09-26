@@ -3597,6 +3597,13 @@ def _fill_prof_extract_fields(
             ((78, 73), signer),
         ],
     )
+    _write_xls_characters(
+        target_sheet,
+        source_sheet,
+        tuple((33, col_index) for col_index in range(15, 31)),
+        context.get("PolisOMS", ""),
+        digits_only=True,
+    )
 
 
 def _find_prof_amb_sheet_index(source_book) -> int | None:
