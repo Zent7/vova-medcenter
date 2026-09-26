@@ -47,16 +47,16 @@ def capitalize_name_part(value: str | None) -> str | None:
 
 def normalize_payload(payload: ClientCreate | ClientUpdate) -> dict:
     data = payload.model_dump()
-    # Older clients may omit these optional fields when editing another detail.
+    # The client card sends only the fields it shows, so an update changes just
+    # the fields that were sent. An explicit null still clears a field.
     if isinstance(payload, ClientUpdate):
-        for key in ("citizenship", "arrival_country", "oms_policy"):
-            if key not in payload.model_fields_set:
-                data.pop(key, None)
+        data = {key: value for key, value in data.items() if key in payload.model_fields_set}
     for key, value in list(data.items()):
         if isinstance(value, str):
             data[key] = normalize_optional(value)
     for key in ("last_name", "first_name", "middle_name"):
-        data[key] = capitalize_name_part(data.get(key))
+        if key in data:
+            data[key] = capitalize_name_part(data[key])
     data["last_name"] = data["last_name"] or ""
     data["first_name"] = data["first_name"] or ""
     return data
@@ -531,13 +531,19 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Клиент не найден")
 
     normalized_data = normalize_payload(payload)
-    normalized_payload = ClientUpdate(**normalized_data)
+    current_data = {key: getattr(client, key) for key in ClientUpdate.model_fields}
+    normalized_payload = ClientUpdate(**{**current_data, **normalized_data})
     possible_duplicate = find_duplicate(db, normalized_payload, exclude_client_id=client_id)
     if possible_duplicate is not None:
         raise duplicate_error(normalized_payload, possible_duplicate)
 
+    # Callers send only the legacy keys they edit, or null when their copy of the
+    # client lacks the payload; the imported keys that documents read must stay.
+    legacy_payload = normalized_data.pop("legacy_payload_json", None)
     for key, value in normalized_data.items():
         setattr(client, key, value)
+    if legacy_payload:
+        client.legacy_payload_json = {**(client.legacy_payload_json or {}), **legacy_payload}
 
     updated_by_user_id = get_system_user_id(db)
     db.commit()
