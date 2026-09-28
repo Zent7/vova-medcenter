@@ -2648,19 +2648,11 @@ def _write_driver_marker_cells(source_book, source_sheet, target_sheet, cells: t
         target_sheet.write(row_index, col_index, mark, _driver_marker_style(source_book, source_sheet, row_index, col_index))
 
 
-def _hide_xls_columns(target_sheet, start_col: int, end_col: int) -> None:
-    for col_index in range(start_col, end_col + 1):
-        col = target_sheet.col(col_index)
-        col.hidden = 1
-        col.width = 0
-
-
-def _clear_xls_range(source_sheet, target_sheet, start_row: int, end_row: int, start_col: int, end_col: int) -> None:
-    for row_index in range(start_row, end_row + 1):
-        for col_index in range(start_col, end_col + 1):
-            _write_xls_cell(target_sheet, source_sheet, row_index, col_index, "")
-
-
+# Бланк ВУ — две части на одном альбомном листе A4, и обе заполняются
+# одинаково: так печатала программа заказчика. Правая половина не дубль. В
+# августе её приняли за лишнюю копию, стёрли и спрятали, и справка месяц
+# выходила заполненной наполовину. Не стирать, не прятать и не вырезать её из
+# области печати — это проверяет test_driver_blank_halves.py.
 def _fill_driver_xls_sheets(
     source_book,
     target_book,
@@ -2731,21 +2723,20 @@ def _fill_driver_xls_sheets(
             ((41, 12), (41, 39)),
         ]:
             _copy_xls_target_cell_style(front_target, *target_coord, *style_coord)
-        _clear_xls_range(front_source, front_target, 0, 45, 27, 65)
-        _hide_xls_columns(front_target, 27, 65)
     back_source, back_target, _ = _sheet_pair_any(source_book, target_book, DRIVER_XLS_BACK_SHEET_NAMES)
     if back_source and back_target:
         category_marks = _driver_category_marks(context, client, exams_by_role)
-        _write_driver_marker_cells(source_book, back_source, back_target, DRIVER_XLS_CATEGORY_CELLS_LEFT, category_marks)
+        for category_cells in (DRIVER_XLS_CATEGORY_CELLS_LEFT, DRIVER_XLS_CATEGORY_CELLS_RIGHT):
+            _write_driver_marker_cells(source_book, back_source, back_target, category_cells, category_marks)
         back_cells = [
             ((36, 8), driver_lines[6]),
+            ((36, 41), driver_lines[6]),
         ]
         for row_index, context_key in DRIVER_XLS_BACK_STATUS_ROWS:
             status_value = _restriction_text(context.get(context_key))
-            back_cells.append(((row_index, DRIVER_XLS_BACK_STATUS_COLS[0]), status_value))
+            for col_index in DRIVER_XLS_BACK_STATUS_COLS:
+                back_cells.append(((row_index, col_index), status_value))
         _write_xls_pairs(back_target, back_source, back_cells)
-        _clear_xls_range(back_source, back_target, 0, 40, 34, 65)
-        _hide_xls_columns(back_target, 34, 65)
 
 
 def _fill_tractor_xls_sheets(source_book, target_book, exams_by_role: dict[str, DoctorExam], client: Client) -> None:
@@ -3726,7 +3717,6 @@ def _generate_prof_amb_xls(
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
     target_book.save(str(output_path))
-    _patch_driver_saved_xls_layout(Path(output_path))
 
 
 def _generate_prof_amb_xlsx(
@@ -4404,59 +4394,16 @@ def _xls_sheet_offsets(workbook_stream: bytes) -> list[int]:
     return sheet_offsets
 
 
-def _patch_xls_hidden_columns(
-    output_path: Path,
-    *,
-    sheet_index: int,
-    start_col: int,
-    end_col: int,
-) -> None:
-    original_bytes = output_path.read_bytes()
-    file_bytes = bytearray(original_bytes)
-    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
-    sheet_offsets = _xls_sheet_offsets(workbook_stream)
-    if sheet_index >= len(sheet_offsets):
-        raise ValueError("В XLS не найден лист для скрытия правой части")
-
-    managed_cols = set(range(start_col, end_col + 1))
-    patched_cols: set[int] = set()
-    offset = sheet_offsets[sheet_index]
-    while offset + 4 <= len(workbook_stream):
-        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
-        payload_start = offset + 4
-        payload_end = payload_start + payload_length
-        if payload_end > len(workbook_stream):
-            break
-        if record_id == 0x007D and payload_length >= 12:
-            first_col, last_col = struct.unpack_from("<HH", workbook_stream, payload_start)
-            record_cols = set(range(first_col, last_col + 1))
-            overlap = record_cols & managed_cols
-            # Ширину колонок в готовом файле правим по месту, поэтому одну запись
-            # COLINFO нельзя разрезать на видимую и скрытую половины.
-            if overlap and first_col >= start_col:
-                # Запись может тянуться правее end_col: xlwt объединяет хвост листа
-                # в один диапазон до 256-й колонки. Там пусто, прячем целиком.
-                options = struct.unpack_from("<H", workbook_stream, payload_start + 8)[0] | 0x0001
-                _write_new_xls_stream_bytes(file_bytes, sectors, payload_start + 4, struct.pack("<H", 0))
-                _write_new_xls_stream_bytes(file_bytes, sectors, payload_start + 8, struct.pack("<H", options))
-                patched_cols.update(overlap)
-        if record_id == 0x000A:
-            break
-        offset = payload_end
-
-    if patched_cols:
-        output_path.write_bytes(file_bytes)
-
-
 _XLS_PRINT_AREA_BUILTIN_NAME = 0x06
 _XLS_AREA_3D_TOKENS = (0x3B, 0x5B, 0x7B)
 
 
-def _patch_xls_print_area_last_column(output_path: Path, *, sheet_index: int, last_col: int) -> None:
-    """Сдвинуть правую границу области печати листа к last_col, не пересохраняя файл.
+def _extend_xls_print_area_to_column(output_path: Path, *, sheet_index: int, last_col: int) -> None:
+    """Дотянуть правую границу области печати листа до last_col, не пересохраняя файл.
 
-    Трогаем только область из одного прямоугольника: так её задаёт Excel, и
-    её граница лежит в формуле имени Print_Area на постоянном месте.
+    Более широкую область не трогаем. Трогаем только область из одного
+    прямоугольника: так её задаёт Excel, и её граница лежит в формуле имени
+    Print_Area на постоянном месте.
     """
     original_bytes = output_path.read_bytes()
     file_bytes = bytearray(original_bytes)
@@ -4488,7 +4435,7 @@ def _patch_xls_print_area_last_column(output_path: Path, *, sheet_index: int, la
         ):
             continue
         first_col, area_last_col = struct.unpack_from("<HH", workbook_stream, formula_start + 7)
-        if (first_col & 0x3FFF) > last_col or (area_last_col & 0x3FFF) <= last_col:
+        if (first_col & 0x3FFF) > last_col or (area_last_col & 0x3FFF) >= last_col:
             continue
         _write_new_xls_stream_bytes(
             file_bytes,
@@ -4499,6 +4446,166 @@ def _patch_xls_print_area_last_column(output_path: Path, *, sheet_index: int, la
         patched = True
 
     if patched:
+        output_path.write_bytes(file_bytes)
+
+
+_XLS_FONT_RECORD = 0x0031
+_XLS_XF_RECORD = 0x00E0
+_XLS_STYLE_RECORD = 0x0293
+_XLS_XFEXT_RECORD = 0x087D
+_XLS_XFEXT_FONT_SCHEME = 0x000E
+# Шрифт книги в шаблонах ВУ заказчика: имя в нижнем регистре и высота в
+# двадцатых долях пункта.
+DRIVER_XLS_DEFAULT_FONT = ("arial cyr", 200)
+
+
+def _xls_font_index(position: int) -> int:
+    """Номер шрифта в XF по порядку записи FONT: номера 4 в BIFF нет."""
+    return position if position < 4 else position + 1
+
+
+def _xls_sst_has_rich_text(workbook_stream: bytes) -> bool:
+    """Есть ли в SST строки с разметкой шрифтов: они ссылаются на шрифты по номеру."""
+    try:
+        spans = _new_xls_sst_payload_spans(workbook_stream)
+    except ValueError:
+        return False
+    try:
+        string_count = struct.unpack_from("<I", workbook_stream, spans[0][0] - 4)[0]
+        span_index, position = 0, spans[0][0]
+
+        def skip(length: int) -> bytes:
+            nonlocal span_index, position
+            taken = bytearray()
+            while length:
+                if position >= spans[span_index][1]:
+                    span_index += 1
+                    position = spans[span_index][0]
+                    continue
+                size = min(length, spans[span_index][1] - position)
+                taken += workbook_stream[position : position + size]
+                position += size
+                length -= size
+            return bytes(taken)
+
+        for _ in range(string_count):
+            char_count, flags = struct.unpack("<HB", skip(3))
+            if flags & 0x08:
+                return True
+            ext_length = struct.unpack("<I", skip(4))[0] if flags & 0x04 else 0
+            width = 2 if flags & 0x01 else 1
+            while char_count:
+                if position >= spans[span_index][1]:
+                    # Символы строки продолжаются в CONTINUE с новым байтом ширины.
+                    span_index += 1
+                    position = spans[span_index][0]
+                    width = 2 if workbook_stream[position] & 0x01 else 1
+                    position += 1
+                    continue
+                size = min(char_count, (spans[span_index][1] - position) // width)
+                if size <= 0:
+                    return True
+                position += size * width
+                char_count -= size
+            skip(ext_length)
+    except (IndexError, struct.error):
+        # Непонятную таблицу строк считаем размеченной: шрифты тогда не трогаем.
+        return True
+    return False
+
+
+def _use_customer_default_xls_font(output_path: Path) -> None:
+    """Сделать шрифтом книги Arial Cyr 10, как в шаблоне ВУ заказчика.
+
+    По шрифту книги (первая запись FONT, а в теме Office 2023 — её шрифт
+    Aptos Narrow) Excel переводит ширину столбцов и высоту строк в точки
+    принтера. Шаблоны, сохранённые в Microsoft 365, несут Aptos Narrow, и
+    бланк выходит на 2 % шире и на 8 % выше, чем печатала программа заказчика.
+    У заказчика везде Excel 2021, где Aptos нет: Excel подставляет Arial 11, и
+    справка расползается ещё на 10 % и уходит на второй лист. С Arial Cyr 10
+    координаты на бумаге совпадают с шаблоном заказчика.
+
+    Файл не пересохраняем: запись Arial Cyr 10, которая уже есть в шаблоне,
+    меняется местами с первой, длина блока шрифтов та же, и смещения дальше не
+    сдвигаются. Номера шрифтов в XF переставляются так, что клетки печатаются
+    прежними шрифтами. Если такой записи нет или строки размечены шрифтами,
+    файл остаётся как есть.
+    """
+    original_bytes = output_path.read_bytes()
+    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
+    fonts: list[tuple[int, int, str, int, int, int, int]] = []
+    xf_offsets: list[int] = []
+    normal_xf = 0
+    xfext_scheme_offsets: dict[int, int] = {}
+    offset = 0
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream) or record_id == 0x000A:
+            break
+        if record_id == _XLS_FONT_RECORD and payload_length >= 16:
+            height, flags, _, weight = struct.unpack_from("<HHHH", workbook_stream, payload_start)
+            underline = workbook_stream[payload_start + 10]
+            name_length = workbook_stream[payload_start + 14]
+            wide = workbook_stream[payload_start + 15] & 0x01
+            raw_name = workbook_stream[payload_start + 16 : payload_start + 16 + name_length * (2 if wide else 1)]
+            name = raw_name.decode("utf-16le" if wide else "latin-1")
+            fonts.append((offset, payload_end - offset, name.casefold(), height, weight, flags, underline))
+        elif record_id == _XLS_XF_RECORD and payload_length >= 2:
+            xf_offsets.append(payload_start)
+        elif record_id == _XLS_STYLE_RECORD and payload_length >= 4:
+            xf_reference = struct.unpack_from("<H", workbook_stream, payload_start)[0]
+            if xf_reference & 0x8000 and workbook_stream[payload_start + 2] == 0:
+                normal_xf = xf_reference & 0x0FFF
+        elif record_id == _XLS_XFEXT_RECORD and payload_length >= 20:
+            xf_index, _, ext_count = struct.unpack_from("<HHH", workbook_stream, payload_start + 14)
+            ext_offset = payload_start + 20
+            for _ in range(ext_count):
+                if ext_offset + 4 > payload_end:
+                    break
+                ext_type, ext_length = struct.unpack_from("<HH", workbook_stream, ext_offset)
+                if ext_type == _XLS_XFEXT_FONT_SCHEME and ext_length >= 5:
+                    xfext_scheme_offsets[xf_index] = ext_offset + 4
+                ext_offset += max(ext_length, 4)
+        offset = payload_end
+    if not fonts or normal_xf >= len(xf_offsets):
+        return
+
+    def is_default_font(font) -> bool:
+        _, _, name, height, weight, flags, underline = font
+        return (name, height) == DRIVER_XLS_DEFAULT_FONT and weight == 400 and not flags & 0x003E and not underline
+
+    file_bytes = bytearray(original_bytes)
+    font_swap: dict[int, int] = {}
+    if not is_default_font(fonts[0]):
+        target = next((position for position, font in enumerate(fonts) if position and is_default_font(font)), None)
+        if target is None or _xls_sst_has_rich_text(workbook_stream):
+            return
+        first_offset, first_length = fonts[0][0], fonts[0][1]
+        target_offset, target_length = fonts[target][0], fonts[target][1]
+        _write_new_xls_stream_bytes(
+            file_bytes,
+            sectors,
+            first_offset,
+            workbook_stream[target_offset : target_offset + target_length]
+            + workbook_stream[first_offset + first_length : target_offset]
+            + workbook_stream[first_offset : first_offset + first_length],
+        )
+        font_swap = {0: _xls_font_index(target), _xls_font_index(target): 0}
+    changed = bool(font_swap)
+    for xf_number, xf_offset in enumerate(xf_offsets):
+        font_index = struct.unpack_from("<H", workbook_stream, xf_offset)[0]
+        new_font_index = 0 if xf_number == normal_xf else font_swap.get(font_index, font_index)
+        if new_font_index != font_index:
+            _write_new_xls_stream_bytes(file_bytes, sectors, xf_offset, struct.pack("<H", new_font_index))
+            changed = True
+    scheme_offset = xfext_scheme_offsets.get(normal_xf)
+    if scheme_offset is not None and workbook_stream[scheme_offset] != 0:
+        # Иначе стиль «Обычный» возьмёт шрифт из темы, а не из записи FONT.
+        _write_new_xls_stream_bytes(file_bytes, sectors, scheme_offset, b"\x00")
+        changed = True
+    if changed:
         output_path.write_bytes(file_bytes)
 
 
@@ -4694,23 +4801,49 @@ def _patch_driver_saved_xls_category_marks(
             _patch_xls_cell_styles(output_path, sheet_index=sheet_index, styles=styles)
 
 
-def _patch_driver_saved_xls_layout(output_path: Path) -> None:
-    try:
-        workbook = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
-    except Exception:
-        return
-    sheet_names = workbook.sheet_names()
-    for sheet_index, sheet_name in enumerate(sheet_names):
-        if sheet_name in DRIVER_XLS_FRONT_SHEET_NAMES:
-            first_hidden_col = 27
-        elif sheet_name in DRIVER_XLS_BACK_SHEET_NAMES:
-            first_hidden_col = 34
-        else:
+def _driver_form_last_columns(
+    marker_book,
+    marker_locations: dict[str, tuple[str, int, int]],
+) -> dict[int, int]:
+    """Правый край бланка ВУ на каждом его листе: номер листа -> последний столбец.
+
+    Край — последняя клетка полей правой половины вместе с объединением, в
+    котором поле стоит. На встроенной лицевой это «Регион (прав)», объединённый
+    до AZ: ровно так в шаблоне заказчика задана область печати.
+    """
+    sheet_names = marker_book.sheet_names()
+    last_columns: dict[int, int] = {}
+    for sheet_name, row_index, col_index in marker_locations.values():
+        if sheet_name not in DRIVER_XLS_FRONT_SHEET_NAMES + DRIVER_XLS_BACK_SHEET_NAMES:
             continue
-        _patch_xls_hidden_columns(output_path, sheet_index=sheet_index, start_col=first_hidden_col, end_col=65)
-        # Скрытую копию справки Excel всё равно раскладывает на страницы, если
-        # она внутри области печати, и они выходят из принтера пустыми листами.
-        _patch_xls_print_area_last_column(output_path, sheet_index=sheet_index, last_col=first_hidden_col - 1)
+        sheet = marker_book.sheet_by_name(sheet_name)
+        last_col = col_index
+        for row_low, _, col_low, col_high in sheet.merged_cells:
+            if (row_low, col_low) == (row_index, col_index):
+                last_col = max(last_col, col_high - 1)
+        sheet_index = sheet_names.index(sheet_name)
+        last_columns[sheet_index] = max(last_columns.get(sheet_index, 0), last_col)
+    return last_columns
+
+
+def _prepare_driver_saved_xls_for_print(
+    output_path: Path,
+    marker_book,
+    marker_locations: dict[str, tuple[str, int, int]],
+) -> None:
+    """Бланк ВУ выходит из Excel 2021 заказчика целиком, на одном листе и там же, где у заказчика.
+
+    Шрифт книги — Arial Cyr 10, как в шаблоне заказчика. Область печати
+    накрывает обе половины: с 21.09 у встроенной лицевой она была сужена до
+    A:AA, и такую область унаследовали копии, скачанные тогда со страницы
+    «Шаблоны». Готовый файл — побайтовая копия шаблона, номера листов те же.
+    """
+    last_columns = _driver_form_last_columns(marker_book, marker_locations)
+    if not last_columns:
+        return
+    _use_customer_default_xls_font(output_path)
+    for sheet_index, last_col in last_columns.items():
+        _extend_xls_print_area_to_column(output_path, sheet_index=sheet_index, last_col=last_col)
 
 
 def _generate_preserved_new_xls(
@@ -4933,7 +5066,7 @@ def _generate_preserved_legacy_xls(
                 managed_rows=managed_rows,
                 hidden_rows=hidden_rows,
             )
-        _patch_driver_saved_xls_layout(output_path)
+        _prepare_driver_saved_xls_for_print(output_path, marker_book, marker_locations)
         _patch_driver_saved_xls_category_marks(output_path, marker_locations, values, category_mark_plan)
     finally:
         temporary_path.unlink(missing_ok=True)

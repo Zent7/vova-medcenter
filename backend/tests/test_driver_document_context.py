@@ -345,11 +345,12 @@ class DriverDocumentContextTests(unittest.TestCase):
         back_sheet = result_book.sheet_by_name("Водительская Оборотная")
 
         expected_marks = ["", "✓", "✓", "", "", "", "", "✓", "", "✓", "", "✓", "✓", "", "✓", ""]
+        # Обе части бланка заполняются одинаково.
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
-        self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
-        self.assertTrue(all(back_sheet.colinfo_map[col].hidden for col in range(34, 66)))
+        self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], expected_marks)
+        self.assertFalse(any(info.hidden for info in back_sheet.colinfo_map.values()))
         self.assertEqual(back_sheet.cell_value(36, 8), "Председатель")
-        self.assertEqual(back_sheet.cell_value(36, 41), "")
+        self.assertEqual(back_sheet.cell_value(36, 41), "Председатель")
         for row_index, expected in [
             (14, "Установлено"),
             (17, "Не Установлено"),
@@ -361,7 +362,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             (33, "Установлено"),
         ]:
             self.assertEqual(back_sheet.cell_value(row_index, 29), expected)
-            self.assertEqual(back_sheet.cell_value(row_index, 62), "")
+            self.assertEqual(back_sheet.cell_value(row_index, 62), expected)
 
     def test_driver_xls_back_sheet_leaves_unselected_restrictions_empty(self):
         """Водителю без ограничений и показаний оборот печатает "Не Установлено":
@@ -390,8 +391,10 @@ class DriverDocumentContextTests(unittest.TestCase):
 
         expected_marks = ["", "✓", "", "", "✓", "", "", "", "", "✓", "", "✓", "", "", "", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
+        self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], expected_marks)
         for row_index in (14, 17, 20, 25, 27, 29, 31, 33):
             self.assertEqual(back_sheet.cell_value(row_index, 29), "Не Установлено")
+            self.assertEqual(back_sheet.cell_value(row_index, 62), "Не Установлено")
 
     def test_driver_xls_front_sheet_writes_issue_date_as_text(self):
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская лицевая.xls"
@@ -429,13 +432,11 @@ class DriverDocumentContextTests(unittest.TestCase):
         result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
         front_sheet = result_book.sheet_by_name("Водительская Лицевая")
 
-        for col_index, expected in [(15, "31"), (19, "июля"), (23, "2026")]:
+        for col_index, expected in [(15, "31"), (19, "июля"), (23, "2026"), (41, "31"), (45, "июля"), (49, "2026")]:
             cell = front_sheet.cell(23, col_index)
             self.assertEqual(cell.value, expected)
             self.assertEqual(cell.ctype, xlrd.XL_CELL_TEXT)
-        for col_index in (41, 45, 49):
-            self.assertEqual(front_sheet.cell_value(23, col_index), "")
-        self.assertTrue(all(front_sheet.colinfo_map[col].hidden for col in range(27, 66)))
+        self.assertFalse(any(info.hidden for info in front_sheet.colinfo_map.values()))
 
     def test_driver_xls_back_sheet_marks_operator_selected_categories_only(self):
         template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"
@@ -465,7 +466,7 @@ class DriverDocumentContextTests(unittest.TestCase):
 
         expected_marks = ["✓", "✓", "✓", "", "✓", "", "", "", "", "✓", "✓", "✓", "✓", "", "", ""]
         self.assertEqual([back_sheet.cell_value(10, col) for col in range(2, 34, 2)], expected_marks)
-        self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], [""] * 16)
+        self.assertEqual([back_sheet.cell_value(10, col) for col in range(35, 67, 2)], expected_marks)
 
     def test_driver_xls_back_sheet_draws_a_tick_only_on_marked_categories(self):
         """Отмеченная категория печатается галочкой вместо Z-образного прочерка.
@@ -514,6 +515,8 @@ class DriverDocumentContextTests(unittest.TestCase):
         for index in (1, 9, 11):
             expected_shapes[index] = "галочка"
         self.assertEqual(shapes, expected_shapes)
+        # Правая часть бланка отмечается так же, как левая.
+        self.assertEqual([shape(col) for col in range(35, 67, 2)], expected_shapes)
 
     def test_driver_print_variants_keep_only_selected_side(self):
         for variant, expected_sheet, template_path in [
@@ -568,24 +571,24 @@ class DriverDocumentContextTests(unittest.TestCase):
 
             self.assertEqual(result_book.sheet_names(), [expected_sheet])
             result_sheet = result_book.sheet_by_name(expected_sheet)
-            hidden_range = range(27, 66) if variant == "driver_front" else range(34, 66)
-            managed_cols = [col for col in hidden_range if col in result_sheet.colinfo_map]
-            self.assertTrue(managed_cols)
-            self.assertTrue(all(result_sheet.colinfo_map[col].hidden for col in managed_cols))
-            self.assertTrue(all(result_sheet.colinfo_map[col].width == 0 for col in managed_cols))
+            self.assertFalse(any(info.hidden for info in result_sheet.colinfo_map.values()))
+            if variant == "driver_front":
+                for col_index in (2, 28):
+                    self.assertEqual(
+                        strip_new_xls_placeholder_padding(result_sheet.cell_value(15, col_index)),
+                        "Иванов Иван Иванович",
+                    )
 
-    def test_driver_runtime_xls_without_print_variant_hides_duplicate_columns(self):
+    def test_driver_runtime_xls_without_print_variant_keeps_both_halves_visible(self):
         """Без print_variant файл собирается другим путём: xlwt склеивает колонки
         одинаковой ширины в диапазоны COLINFO, и хвост листа уходит за 65-ю колонку."""
 
-        for sheet_name, first_hidden_col, template_name in [
-            ("Водительская Лицевая", 27, "водительская лицевая.xls"),
-            ("Водительская Оборотная", 34, "водительская обратн ст.xls"),
+        for sheet_name, template_name in [
+            ("Водительская Лицевая", "водительская лицевая.xls"),
+            ("Водительская Оборотная", "водительская обратн ст.xls"),
         ]:
             template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / template_name
-            output_path = (
-                Path(tempfile.gettempdir()) / f"driver_runtime_no_variant_columns_{first_hidden_col}_test.xls"
-            )
+            output_path = Path(tempfile.gettempdir()) / f"driver_runtime_no_variant_{template_name}"
 
             _generate_runtime_xls(
                 template_path,
@@ -599,14 +602,8 @@ class DriverDocumentContextTests(unittest.TestCase):
             result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
             with self.subTest(sheet=sheet_name):
                 colinfo = result_book.sheet_by_name(sheet_name).colinfo_map
-                duplicate_cols = [col for col in range(first_hidden_col, 66) if col in colinfo]
-                self.assertTrue(duplicate_cols)
-                self.assertTrue(all(colinfo[col].hidden for col in duplicate_cols))
-                self.assertTrue(all(colinfo[col].width == 0 for col in duplicate_cols))
-                # Сама справка слева от границы остаётся видимой.
-                self.assertFalse(
-                    [col for col in range(0, first_hidden_col) if col in colinfo and colinfo[col].hidden]
-                )
+                self.assertTrue(colinfo)
+                self.assertFalse([col for col, info in colinfo.items() if info.hidden])
 
 
 if __name__ == "__main__":

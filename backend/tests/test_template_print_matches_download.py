@@ -3,7 +3,7 @@
 Заказчик скачивает шаблон, правит его в Excel и загружает обратно. Печать
 должна взять именно этот файл и сохранить всё, что в нём настроено: область
 печати, ориентацию, поля, масштаб и колонтитулы. Меняются только значения
-полей и скрытая копия справки ВУ.
+полей, а у справки ВУ ещё и область печати, если она уже обеих частей бланка.
 """
 
 from __future__ import annotations
@@ -180,25 +180,38 @@ class FreeLayoutPrintKeepsTemplatePageSetupTests(unittest.TestCase):
                     self.assertIn("page_setup", expected)
                     self.assertEqual(page_setup(output_path), expected)
 
-    def test_driver_certificate_follows_the_customer_margins_and_prints_only_its_left_half(self):
+    def test_driver_certificate_follows_the_customer_margins_and_prints_both_halves(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             customer_copy = Path(temporary_dir) / DRIVER_FRONT_FILE_NAME
             shutil.copy2(TEMPLATES_DIR / DRIVER_FRONT_FILE_NAME, customer_copy)
             # Заказчик опустил справку на полтора сантиметра и растянул область
-            # печати на обе половины листа, как было в старом шаблоне.
-            patch_customer_copy(customer_copy, top_margin_inches=1.5 / 2.54, print_area_last_col=51)
+            # печати ещё правее обеих частей бланка.
+            patch_customer_copy(customer_copy, top_margin_inches=1.5 / 2.54, print_area_last_col=55)
             output_path = Path(temporary_dir) / "printed.xls"
 
             generate_like_the_service(customer_copy, output_path, "driver_front")
 
             self.assertAlmostEqual(top_margin(output_path), 1.5 / 2.54)
+            self.assertEqual(page_setup(output_path), page_setup(customer_copy))
+            self.assertEqual(print_area_columns(output_path), (0, 55))
+
+    def test_driver_certificate_widens_a_print_area_cut_to_the_left_half(self):
+        # С 21.09 встроенная лицевая печатала только A:AA, и копии, скачанные
+        # тогда со страницы «Шаблоны», унесли эту область с собой.
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            customer_copy = Path(temporary_dir) / DRIVER_FRONT_FILE_NAME
+            shutil.copy2(TEMPLATES_DIR / DRIVER_FRONT_FILE_NAME, customer_copy)
+            patch_customer_copy(customer_copy, print_area_last_col=26)
+            output_path = Path(temporary_dir) / "printed.xls"
+
+            generate_like_the_service(customer_copy, output_path, "driver_front")
+
+            # До AZ, как в шаблоне заказчика: там кончается «Регион (прав)».
+            self.assertEqual(print_area_columns(output_path), (0, 51))
             customer_setup = page_setup(customer_copy)
             printed_setup = page_setup(output_path)
-            for key in ("page_setup", "left_margin", "header", "footer", "fit_to_page_flags"):
+            for key in ("page_setup", "top_margin", "left_margin", "header", "footer", "fit_to_page_flags"):
                 self.assertEqual(printed_setup[key], customer_setup[key], key)
-            # Правую копию справки печать прячет; в области печати она дала бы
-            # пустые страницы.
-            self.assertEqual(print_area_columns(output_path), (0, 26))
 
     def test_a_print_variant_for_the_other_side_is_refused(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
