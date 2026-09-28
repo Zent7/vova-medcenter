@@ -192,7 +192,7 @@ def resolve_template_file(template) -> Path | None:
 # заполнить не может, а подменять её встроенной нельзя: тогда на странице
 # «Шаблоны» лежал бы один бланк, а в услуге печатался другой.
 OUTDATED_TEMPLATE_OVERRIDE_TOKENS = {
-    "095У_справка_шаблон.docx": "[Certificate095EducationInstitution]",
+    "095У_справка_шаблон.docx": "[Certificate095TherapistDoctor]",
 }
 
 

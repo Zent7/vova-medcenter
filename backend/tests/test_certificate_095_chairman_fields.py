@@ -9,9 +9,11 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.models.client import Client  # noqa: E402
 from app.models.doctor_exam import DoctorExam  # noqa: E402
 from app.services.document_generator import (  # noqa: E402
     _certificate_095_context_overrides,
+    _certificate_095_doctor_context_overrides,
     _generate_docx,
 )
 
@@ -82,6 +84,7 @@ class Certificate095ChairmanFieldsTests(unittest.TestCase):
             "VisitDate_DATEFULL": "10 сентября 2026 г.",
         }
         context.update(_certificate_095_context_overrides([self.exam]))
+        context.update(_certificate_095_doctor_context_overrides(Client(), [self.exam]))
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_path = Path(temporary_directory) / TEMPLATE_PATH.name

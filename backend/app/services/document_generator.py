@@ -5496,6 +5496,13 @@ def _certificate_095_context_overrides(exams: list[DoctorExam]) -> dict[str, str
     }
 
 
+def _certificate_095_doctor_context_overrides(client: Client, exams: list[DoctorExam]) -> dict[str, str]:
+    """Врач-терапевт, которого справка 095/у печатает под подписью врача."""
+
+    therapist = _exam_export_with_client_doctor(_exam_map(exams).get("therapist"), client, "therapist")
+    return {"Certificate095TherapistDoctor": str(therapist.get("doctor") or "").strip()}
+
+
 def _document_doctor_name_for_context(exams: list[DoctorExam]) -> str:
     doctor_names: list[str] = []
     chairman_doctor = ""
@@ -5590,6 +5597,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         context_overrides.update(_prof_29n_doctor_context_overrides(client, []))
         context_overrides.update(_certificate_086_doctor_context_overrides(client, []))
         context_overrides.update(_certificate_095_context_overrides([]))
+        context_overrides.update(_certificate_095_doctor_context_overrides(client, []))
         return {
             "service_names": service_names,
             "service_rows": service_rows,
@@ -5695,6 +5703,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
     context_overrides.update(_prof_29n_doctor_context_overrides(client, exams))
     context_overrides.update(_certificate_086_doctor_context_overrides(client, exams))
     context_overrides.update(_certificate_095_context_overrides(exams))
+    context_overrides.update(_certificate_095_doctor_context_overrides(client, exams))
 
     return {
         "service_names": service_names,
