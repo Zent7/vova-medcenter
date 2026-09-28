@@ -6,37 +6,27 @@
 правую часть приняли за лишнюю копию: печать стирала её, прятала столбцы и
 сужала область печати, а встроенная лицевая печатала только A:AA. Месяц
 справка выходила заполненной наполовину, и правки шаблона этого не меняли.
-
-У заказчика на всех компьютерах Excel 2021. Ширину столбцов и высоту строк
-на бумаге Excel считает от шрифта книги. В шаблоне заказчика это Arial Cyr
-10, а шаблоны, сохранённые в Microsoft 365, несут Aptos Narrow, которого в
-Excel 2021 нет, и тогда справка расползается и уходит на второй лист.
+Шрифты, от которых зависит, где поля лягут на бумаге, проверяет
+test_xls_customer_fonts.py.
 """
 
 from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-import shutil
-import struct
 import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest import mock
 
 import xlrd
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services import document_generator  # noqa: E402
 from app.services.document_generator import (  # noqa: E402
     _driver_document_context_overrides,
     _generate_runtime_xls,
-    _new_xls_workbook_stream,
-    _use_customer_default_xls_font,
-    _write_new_xls_stream_bytes,
 )
 from app.services.new_xls_templates import (  # noqa: E402
     LEGACY_XLS_TEMPLATE_BY_FILE,
@@ -53,8 +43,6 @@ DRIVER_SIDES = (
     ("водительская лицевая.xls", "driver_front"),
     ("водительская обратн ст.xls", "driver_back"),
 )
-_XFEXT_RECORD = 0x087D
-_XFEXT_FONT_SCHEME = 0x000E
 
 
 def print_areas(book) -> dict[int, tuple[int, int, int, int]]:
@@ -107,59 +95,6 @@ def right_part_field(field_id: str) -> str | None:
     if field_id.startswith("restriction_") and field_id.endswith("_29"):
         return field_id.removesuffix("_29") + "_62"
     return None
-
-
-def normal_style_font_scheme(path: Path) -> int | None:
-    """Шрифт темы у стиля «Обычный»: 0 — нет, 2 — шрифт текста темы (Aptos Narrow)."""
-    stream, _ = _new_xls_workbook_stream(path.read_bytes())
-    offset = 0
-    while offset + 4 <= len(stream):
-        record_id, length = struct.unpack_from("<HH", stream, offset)
-        payload = offset + 4
-        if record_id == 0x000A:
-            break
-        if record_id == _XFEXT_RECORD and struct.unpack_from("<H", stream, payload + 14)[0] == 0:
-            ext_offset = payload + 20
-            for _ in range(struct.unpack_from("<H", stream, payload + 18)[0]):
-                ext_type, ext_length = struct.unpack_from("<HH", stream, ext_offset)
-                if ext_type == _XFEXT_FONT_SCHEME:
-                    return stream[ext_offset + 4]
-                ext_offset += ext_length
-        offset = payload + length
-    return None
-
-
-def make_copy_saved_in_microsoft_365(path: Path) -> None:
-    """Копия шаблона, как её сохраняет Excel из Microsoft 365: шрифт книги Aptos Narrow 11 из темы."""
-    with mock.patch.object(document_generator, "DRIVER_XLS_DEFAULT_FONT", ("aptos narrow", 220)):
-        _use_customer_default_xls_font(path)
-    data = bytearray(path.read_bytes())
-    stream, sectors = _new_xls_workbook_stream(bytes(data))
-    offset = 0
-    while offset + 4 <= len(stream):
-        record_id, length = struct.unpack_from("<HH", stream, offset)
-        payload = offset + 4
-        if record_id == _XFEXT_RECORD and struct.unpack_from("<H", stream, payload + 14)[0] == 0:
-            ext_offset = payload + 20
-            for _ in range(struct.unpack_from("<H", stream, payload + 18)[0]):
-                ext_type, ext_length = struct.unpack_from("<HH", stream, ext_offset)
-                if ext_type == _XFEXT_FONT_SCHEME:
-                    _write_new_xls_stream_bytes(data, sectors, ext_offset + 4, b"\x02")
-                ext_offset += ext_length
-            break
-        offset = payload + length
-    path.write_bytes(bytes(data))
-
-
-def cell_fonts(path: Path) -> dict[tuple[int, int], tuple]:
-    book = xlrd.open_workbook(str(path), formatting_info=True)
-    sheet = book.sheet_by_index(0)
-    fonts = {}
-    for row_index in range(sheet.nrows):
-        for col_index in range(sheet.ncols):
-            font = book.font_list[book.xf_list[sheet.cell_xf_index(row_index, col_index)].font_index]
-            fonts[(row_index, col_index)] = (font.name, font.height, font.weight, font.italic, font.colour_index)
-    return fonts
 
 
 def exam(role: str, doctor_name: str, fields: dict | None = None) -> SimpleNamespace:
@@ -263,39 +198,6 @@ class DriverBlankPrintsBothPartsTests(unittest.TestCase):
         # Программа заказчика печатала лицевую областью A1:AZ44 при масштабе 97 %.
         book = xlrd.open_workbook(str(TEMPLATES_DIR / "водительская лицевая.xls"), formatting_info=True)
         self.assertEqual(print_areas(book), {0: (0, 44, 0, 52)})
-
-
-class DriverBlankUsesTheCustomerFontTests(unittest.TestCase):
-    def test_bundled_templates_use_arial_cyr_10_as_the_workbook_font(self):
-        for file_name, _ in DRIVER_SIDES:
-            with self.subTest(file_name=file_name):
-                path = TEMPLATES_DIR / file_name
-                book = xlrd.open_workbook(str(path), formatting_info=True)
-                self.assertEqual((book.font_list[0].name, book.font_list[0].height), ("Arial Cyr", 200))
-                self.assertEqual(book.xf_list[0].font_index, 0)
-                self.assertIn(normal_style_font_scheme(path), (None, 0))
-
-    def test_a_copy_saved_in_microsoft_365_prints_with_the_customer_font(self):
-        with tempfile.TemporaryDirectory() as temporary_dir:
-            for file_name, print_variant in DRIVER_SIDES:
-                with self.subTest(file_name=file_name):
-                    customer_copy = Path(temporary_dir) / file_name
-                    shutil.copy2(TEMPLATES_DIR / file_name, customer_copy)
-                    make_copy_saved_in_microsoft_365(customer_copy)
-                    copy_book = xlrd.open_workbook(str(customer_copy), formatting_info=True)
-                    self.assertEqual(copy_book.font_list[0].name, "Aptos Narrow")
-                    self.assertEqual(normal_style_font_scheme(customer_copy), 2)
-                    self.assertEqual(cell_fonts(customer_copy), cell_fonts(TEMPLATES_DIR / file_name))
-                    output_path = Path(temporary_dir) / f"printed-{print_variant}.xls"
-
-                    print_driver_side(customer_copy, output_path, print_variant)
-
-                    printed_book = xlrd.open_workbook(str(output_path), formatting_info=True)
-                    self.assertEqual((printed_book.font_list[0].name, printed_book.font_list[0].height), ("Arial Cyr", 200))
-                    self.assertEqual(printed_book.xf_list[0].font_index, 0)
-                    self.assertEqual(normal_style_font_scheme(output_path), 0)
-                    # Клетки печатаются теми же шрифтами, что и в копии заказчика.
-                    self.assertEqual(cell_fonts(output_path), cell_fonts(customer_copy))
 
 
 if __name__ == "__main__":

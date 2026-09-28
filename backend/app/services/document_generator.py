@@ -4454,9 +4454,12 @@ _XLS_XF_RECORD = 0x00E0
 _XLS_STYLE_RECORD = 0x0293
 _XLS_XFEXT_RECORD = 0x087D
 _XLS_XFEXT_FONT_SCHEME = 0x000E
-# Шрифт книги в шаблонах ВУ заказчика: имя в нижнем регистре и высота в
-# двадцатых долях пункта.
-DRIVER_XLS_DEFAULT_FONT = ("arial cyr", 200)
+_XLS_THEME_RECORD = 0x0896
+_XLS_DEFAULT_THEME_VERSION = 124226
+# Шрифт книги в шаблонах заказчика — Arial Cyr 10. В ЛМК такой записи нет, там
+# Arial 10: тот же шрифт под своим именем. Высота в двадцатых долях пункта.
+CUSTOMER_XLS_DEFAULT_FONT_NAMES = ("arial cyr", "arial")
+CUSTOMER_XLS_DEFAULT_FONT_HEIGHT = 200
 
 
 def _xls_font_index(position: int) -> int:
@@ -4464,35 +4467,41 @@ def _xls_font_index(position: int) -> int:
     return position if position < 4 else position + 1
 
 
-def _xls_sst_has_rich_text(workbook_stream: bytes) -> bool:
-    """Есть ли в SST строки с разметкой шрифтов: они ссылаются на шрифты по номеру."""
+def _xls_sst_run_font_offsets(workbook_stream: bytes) -> list[tuple[int, int]]:
+    """Где в SST лежат номера шрифтов разметки строк: смещения младшего и старшего байта.
+
+    Разметка ссылается на шрифты по номеру, и при перестановке записей FONT
+    её номера меняются вместе с XF. Таблицу, которую не удалось разобрать,
+    функция не угадывает: ValueError.
+    """
     try:
         spans = _new_xls_sst_payload_spans(workbook_stream)
     except ValueError:
-        return False
+        return []
+    span_index, position = 0, spans[0][0]
+
+    def take(length: int) -> list[int]:
+        nonlocal span_index, position
+        offsets: list[int] = []
+        while len(offsets) < length:
+            if position >= spans[span_index][1]:
+                span_index += 1
+                position = spans[span_index][0]
+                continue
+            offsets.append(position)
+            position += 1
+        return offsets
+
+    def read(fmt: str) -> tuple:
+        return struct.unpack(fmt, bytes(workbook_stream[offset] for offset in take(struct.calcsize(fmt))))
+
+    run_offsets: list[tuple[int, int]] = []
     try:
         string_count = struct.unpack_from("<I", workbook_stream, spans[0][0] - 4)[0]
-        span_index, position = 0, spans[0][0]
-
-        def skip(length: int) -> bytes:
-            nonlocal span_index, position
-            taken = bytearray()
-            while length:
-                if position >= spans[span_index][1]:
-                    span_index += 1
-                    position = spans[span_index][0]
-                    continue
-                size = min(length, spans[span_index][1] - position)
-                taken += workbook_stream[position : position + size]
-                position += size
-                length -= size
-            return bytes(taken)
-
         for _ in range(string_count):
-            char_count, flags = struct.unpack("<HB", skip(3))
-            if flags & 0x08:
-                return True
-            ext_length = struct.unpack("<I", skip(4))[0] if flags & 0x04 else 0
+            char_count, flags = read("<HB")
+            run_count = read("<H")[0] if flags & 0x08 else 0
+            ext_length = read("<I")[0] if flags & 0x04 else 0
             width = 2 if flags & 0x01 else 1
             while char_count:
                 if position >= spans[span_index][1]:
@@ -4504,39 +4513,31 @@ def _xls_sst_has_rich_text(workbook_stream: bytes) -> bool:
                     continue
                 size = min(char_count, (spans[span_index][1] - position) // width)
                 if size <= 0:
-                    return True
+                    raise ValueError("Символ строки SST разорван между записями")
                 position += size * width
                 char_count -= size
-            skip(ext_length)
-    except (IndexError, struct.error):
-        # Непонятную таблицу строк считаем размеченной: шрифты тогда не трогаем.
-        return True
-    return False
+            for _ in range(run_count):
+                run = take(4)
+                run_offsets.append((run[2], run[3]))
+            take(ext_length)
+    except (IndexError, struct.error) as exc:
+        raise ValueError("Не удалось разобрать таблицу строк SST") from exc
+    return run_offsets
 
 
-def _use_customer_default_xls_font(output_path: Path) -> None:
-    """Сделать шрифтом книги Arial Cyr 10, как в шаблоне ВУ заказчика.
+def _move_xls_font_first(output_path: Path, names: tuple[str, ...], height: int) -> bool:
+    """Сделать первой записью FONT обычный шрифт из names размера height, не пересохраняя файл.
 
-    По шрифту книги (первая запись FONT, а в теме Office 2023 — её шрифт
-    Aptos Narrow) Excel переводит ширину столбцов и высоту строк в точки
-    принтера. Шаблоны, сохранённые в Microsoft 365, несут Aptos Narrow, и
-    бланк выходит на 2 % шире и на 8 % выше, чем печатала программа заказчика.
-    У заказчика везде Excel 2021, где Aptos нет: Excel подставляет Arial 11, и
-    справка расползается ещё на 10 % и уходит на второй лист. С Arial Cyr 10
-    координаты на бумаге совпадают с шаблоном заказчика.
-
-    Файл не пересохраняем: запись Arial Cyr 10, которая уже есть в шаблоне,
-    меняется местами с первой, длина блока шрифтов та же, и смещения дальше не
-    сдвигаются. Номера шрифтов в XF переставляются так, что клетки печатаются
-    прежними шрифтами. Если такой записи нет или строки размечены шрифтами,
-    файл остаётся как есть.
+    Имена в names идут по старшинству. Запись меняется местами с первой:
+    длина блока шрифтов та же, и смещения дальше не сдвигаются. Номера
+    шрифтов в XF и в разметке строк SST переставляются так, что клетки
+    печатаются прежними шрифтами. False — такой записи нет или разметку
+    строк не удалось разобрать.
     """
     original_bytes = output_path.read_bytes()
     workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
-    fonts: list[tuple[int, int, str, int, int, int, int]] = []
+    fonts: list[tuple[int, int, int | None]] = []
     xf_offsets: list[int] = []
-    normal_xf = 0
-    xfext_scheme_offsets: dict[int, int] = {}
     offset = 0
     while offset + 4 <= len(workbook_stream):
         record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
@@ -4545,14 +4546,194 @@ def _use_customer_default_xls_font(output_path: Path) -> None:
         if payload_end > len(workbook_stream) or record_id == 0x000A:
             break
         if record_id == _XLS_FONT_RECORD and payload_length >= 16:
-            height, flags, _, weight = struct.unpack_from("<HHHH", workbook_stream, payload_start)
+            font_height, flags, _, weight = struct.unpack_from("<HHHH", workbook_stream, payload_start)
             underline = workbook_stream[payload_start + 10]
             name_length = workbook_stream[payload_start + 14]
             wide = workbook_stream[payload_start + 15] & 0x01
             raw_name = workbook_stream[payload_start + 16 : payload_start + 16 + name_length * (2 if wide else 1)]
-            name = raw_name.decode("utf-16le" if wide else "latin-1")
-            fonts.append((offset, payload_end - offset, name.casefold(), height, weight, flags, underline))
+            name = raw_name.decode("utf-16le" if wide else "latin-1").casefold()
+            plain = font_height == height and weight == 400 and not flags & 0x003E and not underline
+            fonts.append((offset, payload_end - offset, names.index(name) if plain and name in names else None))
         elif record_id == _XLS_XF_RECORD and payload_length >= 2:
+            xf_offsets.append(payload_start)
+        offset = payload_end
+    if not fonts:
+        return False
+    candidates = [(rank, position) for position, (_, _, rank) in enumerate(fonts) if position and rank is not None]
+    first_rank = fonts[0][2]
+    if first_rank is not None and (not candidates or min(candidates)[0] >= first_rank):
+        return True
+    if not candidates:
+        return False
+    try:
+        run_offsets = _xls_sst_run_font_offsets(workbook_stream)
+    except ValueError:
+        return False
+
+    target = min(candidates)[1]
+    first_offset, first_length, _ = fonts[0]
+    target_offset, target_length, _ = fonts[target]
+    file_bytes = bytearray(original_bytes)
+    _write_new_xls_stream_bytes(
+        file_bytes,
+        sectors,
+        first_offset,
+        workbook_stream[target_offset : target_offset + target_length]
+        + workbook_stream[first_offset + first_length : target_offset]
+        + workbook_stream[first_offset : first_offset + first_length],
+    )
+    target_index = _xls_font_index(target)
+    font_swap = {0: target_index, target_index: 0}
+    for xf_offset in xf_offsets:
+        font_index = struct.unpack_from("<H", workbook_stream, xf_offset)[0]
+        if font_index in font_swap:
+            _write_new_xls_stream_bytes(file_bytes, sectors, xf_offset, struct.pack("<H", font_swap[font_index]))
+    for low_offset, high_offset in run_offsets:
+        font_index = workbook_stream[low_offset] | workbook_stream[high_offset] << 8
+        if font_index in font_swap:
+            swapped = font_swap[font_index]
+            _write_new_xls_stream_bytes(file_bytes, sectors, low_offset, bytes([swapped & 0xFF]))
+            _write_new_xls_stream_bytes(file_bytes, sectors, high_offset, bytes([swapped >> 8]))
+    output_path.write_bytes(file_bytes)
+    return True
+
+
+_XLS_FONT_NAME_MAX_LENGTH = 31
+# Шрифты темы Office 2023, которые шаблоны унесли вместо шрифтов стандартной
+# темы Office в книгах заказчика.
+CUSTOMER_XLS_THEME_FONT_NAMES = {"aptos narrow": "Calibri", "aptos": "Calibri", "aptos display": "Calibri Light"}
+
+
+def _rename_xls_fonts(output_path: Path, new_names: dict[str, str]) -> bool:
+    """Переименовать шрифты клеток в более короткие имена, не пересохраняя файл.
+
+    new_names — старое имя в нижнем регистре -> новое. Переименовываются
+    шрифты, которыми печатаются клетки листов и разметка строк; шрифты
+    встроенных стилей, которыми не оформлена ни одна клетка, остаются как
+    есть. Длина блока шрифтов должна остаться прежней, иначе сдвинутся
+    смещения дальше по файлу. Разницу забирают записи FONT, на которые не
+    ссылается ни XF, ни разметка строк: к их имени дописываются пробелы.
+    False — таких записей не хватает, новое имя длиннее старого или файл не
+    удалось разобрать; тогда он не меняется.
+    """
+    original_bytes = output_path.read_bytes()
+    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
+    fonts: list[tuple[int, int, str, int]] = []
+    xf_fonts: list[int] = []
+    offset = 0
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream) or record_id == 0x000A:
+            break
+        if record_id == _XLS_FONT_RECORD and payload_length >= 16:
+            name_length = workbook_stream[payload_start + 14]
+            width = 2 if workbook_stream[payload_start + 15] & 0x01 else 1
+            raw_name = workbook_stream[payload_start + 16 : payload_start + 16 + name_length * width]
+            fonts.append((offset, payload_end, raw_name.decode("utf-16le" if width == 2 else "latin-1"), width))
+        elif record_id == _XLS_XF_RECORD and payload_length >= 2:
+            xf_fonts.append(struct.unpack_from("<H", workbook_stream, payload_start)[0])
+        offset = payload_end
+    if not fonts:
+        return False
+    try:
+        run_offsets = _xls_sst_run_font_offsets(workbook_stream)
+        book = xlrd.open_workbook(file_contents=original_bytes, formatting_info=True)
+    except Exception:
+        return False
+    run_fonts = {workbook_stream[low] | workbook_stream[high] << 8 for low, high in run_offsets}
+    printed_xfs = {
+        sheet.cell_xf_index(row_index, col_index)
+        for sheet in book.sheets()
+        for row_index in range(sheet.nrows)
+        for col_index in range(sheet.ncols)
+    }
+    printed = {0} | run_fonts | {xf_fonts[xf] for xf in printed_xfs if xf < len(xf_fonts)}
+    referenced = {0} | run_fonts | set(xf_fonts)
+
+    names = [name for _, _, name, _ in fonts]
+    freed = 0
+    for position, (_, _, name, width) in enumerate(fonts):
+        new_name = new_names.get(name.casefold())
+        if new_name is None or _xls_font_index(position) not in printed:
+            continue
+        if len(new_name) > len(name):
+            return False
+        names[position] = new_name
+        freed += (len(name) - len(new_name)) * width
+    if not freed:
+        return True
+    for position, (_, _, name, width) in enumerate(fonts):
+        if not freed:
+            break
+        if not position or _xls_font_index(position) in referenced:
+            continue
+        chars = min(freed // width, _XLS_FONT_NAME_MAX_LENGTH - len(name))
+        names[position] = name + " " * chars
+        freed -= chars * width
+    if freed:
+        return False
+
+    block_start, block_end = fonts[0][0], fonts[-1][1]
+    block = bytearray()
+    cursor = block_start
+    for position, (record_offset, record_end, _, width) in enumerate(fonts):
+        block += workbook_stream[cursor:record_offset]
+        payload = (
+            workbook_stream[record_offset + 4 : record_offset + 18]
+            + bytes([len(names[position]), workbook_stream[record_offset + 19]])
+            + names[position].encode("utf-16le" if width == 2 else "latin-1")
+        )
+        block += struct.pack("<HH", _XLS_FONT_RECORD, len(payload)) + payload
+        cursor = record_end
+    if len(block) != block_end - block_start:
+        return False
+    file_bytes = bytearray(original_bytes)
+    _write_new_xls_stream_bytes(file_bytes, sectors, block_start, bytes(block))
+    output_path.write_bytes(file_bytes)
+    return True
+
+
+def _use_customer_xls_fonts(output_path: Path) -> None:
+    """Вернуть бланку шрифты книги заказчика: Arial Cyr 10 и Calibri вместо Aptos.
+
+    Excel раскладывает столбцы и строки на бумаге по шрифту книги: по первой
+    записи FONT, а если стиль «Обычный» ссылается на тему, по шрифту темы. Во
+    всех книгах старой программы заказчика это Arial Cyr 10 и стандартная тема
+    Office. Шаблоны вырезаны из них в Excel из Microsoft 365 и унесли его тему
+    2023 года с Aptos Narrow. С ним бланк выходит на 2 % шире и на 8 % выше. У
+    заказчика везде Excel 2021, где Aptos нет: Excel подставляет Arial, бланк
+    расползается ещё на 10 % и уходит на второй лист. Клетки, оформленные
+    шрифтом темы, у заказчика были в Calibri, а при вырезании стали Aptos
+    Narrow — Excel печатает их по имени в записи FONT, поэтому эти записи
+    переименовываются обратно в Calibri. Цвета темы в клетках — чёрный текст и
+    белая заливка, в обеих темах они одинаковые.
+
+    Файл не пересохраняем: записи шрифтов переставляют и переименовывают
+    _move_xls_font_first и _rename_xls_fonts, а тему Excel берёт стандартной по
+    номеру версии 124226 и байты прежней темы в записи пропускает. Если записи
+    Arial Cyr 10 (или Arial 10) в файле нет, стиль «Обычный» остаётся на
+    шрифте темы — теперь это Calibri 11, он есть в любом Excel.
+    """
+    has_customer_font = _move_xls_font_first(
+        output_path, CUSTOMER_XLS_DEFAULT_FONT_NAMES, CUSTOMER_XLS_DEFAULT_FONT_HEIGHT
+    )
+    _rename_xls_fonts(output_path, CUSTOMER_XLS_THEME_FONT_NAMES)
+    original_bytes = output_path.read_bytes()
+    workbook_stream, sectors = _new_xls_workbook_stream(original_bytes)
+    xf_offsets: list[int] = []
+    normal_xf = 0
+    xfext_scheme_offsets: dict[int, int] = {}
+    theme_version_offset: int | None = None
+    offset = 0
+    while offset + 4 <= len(workbook_stream):
+        record_id, payload_length = struct.unpack_from("<HH", workbook_stream, offset)
+        payload_start = offset + 4
+        payload_end = payload_start + payload_length
+        if payload_end > len(workbook_stream) or record_id == 0x000A:
+            break
+        if record_id == _XLS_XF_RECORD and payload_length >= 2:
             xf_offsets.append(payload_start)
         elif record_id == _XLS_STYLE_RECORD and payload_length >= 4:
             xf_reference = struct.unpack_from("<H", workbook_stream, payload_start)[0]
@@ -4568,42 +4749,29 @@ def _use_customer_default_xls_font(output_path: Path) -> None:
                 if ext_type == _XLS_XFEXT_FONT_SCHEME and ext_length >= 5:
                     xfext_scheme_offsets[xf_index] = ext_offset + 4
                 ext_offset += max(ext_length, 4)
+        elif record_id == _XLS_THEME_RECORD and payload_length >= 16:
+            theme_version_offset = payload_start + 12
         offset = payload_end
-    if not fonts or normal_xf >= len(xf_offsets):
-        return
-
-    def is_default_font(font) -> bool:
-        _, _, name, height, weight, flags, underline = font
-        return (name, height) == DRIVER_XLS_DEFAULT_FONT and weight == 400 and not flags & 0x003E and not underline
 
     file_bytes = bytearray(original_bytes)
-    font_swap: dict[int, int] = {}
-    if not is_default_font(fonts[0]):
-        target = next((position for position, font in enumerate(fonts) if position and is_default_font(font)), None)
-        if target is None or _xls_sst_has_rich_text(workbook_stream):
-            return
-        first_offset, first_length = fonts[0][0], fonts[0][1]
-        target_offset, target_length = fonts[target][0], fonts[target][1]
-        _write_new_xls_stream_bytes(
-            file_bytes,
-            sectors,
-            first_offset,
-            workbook_stream[target_offset : target_offset + target_length]
-            + workbook_stream[first_offset + first_length : target_offset]
-            + workbook_stream[first_offset : first_offset + first_length],
-        )
-        font_swap = {0: _xls_font_index(target), _xls_font_index(target): 0}
-    changed = bool(font_swap)
-    for xf_number, xf_offset in enumerate(xf_offsets):
-        font_index = struct.unpack_from("<H", workbook_stream, xf_offset)[0]
-        new_font_index = 0 if xf_number == normal_xf else font_swap.get(font_index, font_index)
-        if new_font_index != font_index:
-            _write_new_xls_stream_bytes(file_bytes, sectors, xf_offset, struct.pack("<H", new_font_index))
+    changed = False
+    if has_customer_font and normal_xf < len(xf_offsets):
+        normal_xf_offset = xf_offsets[normal_xf]
+        if struct.unpack_from("<H", workbook_stream, normal_xf_offset)[0] != 0:
+            _write_new_xls_stream_bytes(file_bytes, sectors, normal_xf_offset, struct.pack("<H", 0))
             changed = True
-    scheme_offset = xfext_scheme_offsets.get(normal_xf)
-    if scheme_offset is not None and workbook_stream[scheme_offset] != 0:
-        # Иначе стиль «Обычный» возьмёт шрифт из темы, а не из записи FONT.
-        _write_new_xls_stream_bytes(file_bytes, sectors, scheme_offset, b"\x00")
+        scheme_offset = xfext_scheme_offsets.get(normal_xf)
+        if scheme_offset is not None and workbook_stream[scheme_offset] != 0:
+            # Иначе стиль «Обычный» возьмёт шрифт из темы, а не из записи FONT.
+            _write_new_xls_stream_bytes(file_bytes, sectors, scheme_offset, b"\x00")
+            changed = True
+    if (
+        theme_version_offset is not None
+        and struct.unpack_from("<I", workbook_stream, theme_version_offset)[0] != _XLS_DEFAULT_THEME_VERSION
+    ):
+        _write_new_xls_stream_bytes(
+            file_bytes, sectors, theme_version_offset, struct.pack("<I", _XLS_DEFAULT_THEME_VERSION)
+        )
         changed = True
     if changed:
         output_path.write_bytes(file_bytes)
@@ -4826,23 +4994,18 @@ def _driver_form_last_columns(
     return last_columns
 
 
-def _prepare_driver_saved_xls_for_print(
+def _extend_driver_saved_xls_print_area(
     output_path: Path,
     marker_book,
     marker_locations: dict[str, tuple[str, int, int]],
 ) -> None:
-    """Бланк ВУ выходит из Excel 2021 заказчика целиком, на одном листе и там же, где у заказчика.
+    """Область печати ВУ должна накрывать обе половины бланка.
 
-    Шрифт книги — Arial Cyr 10, как в шаблоне заказчика. Область печати
-    накрывает обе половины: с 21.09 у встроенной лицевой она была сужена до
-    A:AA, и такую область унаследовали копии, скачанные тогда со страницы
-    «Шаблоны». Готовый файл — побайтовая копия шаблона, номера листов те же.
+    С 21.09 у встроенной лицевой она была сужена до A:AA, и такую область
+    унаследовали копии, скачанные тогда со страницы «Шаблоны». Готовый файл —
+    побайтовая копия шаблона, номера листов те же.
     """
-    last_columns = _driver_form_last_columns(marker_book, marker_locations)
-    if not last_columns:
-        return
-    _use_customer_default_xls_font(output_path)
-    for sheet_index, last_col in last_columns.items():
+    for sheet_index, last_col in _driver_form_last_columns(marker_book, marker_locations).items():
         _extend_xls_print_area_to_column(output_path, sheet_index=sheet_index, last_col=last_col)
 
 
@@ -4899,6 +5062,7 @@ def _generate_preserved_new_xls(
         }
         shutil.copy2(template_path, output_path)
         _patch_new_xls_placeholders(output_path, spec, values)
+        _use_customer_xls_fonts(output_path)
     finally:
         temporary_path.unlink(missing_ok=True)
 
@@ -5041,6 +5205,7 @@ def _generate_preserved_legacy_xls(
             values = {**values, **{field_id: "" for field_id in category_mark_plan}}
         shutil.copy2(template_path, output_path)
         _patch_legacy_xls_placeholders(output_path, spec, values)
+        _use_customer_xls_fonts(output_path)
         if spec.file_name == "АМБ_карты_профосмотр_шаблон.xls":
             exams_by_role = _exam_map(list(runtime_values.get("exams", [])))
             used_block_count = len(_prof_amb_exam_block_values(exams_by_role, encounter, client))
@@ -5066,7 +5231,7 @@ def _generate_preserved_legacy_xls(
                 managed_rows=managed_rows,
                 hidden_rows=hidden_rows,
             )
-        _prepare_driver_saved_xls_for_print(output_path, marker_book, marker_locations)
+        _extend_driver_saved_xls_print_area(output_path, marker_book, marker_locations)
         _patch_driver_saved_xls_category_marks(output_path, marker_locations, values, category_mark_plan)
     finally:
         temporary_path.unlink(missing_ok=True)

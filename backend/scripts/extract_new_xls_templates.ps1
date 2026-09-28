@@ -21,6 +21,10 @@ $SourceDir = (Resolve-Path $SourceDir).Path
 
 $venvPython = Join-Path $projectDir "backend\.venv\Scripts\python.exe"
 $python = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { "python" }
+# Excel на этой машине (Microsoft 365) пишет в новую книгу свою тему с Aptos Narrow.
+# У заказчика Excel 2021, где Aptos нет, и по такому шрифту книги бланк на бумаге
+# расползается. Шрифты книги возвращаются как в его шаблонах: Arial Cyr 10 и Calibri.
+$restoreCustomerFontsCode = "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from app.services.document_generator import _use_customer_xls_fonts; _use_customer_xls_fonts(Path(sys.argv[2]))"
 $previousPythonIoEncoding = $env:PYTHONIOENCODING
 $previousProjectDir = $env:VOVA_XLS_PROJECT_DIR
 $env:PYTHONIOENCODING = "utf-8"
@@ -129,6 +133,8 @@ try {
 
             $outputPath = Join-Path $OutputDir $item.file_name
             Move-Item -LiteralPath $temporaryOutput -Destination $outputPath -Force
+            & $python -c $restoreCustomerFontsCode (Join-Path $projectDir "backend") $outputPath
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось вернуть шрифты заказчика в $outputPath" }
             Write-Host "Подготовлен $outputPath"
         }
         finally {
