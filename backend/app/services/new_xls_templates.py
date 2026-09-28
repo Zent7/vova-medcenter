@@ -33,6 +33,13 @@ TRACTOR_BACK_RESTRICTION_CELLS: dict[str, tuple[Cell, Cell]] = {
     category: ((row, 16), (row, 36))
     for category, row in zip(TRACTOR_CATEGORY_KEYS, (9, 11, 14, 17, 19, 20, 21, 22, 23))
 }
+# Ниже — «Медицинские показания»: ручное управление, автоматическая
+# трансмиссия, акустическая парковочная система, коррекция зрения и
+# компенсация потери слуха, по строке на каждое. Отметку в клетках S и AM
+# рисуют рамки: галочка — показание есть, Z-прочерк — нет.
+TRACTOR_BACK_INDICATION_CELLS: tuple[tuple[Cell, Cell], ...] = tuple(
+    ((row, 18), (row, 38)) for row in (25, 27, 29, 31, 33)
+)
 
 
 @dataclass(frozen=True)

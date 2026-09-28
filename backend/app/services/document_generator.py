@@ -67,6 +67,7 @@ from app.services.new_xls_templates import (
     NEW_XLS_TEMPLATE_BY_SHEET,
     PLACEHOLDER_FILL,
     PLACEHOLDER_LENGTH,
+    TRACTOR_BACK_INDICATION_CELLS,
     TRACTOR_BACK_RESTRICTION_CELLS,
     LegacyXlsTemplateSpec,
     NewXlsTemplateSpec,
@@ -4850,6 +4851,20 @@ def _patch_xls_cell_styles(output_path: Path, *, sheet_index: int, styles: dict[
                     struct.pack("<H", xf_index),
                 )
                 patched = True
+        # MULBLANK — ряд пустых клеток: строка, первый столбец, по индексу
+        # стиля на каждую клетку и последний столбец.
+        if record_id == 0x00BE and payload_length >= 10:
+            row_index, first_col = struct.unpack_from("<HH", workbook_stream, payload_start)
+            for position in range((payload_length - 6) // 2):
+                xf_index = styles.get((row_index, first_col + position))
+                if xf_index is not None:
+                    _write_new_xls_stream_bytes(
+                        file_bytes,
+                        sectors,
+                        payload_start + 4 + position * 2,
+                        struct.pack("<H", xf_index),
+                    )
+                    patched = True
         if record_id == 0x000A:
             break
         offset = payload_end
@@ -4969,6 +4984,44 @@ def _patch_driver_saved_xls_category_marks(
             _patch_xls_cell_styles(output_path, sheet_index=sheet_index, styles=styles)
 
 
+# Медицинские показания 071у председатель отмечает в той же колонке
+# «Показания», что и для ВУ: с ручн.управлением, с автоматом, с акустикой,
+# очки/линзы, слуховой аппарат. На обороте они идут сверху вниз так же.
+TRACTOR_BACK_INDICATION_TOKENS = (
+    "ManualControlCalc",
+    "AutomaticTransmissionCalc",
+    "ParkingSystemCalc",
+    "VisionTCCalc",
+    "HearingTCCalc",
+)
+
+
+def _patch_tractor_back_indication_marks(output_path: Path, sheet_name: str, context: dict[str, str]) -> None:
+    """Галочка или Z-прочерк у каждого медицинского показания на обороте 071у.
+
+    В шаблоне у всех пяти показаний Z-прочерк из рамок клетки. Показание,
+    отмеченное председателем, получает стиль галочки — такой же, как у
+    категорий вверху оборота. Клетку без отметки в шаблоне печать не трогает.
+    """
+    workbook = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
+    sheet_index = workbook.sheet_names().index(sheet_name)
+    sheet = workbook.sheet_by_index(sheet_index)
+    styles: dict[tuple[int, int], int] = {}
+    for token, cells in zip(TRACTOR_BACK_INDICATION_TOKENS, TRACTOR_BACK_INDICATION_CELLS):
+        ticked = _truthy_driver_value(context.get(token))
+        for row_index, col_index in cells:
+            if row_index >= sheet.nrows or col_index >= sheet.ncols:
+                continue
+            source_xf_index = sheet.cell_xf_index(row_index, col_index)
+            if not workbook.xf_list[source_xf_index].border.diag_line_style:
+                continue
+            mark_xf = _driver_category_border_xf_index(workbook, source_xf_index, ticked=ticked)
+            if mark_xf is not None and mark_xf != source_xf_index:
+                styles[(row_index, col_index)] = mark_xf
+    if styles:
+        _patch_xls_cell_styles(output_path, sheet_index=sheet_index, styles=styles)
+
+
 def _driver_form_last_columns(
     marker_book,
     marker_locations: dict[str, tuple[str, int, int]],
@@ -5062,6 +5115,8 @@ def _generate_preserved_new_xls(
         }
         shutil.copy2(template_path, output_path)
         _patch_new_xls_placeholders(output_path, spec, values)
+        if spec.print_variant == "tractor_back":
+            _patch_tractor_back_indication_marks(output_path, spec.sheet_name, context)
         _use_customer_xls_fonts(output_path)
     finally:
         temporary_path.unlink(missing_ok=True)

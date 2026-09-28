@@ -7,6 +7,8 @@ E, F. На любые из них идут терапевт, офтальмол�
 
 На обороте в таблице «Медицинские ограничения» по строке на категорию: там
 «не установлено», пока председатель не отметит ограничение по этой категории.
+Ниже, в «Медицинских показаниях», у каждого показания галочка, если
+председатель его отметил, иначе Z-прочерк.
 """
 
 from __future__ import annotations
@@ -23,7 +25,12 @@ import xlrd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.document_generator import _driver_certificate_lines, _exam_map, _generate_runtime_xls  # noqa: E402
+from app.services.document_generator import (  # noqa: E402
+    _driver_certificate_lines,
+    _driver_document_context_overrides,
+    _exam_map,
+    _generate_runtime_xls,
+)
 from app.services.driver_rules import (  # noqa: E402
     TRACTOR_CATEGORY_KEYS,
     is_tractor_service,
@@ -31,6 +38,7 @@ from app.services.driver_rules import (  # noqa: E402
     tractor_certificate_doctor_roles,
 )
 from app.services.new_xls_templates import (  # noqa: E402
+    TRACTOR_BACK_INDICATION_CELLS,
     TRACTOR_BACK_RESTRICTION_CELLS,
     strip_new_xls_placeholder_padding,
 )
@@ -44,6 +52,8 @@ ALL_DOCTORS = BASE_DOCTORS | {"neurologist", "otolaryngologist"}
 NOT_SET = "Не Установлено"
 RESTRICTION_SET = "установлено"
 RESTRICTION_NOT_SET = "не\nустановлено"
+TICK = "галочка"
+CROSS = "Z-прочерк"
 PSYCHIATRIST_CONCLUSION = "Психиатрических противопоказаний не выявлено"
 NARCOLOGIST_CONCLUSION = "Наркологических противопоказаний не выявлено"
 
@@ -146,18 +156,22 @@ class TractorCertificateLinesTests(unittest.TestCase):
 
 class TractorFrontSheetTests(unittest.TestCase):
     def generate(self, file_name, print_variant, chairman_fields):
+        tractor_client = client("C D")
+        exams = list(certificate_exams(chairman_fields).values())
+        # Отметки председателя попадают в контекст документа, как в generate_document.
+        context = {"ClientCalc": "Проверкин Иван Иванович", **_driver_document_context_overrides(tractor_client, exams)}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / file_name
             _generate_runtime_xls(
                 TEMPLATES_DIR / file_name,
                 path,
-                {"ClientCalc": "Проверкин Иван Иванович"},
-                client("C D"),
+                context,
+                tractor_client,
                 SimpleNamespace(encounter_date=date(2026, 9, 22)),
-                {"exams": list(certificate_exams(chairman_fields).values())},
+                {"exams": exams},
                 print_variant=print_variant,
             )
-            return xlrd.open_workbook(str(path)).sheet_by_index(0)
+            return xlrd.open_workbook(str(path), formatting_info=True).sheet_by_index(0)
 
     def test_front_follows_the_tractor_categories_of_the_chairman(self):
         rows = (35, 37, 39)
@@ -185,6 +199,29 @@ class TractorFrontSheetTests(unittest.TestCase):
             expected = RESTRICTION_SET if category in {"C", "F"} else RESTRICTION_NOT_SET
             with self.subTest(category=category):
                 self.assertEqual(restrictions[category], [expected, expected])
+
+    def back_indication_marks(self, chairman_fields):
+        sheet = self.generate("трактор об ст.xls", "tractor_back", chairman_fields)
+
+        def mark(cell):
+            border = sheet.book.xf_list[sheet.cell_xf_index(*cell)].border
+            if border.diag_line_style and border.top_line_style and border.bottom_line_style:
+                return CROSS
+            if border.diag_line_style and border.left_line_style:
+                return TICK
+            return ""
+
+        return [[mark(cell) for cell in cells] for cells in TRACTOR_BACK_INDICATION_CELLS]
+
+    def test_back_crosses_out_indications_the_chairman_did_not_mark(self):
+        self.assertEqual(self.back_indication_marks(tractor_fields("B")), [[CROSS, CROSS]] * 5)
+
+    def test_back_ticks_each_indication_of_the_chairman_in_its_own_row(self):
+        indications = ("indicationManual", "indicationAutomatic", "indicationAcoustic", "indicationGlasses", "indicationHearingAid")
+        for position, field_key in enumerate(indications):
+            with self.subTest(indication=field_key):
+                marks = self.back_indication_marks({**tractor_fields("B"), field_key: True})
+                self.assertEqual(marks, [[TICK if row == position else CROSS] * 2 for row in range(len(indications))])
 
 
 if __name__ == "__main__":
