@@ -33,6 +33,12 @@ TRACTOR_BACK_RESTRICTION_CELLS: dict[str, tuple[Cell, Cell]] = {
     category: ((row, 16), (row, 36))
     for category, row in zip(TRACTOR_CATEGORY_KEYS, (9, 11, 14, 17, 19, 20, 21, 22, 23))
 }
+# Над таблицей, в строке 8, у каждой категории AI…F галочка: по девять клеток
+# на половину листа, через одну, C…S и W…AM. Её рисуют рамки клетки.
+TRACTOR_BACK_CATEGORY_CELLS: dict[str, tuple[Cell, Cell]] = {
+    category: ((7, 2 + 2 * position), (7, 22 + 2 * position))
+    for position, category in enumerate(TRACTOR_CATEGORY_KEYS)
+}
 # Ниже — «Медицинские показания»: ручное управление, автоматическая
 # трансмиссия, акустическая парковочная система, коррекция зрения и
 # компенсация потери слуха, по строке на каждое. Отметку в клетках S и AM

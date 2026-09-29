@@ -67,6 +67,7 @@ from app.services.new_xls_templates import (
     NEW_XLS_TEMPLATE_BY_SHEET,
     PLACEHOLDER_FILL,
     PLACEHOLDER_LENGTH,
+    TRACTOR_BACK_CATEGORY_CELLS,
     TRACTOR_BACK_INDICATION_CELLS,
     TRACTOR_BACK_RESTRICTION_CELLS,
     LegacyXlsTemplateSpec,
@@ -4931,12 +4932,21 @@ def _patch_xls_cell_styles(output_path: Path, *, sheet_index: int, styles: dict[
         output_path.write_bytes(file_bytes)
 
 
-def _driver_category_border_xf_index(book, source_xf_index: int, *, ticked: bool) -> int | None:
+def _driver_category_border_xf_index(
+    book,
+    source_xf_index: int,
+    *,
+    ticked: bool,
+    any_font: bool = False,
+) -> int | None:
     """Стиль клетки категории: галочка из границ или Z-образный прочерк.
 
     В шаблоне заказчика отметку рисуют границами клетки, а не текстом: у
     закрытой категории клетка перечёркнута сверху вниз (Z), у открытой
     остаются левая грань и диагональ — во всю клетку выходит галочка.
+    Шрифт пустой клетки ничего не рисует; any_font разрешает взять стиль с
+    другим шрифтом, если с тем же в книге нет (на обороте 071у у части клеток
+    категорий шрифт 0, а Z-прочерк есть только со шрифтом 6).
     """
 
     if source_xf_index >= len(book.xf_list):
@@ -4952,13 +4962,18 @@ def _driver_category_border_xf_index(book, source_xf_index: int, *, ticked: bool
             return not crossed and bool(border.left_line_style)
         return crossed
 
-    candidates = [index for index, xf in enumerate(book.xf_list) if xf.font_index == source.font_index and matches(xf)]
+    candidates = [
+        index
+        for index, xf in enumerate(book.xf_list)
+        if (any_font or xf.font_index == source.font_index) and matches(xf)
+    ]
     if not candidates:
         return None
 
     def rank(index: int) -> tuple[bool, ...]:
         xf = book.xf_list[index]
         return (
+            xf.font_index == source.font_index,
             xf.alignment.vert_align == source.alignment.vert_align,
             xf.alignment.hor_align == source.alignment.hor_align,
             xf.format_key == source.format_key,
@@ -5054,26 +5069,39 @@ TRACTOR_BACK_INDICATION_TOKENS = (
 )
 
 
-def _patch_tractor_back_indication_marks(output_path: Path, sheet_name: str, context: dict[str, str]) -> None:
-    """Галочка или Z-прочерк у каждого медицинского показания на обороте 071у.
+def _patch_tractor_back_marks(
+    output_path: Path,
+    sheet_name: str,
+    context: dict[str, str],
+    exams: list[DoctorExam],
+) -> None:
+    """Галочка или Z-прочерк у каждой категории и у каждого показания на обороте 071у.
 
-    В шаблоне у всех пяти показаний Z-прочерк из рамок клетки. Показание,
-    отмеченное председателем, получает стиль галочки — такой же, как у
-    категорий вверху оборота. Клетку без отметки в шаблоне печать не трогает.
+    Отметку рисуют рамки клетки. В шаблоне у категорий вверху оборота галочка, а
+    у всех пяти медицинских показаний — Z-прочерк. Категория, не отмеченная
+    председателем, получает стиль Z-прочерка, отмеченное показание — стиль
+    галочки. Клетку, у которой отметка уже нужная, печать не трогает.
     """
     workbook = xlrd.open_workbook(file_contents=output_path.read_bytes(), formatting_info=True)
     sheet_index = workbook.sheet_names().index(sheet_name)
     sheet = workbook.sheet_by_index(sheet_index)
     styles: dict[tuple[int, int], int] = {}
+    marks: list[tuple[bool, tuple[tuple[int, int], ...]]] = []
+    chairman = _driver_completed_chairman(exams)
+    chosen_categories = _tractor_categories_from_chairman(chairman.fields_json or {}) if chairman else None
+    for category, cells in TRACTOR_BACK_CATEGORY_CELLS.items():
+        # Карточка председателя без тракторных категорий — как до них: все с галочкой.
+        marks.append((chosen_categories is None or category in chosen_categories, cells))
     for token, cells in zip(TRACTOR_BACK_INDICATION_TOKENS, TRACTOR_BACK_INDICATION_CELLS):
-        ticked = _truthy_driver_value(context.get(token))
+        marks.append((_truthy_driver_value(context.get(token)), cells))
+    for ticked, cells in marks:
         for row_index, col_index in cells:
             if row_index >= sheet.nrows or col_index >= sheet.ncols:
                 continue
             source_xf_index = sheet.cell_xf_index(row_index, col_index)
             if not workbook.xf_list[source_xf_index].border.diag_line_style:
                 continue
-            mark_xf = _driver_category_border_xf_index(workbook, source_xf_index, ticked=ticked)
+            mark_xf = _driver_category_border_xf_index(workbook, source_xf_index, ticked=ticked, any_font=True)
             if mark_xf is not None and mark_xf != source_xf_index:
                 styles[(row_index, col_index)] = mark_xf
     if styles:
@@ -5174,7 +5202,7 @@ def _generate_preserved_new_xls(
         shutil.copy2(template_path, output_path)
         _patch_new_xls_placeholders(output_path, spec, values)
         if spec.print_variant == "tractor_back":
-            _patch_tractor_back_indication_marks(output_path, spec.sheet_name, context)
+            _patch_tractor_back_marks(output_path, spec.sheet_name, context, list(runtime_values.get("exams", [])))
         _use_customer_xls_fonts(output_path)
     finally:
         temporary_path.unlink(missing_ok=True)

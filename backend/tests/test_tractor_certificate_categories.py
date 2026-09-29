@@ -8,7 +8,8 @@ E, F. На любые из них идут терапевт, офтальмол�
 На обороте в таблице «Медицинские ограничения» по строке на категорию: там
 «не установлено», пока председатель не отметит ограничение по этой категории.
 Ниже, в «Медицинских показаниях», у каждого показания галочка, если
-председатель его отметил, иначе Z-прочерк.
+председатель его отметил, иначе Z-прочерк. Над таблицей у каждой категории
+галочка, если председатель её отметил, иначе тоже Z-прочерк.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from app.services.driver_rules import (  # noqa: E402
     tractor_certificate_doctor_roles,
 )
 from app.services.new_xls_templates import (  # noqa: E402
+    TRACTOR_BACK_CATEGORY_CELLS,
     TRACTOR_BACK_INDICATION_CELLS,
     TRACTOR_BACK_RESTRICTION_CELLS,
     strip_new_xls_placeholder_padding,
@@ -154,9 +156,11 @@ class TractorCertificateLinesTests(unittest.TestCase):
 
 
 class TractorFrontSheetTests(unittest.TestCase):
-    def generate(self, file_name, print_variant, chairman_fields):
+    def generate(self, file_name, print_variant, chairman_fields, *, chairman_completed=True):
         tractor_client = client("C D")
-        exams = list(certificate_exams(chairman_fields).values())
+        exams_by_role = certificate_exams(chairman_fields)
+        exams_by_role["chairman"].is_completed = chairman_completed
+        exams = list(exams_by_role.values())
         # Отметки председателя попадают в контекст документа, как в generate_document.
         context = {"ClientCalc": "Проверкин Иван Иванович", **_driver_document_context_overrides(tractor_client, exams)}
         with tempfile.TemporaryDirectory() as directory:
@@ -196,8 +200,8 @@ class TractorFrontSheetTests(unittest.TestCase):
         restrictions = self.back_restrictions(fields)
         self.assertEqual(restrictions, {category: [RESTRICTION_NOT_SET] * 2 for category in TRACTOR_CATEGORY_KEYS})
 
-    def back_indication_marks(self, chairman_fields):
-        sheet = self.generate("трактор об ст.xls", "tractor_back", chairman_fields)
+    def back_marks(self, chairman_fields, cells_to_check, *, chairman_completed=True):
+        sheet = self.generate("трактор об ст.xls", "tractor_back", chairman_fields, chairman_completed=chairman_completed)
 
         def mark(cell):
             border = sheet.book.xf_list[sheet.cell_xf_index(*cell)].border
@@ -207,7 +211,34 @@ class TractorFrontSheetTests(unittest.TestCase):
                 return TICK
             return ""
 
-        return [[mark(cell) for cell in cells] for cells in TRACTOR_BACK_INDICATION_CELLS]
+        return [[mark(cell) for cell in cells] for cells in cells_to_check]
+
+    def back_indication_marks(self, chairman_fields):
+        return self.back_marks(chairman_fields, TRACTOR_BACK_INDICATION_CELLS)
+
+    def back_category_marks(self, chairman_fields, **options):
+        return self.back_marks(chairman_fields, TRACTOR_BACK_CATEGORY_CELLS.values(), **options)
+
+    def test_back_ticks_only_the_categories_the_chairman_chose(self):
+        chosen = ("AI", "B", "E")
+        expected = [[TICK if category in chosen else CROSS] * 2 for category in TRACTOR_CATEGORY_KEYS]
+        self.assertEqual(self.back_category_marks(tractor_fields(*chosen)), expected)
+
+    def test_back_crosses_out_the_last_category_when_it_is_not_chosen(self):
+        chosen = TRACTOR_CATEGORY_KEYS[:-1]
+        expected = [[TICK] * 2] * (len(TRACTOR_CATEGORY_KEYS) - 1) + [[CROSS] * 2]
+        self.assertEqual(self.back_category_marks(tractor_fields(*chosen)), expected)
+
+    def test_back_ticks_every_category_when_the_card_has_no_tractor_categories(self):
+        expected = [[TICK] * 2] * len(TRACTOR_CATEGORY_KEYS)
+        self.assertEqual(self.back_category_marks({"categoryB": True}), expected)
+
+    def test_back_ticks_every_category_while_the_chairman_has_not_finished(self):
+        expected = [[TICK] * 2] * len(TRACTOR_CATEGORY_KEYS)
+        self.assertEqual(self.back_category_marks(tractor_fields("B"), chairman_completed=False), expected)
+
+    def test_back_category_marks_do_not_change_the_indications(self):
+        self.assertEqual(self.back_indication_marks(tractor_fields("AI")), [[CROSS, CROSS]] * 5)
 
     def test_back_crosses_out_indications_the_chairman_did_not_mark(self):
         self.assertEqual(self.back_indication_marks(tractor_fields("B")), [[CROSS, CROSS]] * 5)
