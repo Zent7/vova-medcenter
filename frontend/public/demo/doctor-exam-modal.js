@@ -1222,6 +1222,103 @@
     `;
   }
 
+  // Справка ГТО (приказ 484н): в карточке только то, что печатается в самой справке.
+  function renderGtoChairmanClassic(template, exam, client, chairmanInfo) {
+    const fields = exam.fields || {};
+    const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
+    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
+    // В старых карточках этих полей нет. Допуск в них ко всему, ограничений нет — как в новой.
+    const isAdmitted = (key) => fields[key] == null || fields[key] === "" || Boolean(fields[key]);
+    const hasRestrictions = fields.gtoRestrictions === "ДА";
+    const textRow = (label, name) => `
+      <label class="gto-chairman-row">
+        <span>${escapeHtml(label)}</span>
+        <input class="doctor-classic-input" type="text" name="${escapeHtml(name)}" value="${escapeHtml(fields[name] ?? "")}" />
+      </label>
+    `;
+    const restrictionRadio = (value) => `
+      <label class="doctor-classic-radio">
+        <input type="radio" name="gtoRestrictions" value="${value}" ${(hasRestrictions ? "ДА" : "НЕТ") === value ? "checked" : ""} />
+        <span>${value}</span>
+      </label>
+    `;
+
+    return `
+      <div class="doctor-classic-backdrop" data-doctor-exam-modal>
+        <div class="chairman-window gto-chairman-window">
+          <div class="doctor-classic-titlebar">
+            <div class="doctor-classic-title doctor-classic-title--stacked">
+              <span>${escapeHtml(chairmanInfo.label || "Председатель: справка ГТО")}</span>
+              <small>${escapeHtml(chairmanInfo.templateName || "Справка ГТО")}</small>
+            </div>
+            <button type="button" class="doctor-classic-close" data-doctor-exam-close>×</button>
+          </div>
+
+          <form
+            class="chairman-form chairman-form--gto gto-chairman-form"
+            data-doctor-exam-form
+            data-exam-id="${escapeHtml(exam.id)}"
+            data-doctor-role-id="${escapeHtml(template.id)}"
+            data-chairman-form-type="gto"
+          >
+            <div class="gto-chairman-patient">
+              <label>
+                <span>Дата рождения</span>
+                <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
+              </label>
+              <label>
+                <span>Ф.И.О.</span>
+                <input class="doctor-classic-input doctor-classic-input--fio" type="text" name="patientFullName" value="${escapeHtml(fullName)}" readonly />
+              </label>
+            </div>
+
+            <section class="gto-chairman-section">
+              ${textRow("Реестровый номер лица (спортсмена):", "gtoAthleteRegistryNumber")}
+              ${textRow("Название мероприятия:", "gtoEventName")}
+              ${textRow("Вид спорта:", "gtoSportKind")}
+              ${textRow("Спортивная дисциплина:", "gtoSportDiscipline")}
+              ${textRow("Этап спортивной подготовки:", "gtoTrainingStage")}
+            </section>
+
+            <section class="gto-chairman-section">
+              <div class="gto-chairman-title">ДОПУЩЕН к:</div>
+              <div class="gto-chairman-admission">
+                ${renderCheckboxField("gtoAdmitTraining", isAdmitted("gtoAdmitTraining"), "к тренировочным мероприятиям")}
+                ${renderCheckboxField("gtoAdmitCompetitions", isAdmitted("gtoAdmitCompetitions"), "к участию в спортивных соревнованиях")}
+                ${renderCheckboxField("gtoAdmitPhysicalEvents", isAdmitted("gtoAdmitPhysicalEvents"), "к участию в физкультурных мероприятиях")}
+                ${renderCheckboxField("gtoAdmitComplex", isAdmitted("gtoAdmitComplex"), "к выполнению комплекса ГТО")}
+              </div>
+            </section>
+
+            <section class="gto-chairman-section">
+              <div class="gto-chairman-restrictions">
+                <span class="gto-chairman-title">Ограничения, в том числе физических нагрузок, сроки ограничений:</span>
+                <div class="doctor-classic-radio-group">
+                  ${restrictionRadio("НЕТ")}
+                  ${restrictionRadio("ДА")}
+                </div>
+              </div>
+              <label class="gto-chairman-row gto-chairman-restrictions-text" data-gto-restrictions-text ${hasRestrictions ? "" : "hidden"}>
+                <span>Описать:</span>
+                <textarea class="doctor-classic-textarea" name="gtoRestrictionsText">${escapeHtml(fields.gtoRestrictionsText ?? "")}</textarea>
+              </label>
+            </section>
+
+            <label class="gto-chairman-row">
+              <span>Дата выдачи заключения:</span>
+              <input class="doctor-classic-input" type="text" name="examDate" data-date-mask placeholder="по умолчанию — дата обращения" value="${escapeHtml(fields.examDate ?? "")}" />
+            </label>
+
+            <div class="chairman-actions gto-chairman-actions">
+              <button type="submit" class="chairman-action-btn">Сохранить</button>
+              <button type="button" class="chairman-action-btn" data-doctor-exam-close>Отмена</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
   function renderChairmanClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
@@ -1237,6 +1334,9 @@
     }
     if (chairmanType === "certificate082") {
       return renderCertificate082ChairmanClassic(template, exam, client, chairmanInfo);
+    }
+    if (chairmanType === "gto") {
+      return renderGtoChairmanClassic(template, exam, client, chairmanInfo);
     }
     const keepEkgFieldsManual = ["lmk", "prof"].includes(chairmanType);
     const ekgValue = emptyLegacyValue(fields.ekg, ['Медицинский центр ООО "ЦМО "ЮЛМЕД" ЭКГ от 07.04.2025']);
@@ -2158,6 +2258,21 @@
         };
         healthStatus?.addEventListener("change", syncHealthConclusion);
         syncHealthConclusion();
+      }
+
+      // Строка «Описать» нужна только при ограничениях: с ответом «НЕТ» её нет.
+      if (form.dataset.chairmanFormType === "gto") {
+        const restrictionsText = form.querySelector("[data-gto-restrictions-text]");
+        const syncRestrictionsText = (focusText = false) => {
+          const answer = form.querySelector('input[name="gtoRestrictions"]:checked')?.value;
+          if (!restrictionsText) return;
+          restrictionsText.hidden = answer !== "ДА";
+          if (focusText && !restrictionsText.hidden) restrictionsText.querySelector("textarea")?.focus();
+        };
+        form.querySelectorAll('input[name="gtoRestrictions"]').forEach((input) => {
+          input.addEventListener("change", () => syncRestrictionsText(true));
+        });
+        syncRestrictionsText();
       }
 
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");

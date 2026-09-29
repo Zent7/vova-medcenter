@@ -137,6 +137,26 @@ CHAIRMAN_EXAM_DATE_TEMPLATE_FILES = frozenset(
 )
 CHAIRMAN_CERTIFICATE_082_TEMPLATE_FILES = frozenset({"082у_шаблон.docx"})
 
+# Справка ГТО: четыре строки «допущен к…». Врач снимает лишнюю галочкой в карточке
+# председателя, а в бланке строка остаётся и зачёркивается — как велит подпись
+# «лишнее вычеркнуть». В шаблоне у строки стоит метка с пустым значением, по ней
+# генератор находит абзац; снята ли строка, говорит парная метка с суффиксом.
+GTO_ADMISSION_STRIKE_SUFFIX = "Struck"
+GTO_ADMISSION_LINES: tuple[tuple[str, str], ...] = (
+    ("GtoAdmitTraining", "gtoAdmitTraining"),
+    ("GtoAdmitCompetitions", "gtoAdmitCompetitions"),
+    ("GtoAdmitPhysicalEvents", "gtoAdmitPhysicalEvents"),
+    ("GtoAdmitComplex", "gtoAdmitComplex"),
+)
+# Метка шаблона и поле карточки председателя (fields_json) у строк спортсмена.
+GTO_ATHLETE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("GtoAthleteRegistryNumber", "gtoAthleteRegistryNumber"),
+    ("GtoEventName", "gtoEventName"),
+    ("GtoSportKind", "gtoSportKind"),
+    ("GtoSportDiscipline", "gtoSportDiscipline"),
+    ("GtoTrainingStage", "gtoTrainingStage"),
+)
+
 # Справка в бассейн печатает три подписи: строку дерматолога, строку терапевта
 # и итоговую строку «Врач». Каждая берёт фамилию из своего осмотра.
 POOL_CERTIFICATE_TEMPLATE_FILES = frozenset({"cправкабассейн_шаблон.docx"})
@@ -403,6 +423,45 @@ def _replace_certificate_086_static_doctor_names(xml_text: str, context: dict[st
         return paragraph_xml
 
     return CERTIFICATE_086_PARAGRAPH_PATTERN.sub(replace_paragraph, xml_text)
+
+
+GTO_RUN_PATTERN = re.compile(r"<w:r(?:\s[^>]*)?(?<!/)>.*?</w:r>", re.S)
+
+
+def _strike_run(match: re.Match[str]) -> str:
+    run_xml = match.group(0)
+    if "<w:strike" in run_xml:
+        return run_xml
+    open_end = run_xml.index(">") + 1
+    if run_xml.startswith("<w:rPr/>", open_end):
+        return run_xml[:open_end] + "<w:rPr><w:strike/></w:rPr>" + run_xml[open_end + len("<w:rPr/>") :]
+    if run_xml.startswith("<w:rPr>", open_end):
+        properties_end = run_xml.index("</w:rPr>", open_end)
+        return run_xml[:properties_end] + "<w:strike/>" + run_xml[properties_end:]
+    return run_xml[:open_end] + "<w:rPr><w:strike/></w:rPr>" + run_xml[open_end:]
+
+
+def _strike_unadmitted_gto_lines(xml_text: str, context: dict[str, str]) -> str:
+    """Зачёркивает в справке ГТО строки «допущен к…», снятые в карточке председателя."""
+
+    markers = [
+        f"[{token}]"
+        for token, _field_key in GTO_ADMISSION_LINES
+        if context.get(f"{token}{GTO_ADMISSION_STRIKE_SUFFIX}")
+    ]
+    if not markers:
+        return xml_text
+
+    def strike_paragraph(match: re.Match[str]) -> str:
+        paragraph_xml = match.group(0)
+        # Метку Word мог разрезать на несколько кусков текста, поэтому ищем её
+        # в тексте абзаца целиком, а не в разметке.
+        paragraph_text = _normalize_token_key(re.sub(r"<[^>]+>", "", paragraph_xml))
+        if not any(marker in paragraph_text for marker in markers):
+            return paragraph_xml
+        return GTO_RUN_PATTERN.sub(_strike_run, paragraph_xml)
+
+    return CERTIFICATE_086_PARAGRAPH_PATTERN.sub(strike_paragraph, xml_text)
 
 
 def _normalize_token_key(value: str) -> str:
@@ -718,6 +777,7 @@ def _generate_docx(
                 if item.filename == "word/document.xml":
                     xml_text = file_bytes.decode("utf-8")
                     namespace_declarations = _document_namespace_declarations(xml_text)
+                    xml_text = _strike_unadmitted_gto_lines(xml_text, context)
                     xml_text = _replace_text_tokens(xml_text, context, xml_escape=True)
                     xml_text = _replace_chairman_082_static_country(template_path, xml_text, context)
                     xml_text = _replace_chairman_082_static_doctor(template_path, xml_text, context)
@@ -5492,11 +5552,38 @@ def _gto_context_overrides(
     if "гто_шаблон.docx" not in _template_file_names(template):
         return {}
     issue_date = _parse_chairman_exam_date(context.get("VisitDate"))
-    therapist = _exam_map(exams).get("therapist")
-    return {
+    exam_map = _exam_map(exams)
+    chairman = exam_map.get("chairman")
+    fields = (chairman.fields_json or {}) if chairman is not None else {}
+    has_restrictions = _first_field_value(fields, "gtoRestrictions").casefold() == "да"
+    overrides = {
         "GtoValidUntil": _add_calendar_months(issue_date, 12).strftime("%d.%m.%Y") if issue_date else "",
-        "GtoTherapistDoctor": _exam_doctor_name(therapist),
+        "GtoTherapistDoctor": _exam_doctor_name(exam_map.get("therapist")),
+        # Как в карточке председателя: без отметки ограничений нет, и вписанный
+        # прежде текст ограничений в справку не попадает.
+        "GtoRestrictions": "ДА" if has_restrictions else "НЕТ",
+        "GtoRestrictionsText": _gto_text(fields, "gtoRestrictionsText") if has_restrictions else "",
     }
+    for token, field_key in GTO_ATHLETE_FIELDS:
+        overrides[token] = _gto_text(fields, field_key)
+    for token, field_key in GTO_ADMISSION_LINES:
+        overrides[token] = ""
+        overrides[f"{token}{GTO_ADMISSION_STRIKE_SUFFIX}"] = "" if _gto_checked(fields, field_key) else "1"
+    return overrides
+
+
+def _gto_text(fields: dict, key: str) -> str:
+    # В Word перевод строки внутри текста печатается пробелом, а не переносом.
+    return " ".join(_first_field_value(fields, key).split())
+
+
+def _gto_checked(fields: dict, key: str) -> bool:
+    """Галочка «допущен к…». В карточке без такого поля отмечены все, как в новой."""
+
+    value = fields.get(key)
+    if value in (None, ""):
+        return True
+    return _truthy_driver_value(value)
 
 
 def _pool_doctor_context_overrides(

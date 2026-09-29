@@ -845,6 +845,20 @@
     { key: "sickLeaveExtensionStartDate", label: "Продление: с", type: "text", defaultValue: "" },
     { key: "sickLeaveExtensionEndDate", label: "Продление: по", type: "text", defaultValue: "" },
 
+    // Поля справки ГТО: спортсмен, допуск и ограничения. Допущен ко всему и без
+    // ограничений — врач снимает лишнее, как и в старых карточках без этих полей.
+    { key: "gtoAthleteRegistryNumber", label: "Реестровый номер лица (спортсмена)", type: "text", defaultValue: "" },
+    { key: "gtoEventName", label: "Название мероприятия", type: "text", defaultValue: "" },
+    { key: "gtoSportKind", label: "Вид спорта", type: "text", defaultValue: "" },
+    { key: "gtoSportDiscipline", label: "Спортивная дисциплина", type: "text", defaultValue: "" },
+    { key: "gtoTrainingStage", label: "Этап спортивной подготовки", type: "text", defaultValue: "" },
+    { key: "gtoAdmitTraining", label: "к тренировочным мероприятиям", type: "checkbox", defaultValue: true },
+    { key: "gtoAdmitCompetitions", label: "к участию в спортивных соревнованиях", type: "checkbox", defaultValue: true },
+    { key: "gtoAdmitPhysicalEvents", label: "к участию в физкультурных мероприятиях", type: "checkbox", defaultValue: true },
+    { key: "gtoAdmitComplex", label: "к выполнению комплекса ГТО", type: "checkbox", defaultValue: true },
+    { key: "gtoRestrictions", label: "Ограничения", type: "radio", options: ["НЕТ", "ДА"], defaultValue: "НЕТ" },
+    { key: "gtoRestrictionsText", label: "Описание ограничений", type: "textarea", defaultValue: "" },
+
     { key: "examDate", label: "Дата экзамена", type: "text", defaultValue: "" },
     { key: "logotypeNumber", label: "№ Логотипа", type: "text", defaultValue: "" },
     { key: "commissionNumber", label: "№ Атт.комиссии", type: "text", defaultValue: "" },

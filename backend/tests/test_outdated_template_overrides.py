@@ -138,6 +138,60 @@ class OutdatedTemplateOverrideTests(unittest.TestCase):
         self.assertEqual(len(self.retired_files()), 1)
 
 
+GTO_FILE_NAME = "ГТО_шаблон.docx"
+GTO_TOKENS = (
+    "[GtoAthleteRegistryNumber]",
+    "[GtoEventName]",
+    "[GtoSportKind]",
+    "[GtoSportDiscipline]",
+    "[GtoTrainingStage]",
+    "[GtoAdmitTraining]",
+    "[GtoAdmitCompetitions]",
+    "[GtoAdmitPhysicalEvents]",
+    "[GtoAdmitComplex]",
+    "[GtoRestrictions]",
+    "[GtoRestrictionsText]",
+)
+
+
+class OutdatedGtoTemplateOverrideTests(unittest.TestCase):
+    """Копия справки ГТО без новых строк не заполнит поля карточки председателя."""
+
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.overrides_root = Path(self.temporary_directory.name)
+        self.override_path = self.overrides_root / GTO_FILE_NAME
+        patcher = mock.patch.object(
+            template_catalog,
+            "get_template_override_path",
+            lambda file_name: self.overrides_root / file_name,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_bundled_gto_template_carries_every_new_token(self):
+        bundled = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / GTO_FILE_NAME
+        for token in GTO_TOKENS:
+            with self.subTest(token=token):
+                self.assertTrue(template_catalog.docx_text_contains(bundled, token))
+
+    def test_copy_saved_before_the_new_rows_is_retired(self):
+        write_docx(self.override_path, "<w:t>Реестровый номер лица(спортсмена):</w:t><w:t>[LastName]</w:t>")
+
+        template_catalog.retire_outdated_template_overrides()
+
+        self.assertFalse(self.override_path.exists())
+        self.assertEqual(len(list(self.overrides_root.glob(f"{GTO_FILE_NAME}.retired-*"))), 1)
+
+    def test_copy_with_the_new_rows_is_kept(self):
+        write_docx(self.override_path, "<w:t>[GtoAthleteRegistryNumber]</w:t>")
+
+        template_catalog.retire_outdated_template_overrides()
+
+        self.assertTrue(self.override_path.is_file())
+
+
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
 TRACTOR_FRONT_FILE_NAME = "трактор лиц ст.xls"
 TRACTOR_FRONT_RESULT_CELLS = ((39, 12), (39, 39), (41, 12), (41, 39))

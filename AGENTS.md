@@ -145,7 +145,7 @@ Findings come back as `- [Pn] <title> — <absolute path>:<lines>`, P0 highest. 
 The core business feature. Entry point: `app/services/document_generator.py::generate_document()`.
 
 **Template types** (stored in `assets/templates/`):
-- `.docx` — token replacement via XML manipulation of `word/document.xml` inside the zip. Tokens: `[TokenName]` or `[|TokenName|]`. Handles split tokens across XML runs and Word bookmark-based replacement.
+- `.docx` — token replacement via XML manipulation of `word/document.xml` inside the zip. Tokens: `[TokenName]` or `[|TokenName|]`. Handles split tokens across XML runs and Word bookmark-based replacement. Values are XML-escaped when substituted, so free text from a chairman card may contain `&` or `<`. A line can be struck out by a marker token: the ГТО certificate's four «допущен к…» lines end with an empty-valued marker such as `[GtoAdmitTraining]`, and `_strike_unadmitted_gto_lines()` adds `<w:strike/>` to that paragraph when the paired `GtoAdmitTrainingStruck` context key is set (the chairman card unchecked the line). The ГТО chairman card (`renderGtoChairmanClassic`) and `_gto_context_overrides()` share the `gto*` field keys; `test_gto_certificate.py` checks that the two sides stay in sync.
 - `.xls` — old Excel format via `xlrd`/`xlutils`. Some sheets have named handlers (e.g., `"086"`, `"Договор !"`, `"Водительская Лицевая"`); yellow-highlighted cells (`bg_index == 13`) use auto-label matching to fill values without hardcoded coordinates.
 - `.xml` — simple text token replacement.
 

@@ -3195,6 +3195,87 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   }
 }
 
+.gto-chairman-window {
+  width: min(780px, 96vw);
+  background: #f7f4ec;
+}
+
+.gto-chairman-form {
+  display: grid;
+  gap: 18px;
+  padding: 20px 24px 24px;
+  color: #1d2b36;
+}
+
+.gto-chairman-patient {
+  display: grid;
+  grid-template-columns: 170px minmax(240px, 1fr);
+  gap: 16px;
+  align-items: end;
+}
+
+.gto-chairman-patient label {
+  display: grid;
+  gap: 6px;
+}
+
+.gto-chairman-patient label > span {
+  color: #455664;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.gto-chairman-section {
+  display: grid;
+  gap: 10px;
+}
+
+.gto-chairman-row {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.gto-chairman-row[hidden] {
+  display: none;
+}
+
+.gto-chairman-row > span,
+.gto-chairman-title {
+  color: #263a49;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.gto-chairman-admission {
+  display: grid;
+  gap: 2px;
+}
+
+.gto-chairman-restrictions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+}
+
+.gto-chairman-restrictions-text {
+  align-items: start;
+}
+
+.gto-chairman-restrictions-text textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+@media (max-width: 780px) {
+  .gto-chairman-patient,
+  .gto-chairman-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .sanatorium-patient-strip {
   display: grid;
   grid-template-columns: 170px minmax(320px, 1fr) auto;

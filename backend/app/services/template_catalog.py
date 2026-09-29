@@ -193,6 +193,9 @@ def resolve_template_file(template) -> Path | None:
 # «Шаблоны» лежал бы один бланк, а в услуге печатался другой.
 OUTDATED_TEMPLATE_OVERRIDE_TOKENS = {
     "095У_справка_шаблон.docx": "[Certificate095TherapistDoctor]",
+    # Справка ГТО получила строки спортсмена, «допущен к…» и ограничений: без них
+    # поля карточки председателя в справку не попадают.
+    "ГТО_шаблон.docx": "[GtoAthleteRegistryNumber]",
 }
 
 
