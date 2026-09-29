@@ -1361,12 +1361,6 @@
     const tractorCategoryChecks = chairmanType === "tractor"
       ? window.getChairmanTractorCategoryChecks?.(fields) || []
       : null;
-    // И вместо ограничений ВУ — ограничения по каждой из них, как на обороте 071у.
-    // В обращении и с ВУ, и с 071у они идут отдельной колонкой.
-    const tractorRestrictionChecks =
-      chairmanType === "tractor" || (chairmanType === "driver" && window.chairmanExamHasTractorService?.(exam))
-        ? window.getChairmanTractorRestrictionChecks?.(fields) || []
-        : null;
     // Отмеченная A/B/C/D открывает свою подкатегорию и M. Печать добавляет их сама,
     // поэтому и на экране они отмечены: врач видит то, что напечатается.
     const impliedCategoryKeys = new Set(window.getChairmanImpliedCategoryFieldKeys?.(fields) || []);
@@ -1647,24 +1641,16 @@
                     ${renderCheckboxField("indicationOneYear", !!fields.indicationOneYear, "на год")}
                   </div>
 
+                  ${chairmanType === "tractor" ? "" : `
                   <div class="chairman-column">
                     <div class="chairman-column-title">Ограничения:</div>
-                    ${chairmanType === "tractor"
-                      ? renderTractorChecks(tractorRestrictionChecks)
-                      : `
                     ${renderCheckboxField("restrictionAM", !!fields.restrictionAM, "AM")}
                     ${renderCheckboxField("restrictionBBE", !!fields.restrictionBBE, "BBE")}
                     ${renderCheckboxField("restrictionCCE", !!fields.restrictionCCE, "CCE")}
                     ${renderCheckboxField("restrictionNoHands", !!fields.restrictionNoHands, "Без руки")}
                     ${renderCheckboxField("restrictionNoLegs", !!fields.restrictionNoLegs, "Без ноги")}
-                    `}
                   </div>
-                  ${tractorRestrictionChecks && chairmanType !== "tractor" ? `
-                  <div class="chairman-column">
-                    <div class="chairman-column-title">Ограничения 071у:</div>
-                    ${renderTractorChecks(tractorRestrictionChecks)}
-                  </div>
-                  ` : ""}
+                  `}
                 </div>
               </div>
               `}

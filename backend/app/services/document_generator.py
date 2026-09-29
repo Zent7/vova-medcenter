@@ -3245,11 +3245,9 @@ def _fill_new_gostaina_xls_sheet(
     )
 
 
-# Медицинские ограничения 071у председатель отмечает по категориям тракториста.
-# Пока ограничение по категории не отмечено, в её строке «не установлено» — с
-# переносом, как в бланке заказчика. Обе половины листа печатаются одинаково.
-TRACTOR_RESTRICTION_FIELD_KEYS = {category: f"tractorRestriction{category}" for category in TRACTOR_CATEGORY_KEYS}
-TRACTOR_BACK_RESTRICTION_SET = "установлено"
+# Медицинские ограничения 071у: в строке каждой категории тракториста «не
+# установлено» — с переносом, как в бланке заказчика. Обе половины листа
+# печатаются одинаково.
 TRACTOR_BACK_RESTRICTION_NOT_SET = "не\nустановлено"
 
 
@@ -3259,13 +3257,11 @@ def _fill_new_tractor_back_xls_sheet(
     context: dict[str, str],
     exams_by_role: dict[str, DoctorExam],
 ) -> None:
-    chairman = exams_by_role.get("chairman")
-    fields = (chairman.fields_json or {}) if chairman else {}
-    pairs: list[tuple[tuple[int, int], object]] = []
-    for category, cells in TRACTOR_BACK_RESTRICTION_CELLS.items():
-        restricted = _truthy_driver_value(fields.get(TRACTOR_RESTRICTION_FIELD_KEYS[category]))
-        value = TRACTOR_BACK_RESTRICTION_SET if restricted else TRACTOR_BACK_RESTRICTION_NOT_SET
-        pairs.extend((cell, value) for cell in cells)
+    pairs: list[tuple[tuple[int, int], object]] = [
+        (cell, TRACTOR_BACK_RESTRICTION_NOT_SET)
+        for cells in TRACTOR_BACK_RESTRICTION_CELLS.values()
+        for cell in cells
+    ]
     signer = _new_xls_signer(context, exams_by_role)
     pairs.extend([((36, 5), signer), ((36, 25), signer)])
     _write_xls_pairs(target_sheet, source_sheet, pairs)

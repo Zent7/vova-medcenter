@@ -50,7 +50,6 @@ TRACTOR_SERVICE_LEGACY_ID = 7
 BASE_DOCTORS = {"therapist", "ophthalmologist", "psychiatrist", "psychiatrist-narcologist"}
 ALL_DOCTORS = BASE_DOCTORS | {"neurologist", "otolaryngologist"}
 NOT_SET = "Не Установлено"
-RESTRICTION_SET = "установлено"
 RESTRICTION_NOT_SET = "не\nустановлено"
 TICK = "галочка"
 CROSS = "Z-прочерк"
@@ -192,13 +191,10 @@ class TractorFrontSheetTests(unittest.TestCase):
         restrictions = self.back_restrictions(tractor_fields(*TRACTOR_CATEGORY_KEYS))
         self.assertEqual(restrictions, {category: [RESTRICTION_NOT_SET] * 2 for category in TRACTOR_CATEGORY_KEYS})
 
-    def test_back_prints_set_for_the_restrictions_of_the_chairman(self):
+    def test_back_ignores_restrictions_saved_in_an_old_chairman_card(self):
         fields = {**tractor_fields(*TRACTOR_CATEGORY_KEYS), "tractorRestrictionC": True, "tractorRestrictionF": True}
         restrictions = self.back_restrictions(fields)
-        for category in TRACTOR_CATEGORY_KEYS:
-            expected = RESTRICTION_SET if category in {"C", "F"} else RESTRICTION_NOT_SET
-            with self.subTest(category=category):
-                self.assertEqual(restrictions[category], [expected, expected])
+        self.assertEqual(restrictions, {category: [RESTRICTION_NOT_SET] * 2 for category in TRACTOR_CATEGORY_KEYS})
 
     def back_indication_marks(self, chairman_fields):
         sheet = self.generate("трактор об ст.xls", "tractor_back", chairman_fields)
