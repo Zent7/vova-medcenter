@@ -1532,7 +1532,7 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
 }
 
 .client-create-grid--address {
-  grid-template-columns: 90px 180px 180px 170px minmax(220px, 1fr) 72px 72px 72px;
+  grid-template-columns: 90px 180px 180px 170px 156px minmax(200px, 1fr) 72px 72px 72px;
 }
 
 .client-create-grid--contacts {

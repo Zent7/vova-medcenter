@@ -185,6 +185,163 @@ function uniqueClientTextOptions(values = []) {
   return [...byValue.values()].slice(0, 120);
 }
 
+// Типы улиц — тот же список, что STREET_TYPE_PATTERN в backend/app/services/document_context.py:
+// карточка клиента и печать должны разбирать одну и ту же строку одинаково.
+const CLIENT_STREET_TYPE_PATTERN =
+  "ул\\.|улица|пр\\.|пр-?кт|пр-т|просп\\.?|проспект|пр-д|проезд|пер\\.|переулок|наб\\.|набережная|ш\\.|шоссе|б-р|бул\\.?|бульвар|пл\\.|площадь|аллея|линия|тракт";
+const CLIENT_ADDRESS_MARKERS = {
+  subject: /обл\.?|область|край|респ\.?|республика|автоном|ао(?![\p{L}\d_])|округ|санкт-петербург|спб|москва|севастополь/iu,
+  district: /район|р-н/i,
+  city: /(^|\s)(г\.|гор\.|город)\s*|санкт-петербург|спб|москва|севастополь/i,
+  street: new RegExp(`(^|\\s)(${CLIENT_STREET_TYPE_PATTERN})\\s*`, "i"),
+  house: /(^|\s)(д\.|дом)\s*/i,
+  body: /(^|\s)(корпус|корп\.?|к\.)\s*/i,
+  apartment: /(^|\s)(кв\.|квартира)\s*/i,
+};
+const CLIENT_LOCALITY_PREFIX = /(^|\s)(г\.|гор\.|город|гп\.|пгт|пос\.|посёлок|поселок|село|дер\.|деревня)\s*/i;
+const CLIENT_FEDERAL_CITY = /санкт-петербург|спб|москва|севастополь/i;
+// Номер дома, корпуса или квартиры без приставки: 10, 10А, 5/2, 12-14, 10к2.
+const CLIENT_ADDRESS_NUMBER = /^\d+[\p{L}\d_/\-]{0,4}$/u;
+
+// Типы улиц, которые можно выбрать в карточке: значение печатается перед названием.
+const CLIENT_STREET_TYPE_OPTIONS = [
+  ["ул.", "ул. — улица"],
+  ["пр.", "пр. — проспект"],
+  ["бул.", "бул. — бульвар"],
+  ["пер.", "пер. — переулок"],
+  ["проезд", "проезд"],
+  ["наб.", "наб."],
+  ["ш.", "ш. — шоссе"],
+  ["пл.", "пл. — площадь"],
+  ["аллея", "аллея"],
+];
+
+// «пр. Невский» → тип «пр.» и название «Невский». Всё, что не начинается с
+// одного из типов списка, остаётся названием как есть.
+function splitClientStreetType(street = "") {
+  const text = String(street || "").trim();
+  const match = text.match(/^(ул\.|пр\.|бул\.|пер\.|проезд|наб\.|ш\.|пл\.|аллея)\s+(\S.*)$/i);
+  if (match) {
+    const type = CLIENT_STREET_TYPE_OPTIONS.map(([value]) => value).find((value) => value.toLowerCase() === match[1].toLowerCase());
+    if (type) return { type, name: match[2].trim() };
+  }
+  return { type: "", name: text };
+}
+
+// Тип из списка ставится перед названием, если человек не набрал его сам.
+function composeClientStreet(type = "", name = "") {
+  const street = String(name || "").trim();
+  const prefix = String(type || "").trim();
+  if (!street || !prefix) return street;
+  return CLIENT_ADDRESS_MARKERS.street.test(street) ? street : `${prefix} ${street}`;
+}
+
+// «10» → «д. 10»: по приставкам строку потом разбирают и карточка, и печать,
+// поэтому пустой район или корпус больше не сдвигает поля.
+function withClientAddressMarker(value, marker, kind) {
+  const text = String(value || "").trim();
+  if (!text || CLIENT_ADDRESS_MARKERS[kind].test(text)) return text;
+  return `${marker} ${text}`;
+}
+
+function stripClientAddressMarker(kind, part) {
+  return String(part || "").replace(new RegExp(CLIENT_ADDRESS_MARKERS[kind].source, "gi"), "").trim();
+}
+
+function clientAddressPartKind(part) {
+  return ["street", "house", "body", "apartment"].find((kind) => CLIENT_ADDRESS_MARKERS[kind].test(part)) || null;
+}
+
+// Где после страны начинаются улица и номера. null — опоры нет. Карточка
+// склеивает только непустые части, поэтому пустой район или корпус сдвигает всё,
+// что правее: улицу и номера ищем по приставкам, а без них — по номерам в конце.
+function clientAddressTailStart(rest) {
+  for (let index = 0; index < rest.length; index += 1) {
+    const kind = clientAddressPartKind(rest[index]);
+    if (!kind) continue;
+    const previous = index >= 2 ? rest[index - 1] : "";
+    if (
+      kind !== "street" &&
+      previous &&
+      !CLIENT_ADDRESS_NUMBER.test(previous) &&
+      !Object.values(CLIENT_ADDRESS_MARKERS).some((marker) => marker.test(previous)) &&
+      !CLIENT_LOCALITY_PREFIX.test(previous)
+    ) {
+      // «…, Невский, д. 10»: улица без типа стоит перед первым номером.
+      return index - 1;
+    }
+    return index;
+  }
+  let numbers = 0;
+  while (numbers < 3 && numbers < rest.length && CLIENT_ADDRESS_NUMBER.test(rest[rest.length - 1 - numbers])) numbers += 1;
+  if (numbers === 0 || numbers === rest.length) return null;
+  return rest.length - numbers - 1;
+}
+
+function fillClientAddressLocality(head, result) {
+  const others = [...head];
+  const take = (test) => {
+    const index = others.findIndex(test);
+    return index >= 0 ? others.splice(index, 1)[0] : "";
+  };
+  result.district = take((part) => CLIENT_ADDRESS_MARKERS.district.test(part));
+  let city = take((part) => CLIENT_LOCALITY_PREFIX.test(part));
+  let subject = take((part) => CLIENT_ADDRESS_MARKERS.subject.test(part));
+  if (others.length && !city) city = others.pop();
+  if (others.length && !subject) subject = others.shift();
+  if (others.length && !result.district) result.district = others.shift();
+  // Город федерального значения — и регион, и город.
+  if (subject && !city && CLIENT_FEDERAL_CITY.test(subject)) city = subject;
+  if (city && !subject && CLIENT_FEDERAL_CITY.test(city)) subject = city;
+  result.subject = subject;
+  result.city = city;
+}
+
+function fillClientAddressTail(tail, result) {
+  const numbers = [];
+  tail.forEach((part) => {
+    const kind = clientAddressPartKind(part);
+    if (kind === "street" && !result.street) {
+      result.street = part;
+    } else if ((kind === "house" || kind === "body" || kind === "apartment") && !result[kind]) {
+      result[kind] = stripClientAddressMarker(kind, part);
+    } else if (!kind && CLIENT_ADDRESS_NUMBER.test(part)) {
+      numbers.push(part);
+    } else if (!kind && !result.street) {
+      result.street = part;
+    }
+  });
+  const slots = ["house", "body", "apartment"];
+  let order;
+  if (!slots.some((slot) => result[slot])) {
+    order = { 1: ["house"], 2: ["house", "apartment"], 3: slots }[Math.min(numbers.length, 3)] || [];
+  } else {
+    order = ["house", "apartment", "body"].filter((slot) => !result[slot]);
+  }
+  order.forEach((slot, index) => {
+    if (index < numbers.length) result[slot] = numbers[index];
+  });
+}
+
+function splitClientCountryAddress(rest) {
+  const result = { subject: "", district: "", city: "", street: "", house: "", body: "", apartment: "" };
+  if (rest.length < 7) {
+    const tailStart = clientAddressTailStart(rest);
+    if (tailStart !== null) {
+      fillClientAddressLocality(rest.slice(0, tailStart), result);
+      fillClientAddressTail(rest.slice(tailStart), result);
+      return result;
+    }
+  }
+  // Полная запись «регион, район, город, улица, дом, корпус, квартира» или
+  // адрес без улицы и номеров: части стоят на своих местах.
+  ["subject", "district", "city", "street", "house", "body", "apartment"].forEach((key, index) => {
+    if (index >= rest.length) return;
+    result[key] = key === "house" || key === "body" || key === "apartment" ? stripClientAddressMarker(key, rest[index]) : rest[index];
+  });
+  return result;
+}
+
 function parseClientAddressSuggestion(addressText = "") {
   const parts = String(addressText || "")
     .split(",")
@@ -199,25 +356,26 @@ function parseClientAddressSuggestion(addressText = "") {
       .replace(/\./g, "");
     return ["россия", "рф", "российская федерация"].includes(normalized);
   };
-  const hasSubjectMarker = (value = "") => /обл\.?|область|край|респ\.?|республика|автоном|ао\b|округ|санкт-петербург|спб|москва|севастополь/i.test(value);
-  const hasDistrictMarker = (value = "") => /район|р-н/i.test(value);
-  const hasCityMarker = (value = "") => /(^|\s)(г\.|гор\.|город)\s*|санкт-петербург|спб|москва|севастополь/i.test(value);
-  const hasStreetMarker = (value = "") => /(^|\s)(ул\.|улица|пр-?кт|просп\.?|проспект|пер\.|переулок|наб\.|шоссе|б-р|бул\.?|бульвар)\s*/i.test(value);
-  const hasHouseMarker = (value = "") => /(^|\s)(д\.|дом)\s*/i.test(value);
+  const hasSubjectMarker = (value = "") => CLIENT_ADDRESS_MARKERS.subject.test(value);
+  const hasDistrictMarker = (value = "") => CLIENT_ADDRESS_MARKERS.district.test(value);
+  const hasCityMarker = (value = "") => CLIENT_ADDRESS_MARKERS.city.test(value);
+  const hasStreetMarker = (value = "") => CLIENT_ADDRESS_MARKERS.street.test(value);
+  const hasHouseMarker = (value = "") => CLIENT_ADDRESS_MARKERS.house.test(value);
   const hasBuildingMarker = (value = "") => /корпус|корп\.?|к\.\s*/i.test(value);
-  const hasFlatMarker = (value = "") => /(^|\s)(кв\.|квартира)\s*/i.test(value);
+  const hasFlatMarker = (value = "") => CLIENT_ADDRESS_MARKERS.apartment.test(value);
   const stripMarker = (value = "", pattern) => String(value || "").replace(pattern, "").trim();
 
   if (isCountryValue(parts[0])) {
+    const parsed = splitClientCountryAddress(parts.slice(1));
     return {
       country: parts[0] || CLIENT_DEFAULT_COUNTRY,
-      subject: parts[1] || "",
-      district: parts[2] || "",
-      city: parts[3] || "",
-      street: parts[4] || "",
-      house: stripMarker(parts[5] || "", /(^|\s)(д\.|дом)\s*/i),
-      building: stripMarker(parts[6] || "", /(^|\s)(корпус|корп\.?|к\.)\s*/i),
-      flat: stripMarker(parts[7] || "", /(^|\s)(кв\.|квартира)\s*/i),
+      subject: parsed.subject,
+      district: parsed.district,
+      city: parsed.city,
+      street: parsed.street,
+      house: parsed.house,
+      building: parsed.body,
+      flat: parsed.apartment,
     };
   }
 
@@ -240,7 +398,7 @@ function parseClientAddressSuggestion(addressText = "") {
     flat: stripMarker(flat, /(^|\s)(кв\.|квартира)\s*/i),
   };
 }
-
+
 function getClientAddressSuggestionsFromClients() {
   const clients = [...(data?.backendClients || []), ...(data?.clients || [])];
   return clients
@@ -288,7 +446,7 @@ function getClientAddressOptions() {
 function renderClientAddressDatalists() {
   const options = getClientAddressOptions();
   const streetOptions = [...loadClientAddressSuggestions(), ...getClientAddressSuggestionsFromClients()]
-    .map((item) => String(item.street || "").trim())
+    .map((item) => splitClientStreetType(String(item.street || "").trim()).name)
     .filter(Boolean)
     .filter((value, index, list) => list.indexOf(value) === index);
   const subjectOptions = getClientAddressFieldOptions("subject");
@@ -355,6 +513,14 @@ function bindClientAddressAutocomplete(form, { defaultCountry = true } = {}) {
     countryInput.value = CLIENT_DEFAULT_COUNTRY;
   }
 
+  // Регион и район, набранные руками, город не перезаписывает: раньше
+  // подсказка для Санкт-Петербурга стирала введённый район.
+  [subjectInput, districtInput].forEach((input) => {
+    input.addEventListener("input", () => {
+      delete input.dataset.autofilled;
+    });
+  });
+
   const applyPreset = () => {
     const city = String(cityInput.value || "").trim().toLowerCase();
     const preset = getClientAddressOptions().find((item) => String(item.city || "").trim().toLowerCase() === city);
@@ -366,10 +532,14 @@ function bindClientAddressAutocomplete(form, { defaultCountry = true } = {}) {
       return;
     }
 
-    subjectInput.value = preset.subject || "";
-    districtInput.value = preset.district || "";
-    subjectInput.dataset.autofilled = "true";
-    districtInput.dataset.autofilled = "true";
+    [
+      [subjectInput, preset.subject],
+      [districtInput, preset.district],
+    ].forEach(([input, value]) => {
+      if (String(input.value || "").trim() && input.dataset.autofilled !== "true") return;
+      input.value = value || "";
+      input.dataset.autofilled = "true";
+    });
   };
 
   cityInput.addEventListener("input", applyPreset);
@@ -1120,6 +1290,7 @@ function openClientModal(clientId = null, options = {}) {
     editingClient?.rawApiClient?.address_text ||
     "",
   ) || {};
+  const initialStreet = splitClientStreetType(initialAddress.street || "");
 
   if (!appState.clientServiceGroupFilter || !sortedGroups.some((group) => String(group.id) === String(appState.clientServiceGroupFilter))) {
     appState.clientServiceGroupFilter = sortedGroups.length ? String(sortedGroups[0].id) : "";
@@ -1301,8 +1472,15 @@ function openClientModal(clientId = null, options = {}) {
             <input name="city" value="${escapeHtml(initialAddress.city || "")}" list="clientCitySuggestions" />
           </label>
           <label class="field">
-            <span>Улица</span>
-            <input name="street" value="${escapeHtml(initialAddress.street || "")}" list="clientStreetSuggestions" />
+            <span>Тип</span>
+            <select name="streetType">
+              <option value="">—</option>
+              ${CLIENT_STREET_TYPE_OPTIONS.map(([value, label]) => `<option value="${escapeHtml(value)}" ${initialStreet.type === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Улица</span>
+            <input name="street" value="${escapeHtml(initialStreet.name)}" list="clientStreetSuggestions" />
           </label>
           <label class="field">
             <span>Дом</span>
@@ -1538,6 +1716,7 @@ function openClientModal(clientId = null, options = {}) {
     const normalizedGender = String(submittedGender || "").toLowerCase();
     const formSex = normalizedGender === "f" || normalizedGender.startsWith("ж") ? "F" : "M";
     const omsPolicy = String(formData.get("omsPolicy") || "").trim();
+    const streetValue = composeClientStreet(formData.get("streetType"), formData.get("street"));
 
     const isCreated = !editingClient;
 
@@ -1571,8 +1750,8 @@ function openClientModal(clientId = null, options = {}) {
       agent: String(formData.get("agent") || "").trim(),
       note:
         String(formData.get("comment") || "").trim() ||
-        (String(formData.get("city") || "").trim() || String(formData.get("street") || "").trim()
-          ? `Адрес: ${String(formData.get("city") || "").trim()}, ${String(formData.get("street") || "").trim()}`.trim()
+        (String(formData.get("city") || "").trim() || streetValue
+          ? `Адрес: ${String(formData.get("city") || "").trim()}, ${streetValue}`.trim()
           : ""),
       encounterDate: encounterDateText,
       lastVisit: encounterDateText,
@@ -1585,10 +1764,10 @@ function openClientModal(clientId = null, options = {}) {
         formData.get("subject"),
         formData.get("district"),
         formData.get("city"),
-        formData.get("street"),
-        formData.get("house"),
-        formData.get("building"),
-        formData.get("flat"),
+        streetValue,
+        withClientAddressMarker(formData.get("house"), "д.", "house"),
+        withClientAddressMarker(formData.get("building"), "корп.", "body"),
+        withClientAddressMarker(formData.get("flat"), "кв.", "apartment"),
       ]
         .map((value) => String(value || "").trim())
         .filter(Boolean)
@@ -1597,7 +1776,7 @@ function openClientModal(clientId = null, options = {}) {
         subject: formData.get("subject"),
         district: formData.get("district"),
         city: formData.get("city"),
-        street: formData.get("street"),
+        street: splitClientStreetType(streetValue).name,
       });
       saveClientIssuedBySuggestion(formData.get("issuedBy"));
       rememberClientRecentFields({
@@ -1607,7 +1786,7 @@ function openClientModal(clientId = null, options = {}) {
         subject: formData.get("subject"),
         district: formData.get("district"),
         city: formData.get("city"),
-        street: formData.get("street"),
+        street: splitClientStreetType(streetValue).name,
         agent: formData.get("agent"),
         profession: formData.get("profession"),
         workPlace: formData.get("workPlace"),

@@ -91,6 +91,137 @@ def _first_legacy_value(client: Client, *keys: str) -> str:
     return ""
 
 
+# Типы улиц, которые разбор адреса узнаёт по приставке или по слову. Тот же список
+# держит parseClientAddressSuggestion в client-modal.js: карточка клиента и печать
+# должны разбирать одну и ту же строку одинаково.
+STREET_TYPE_PATTERN = (
+    r"ул\.|улица|пр\.|пр-?кт|пр-т|просп\.?|проспект|пр-д|проезд|пер\.|переулок|"
+    r"наб\.|набережная|ш\.|шоссе|б-р|бул\.?|бульвар|пл\.|площадь|аллея|линия|тракт"
+)
+
+_ADDRESS_MARKERS = {
+    "subject": re.compile(
+        r"обл\.?|область|край|респ\.?|республика|автоном|ао\b|округ|санкт-петербург|спб|москва|севастополь",
+        re.IGNORECASE,
+    ),
+    "district": re.compile(r"район|р-н", re.IGNORECASE),
+    "city": re.compile(r"(^|\s)(г\.|гор\.|город)\s*|санкт-петербург|спб|москва|севастополь", re.IGNORECASE),
+    "street": re.compile(rf"(^|\s)({STREET_TYPE_PATTERN})\s*", re.IGNORECASE),
+    "house": re.compile(r"(^|\s)(д\.|дом)\s*", re.IGNORECASE),
+    "body": re.compile(r"(^|\s)(корпус|корп\.?|к\.)\s*", re.IGNORECASE),
+    "apartment": re.compile(r"(^|\s)(кв\.|квартира)\s*", re.IGNORECASE),
+}
+# Населённый пункт с приставкой: отличает город от района и региона без слов «район» и «область».
+_LOCALITY_PREFIX = re.compile(
+    r"(^|\s)(г\.|гор\.|город|гп\.|пгт|пос\.|посёлок|поселок|село|дер\.|деревня)\s*",
+    re.IGNORECASE,
+)
+_FEDERAL_CITY = re.compile(r"санкт-петербург|спб|москва|севастополь", re.IGNORECASE)
+# Номер дома, корпуса или квартиры без приставки: 10, 10А, 5/2, 12-14, 10к2.
+_ADDRESS_NUMBER = re.compile(r"\d+[\w/\-]{0,4}")
+
+
+def _address_part_kind(part: str) -> str | None:
+    return next(
+        (kind for kind in ("street", "house", "body", "apartment") if _ADDRESS_MARKERS[kind].search(part)),
+        None,
+    )
+
+
+def _address_tail_start(rest: list[str]) -> int | None:
+    """Где в адресе после страны начинается улица с номерами. None — якоря нет.
+
+    Карточка клиента склеивает только непустые части, поэтому пустой район или
+    корпус сдвигает всё, что правее. Улицу и номера ищем по приставкам, а без
+    них — по номерам в конце строки.
+    """
+    for index, part in enumerate(rest):
+        kind = _address_part_kind(part)
+        if kind is None:
+            continue
+        previous = rest[index - 1] if index >= 2 else ""
+        if (
+            kind != "street"
+            and previous
+            and not _ADDRESS_NUMBER.fullmatch(previous)
+            and not any(marker.search(previous) for marker in _ADDRESS_MARKERS.values())
+            and not _LOCALITY_PREFIX.search(previous)
+        ):
+            # «…, Невский, д. 10»: улица без типа стоит перед первым номером.
+            return index - 1
+        return index
+
+    numbers = 0
+    while numbers < 3 and numbers < len(rest) and _ADDRESS_NUMBER.fullmatch(rest[len(rest) - 1 - numbers]):
+        numbers += 1
+    if numbers == 0 or numbers == len(rest):
+        return None
+    return len(rest) - numbers - 1
+
+
+def _fill_address_locality(head: list[str], result: dict[str, str]) -> None:
+    others = list(head)
+
+    def take(match) -> str:
+        for index, part in enumerate(others):
+            if match(part):
+                return others.pop(index)
+        return ""
+
+    result["district"] = take(lambda part: bool(_ADDRESS_MARKERS["district"].search(part)))
+    city = take(lambda part: bool(_LOCALITY_PREFIX.search(part)))
+    subject = take(lambda part: bool(_ADDRESS_MARKERS["subject"].search(part)))
+    if others and not city:
+        city = others.pop()
+    if others and not subject:
+        subject = others.pop(0)
+    if others and not result["district"]:
+        result["district"] = others.pop(0)
+    # Город федерального значения — и регион, и город.
+    if subject and not city and _FEDERAL_CITY.search(subject):
+        city = subject
+    if city and not subject and _FEDERAL_CITY.search(city):
+        subject = city
+    result["subject"] = subject
+    result["city"] = city
+
+
+def _fill_address_tail(tail: list[str], result: dict[str, str]) -> None:
+    numbers: list[str] = []
+    for part in tail:
+        kind = _address_part_kind(part)
+        if kind == "street" and not result["street"]:
+            result["street"] = part
+        elif kind in ("house", "body", "apartment") and not result[kind]:
+            result[kind] = _ADDRESS_MARKERS[kind].sub("", part).strip()
+        elif kind is None and _ADDRESS_NUMBER.fullmatch(part):
+            numbers.append(part)
+        elif kind is None and not result["street"]:
+            result["street"] = part
+
+    slots = ("house", "body", "apartment")
+    if not any(result[slot] for slot in slots):
+        order = {1: ("house",), 2: ("house", "apartment"), 3: slots}.get(min(len(numbers), 3), ())
+    else:
+        order = tuple(slot for slot in ("house", "apartment", "body") if not result[slot])
+    for slot, number in zip(order, numbers):
+        result[slot] = number
+
+
+def _split_country_address(rest: list[str], result: dict[str, str]) -> dict[str, str]:
+    if len(rest) < 7:
+        tail_start = _address_tail_start(rest)
+        if tail_start is not None:
+            _fill_address_locality(rest[:tail_start], result)
+            _fill_address_tail(rest[tail_start:], result)
+            return result
+    # Полная запись «регион, район, город, улица, дом, корпус, квартира» или
+    # адрес без улицы и номеров: части стоят на своих местах.
+    for key, part in zip(("subject", "district", "city", "street", "house", "body", "apartment"), rest):
+        result[key] = _ADDRESS_MARKERS[key].sub("", part).strip() if key in ("house", "body", "apartment") else part
+    return result
+
+
 def _split_address(address: str) -> dict[str, str]:
     parts = [part.strip() for part in re.split(r",|\n", address or "") if part.strip()]
     result = {
@@ -106,35 +237,10 @@ def _split_address(address: str) -> dict[str, str]:
     def is_country(part: str) -> bool:
         return part.lower().replace(".", "").strip() in {"россия", "рф", "российская федерация"}
 
-    marker_patterns = {
-        "subject": re.compile(
-            r"обл\.?|область|край|респ\.?|республика|автоном|ао\b|округ|санкт-петербург|спб|москва|севастополь",
-            re.IGNORECASE,
-        ),
-        "district": re.compile(r"район|р-н", re.IGNORECASE),
-        "city": re.compile(r"(^|\s)(г\.|гор\.|город)\s*|санкт-петербург|спб|москва|севастополь", re.IGNORECASE),
-        "street": re.compile(
-            r"(^|\s)(ул\.|улица|пр-?кт|просп\.?|проспект|пер\.|переулок|наб\.|шоссе|б-р|бул\.?|бульвар)\s*",
-            re.IGNORECASE,
-        ),
-        "house": re.compile(r"(^|\s)(д\.|дом)\s*", re.IGNORECASE),
-        "body": re.compile(r"(^|\s)(корпус|корп\.?|к\.)\s*", re.IGNORECASE),
-        "apartment": re.compile(r"(^|\s)(кв\.|квартира)\s*", re.IGNORECASE),
-    }
+    marker_patterns = _ADDRESS_MARKERS
 
     if parts and is_country(parts[0]):
-        result.update(
-            {
-                "subject": parts[1] if len(parts) > 1 else "",
-                "district": parts[2] if len(parts) > 2 else "",
-                "city": parts[3] if len(parts) > 3 else "",
-                "street": parts[4] if len(parts) > 4 else "",
-                "house": marker_patterns["house"].sub("", parts[5]).strip() if len(parts) > 5 else "",
-                "body": marker_patterns["body"].sub("", parts[6]).strip() if len(parts) > 6 else "",
-                "apartment": marker_patterns["apartment"].sub("", parts[7]).strip() if len(parts) > 7 else "",
-            }
-        )
-        return result
+        return _split_country_address(parts[1:], result)
 
     for part in parts:
         if not result["subject"] and marker_patterns["subject"].search(part):

@@ -8159,13 +8159,26 @@ function splitClientAddressParts(client) {
   let flatPart = "";
 
   if (parts.length && isCountryPart(parts[0])) {
-    subjectPart = parts[1] || "";
-    districtPart = parts[2] || "";
-    cityPart = parts[3] || "";
-    streetPart = parts[4] || "";
-    housePart = parts[5] || "";
-    buildingPart = parts[6] || "";
-    flatPart = parts[7] || "";
+    // Пустой район или корпус сдвигает части, поэтому по местам их не раскладываем:
+    // разбор общий с карточкой клиента (client-modal.js).
+    const parsed = window.parseClientAddressSuggestion?.(source);
+    if (parsed) {
+      subjectPart = parsed.subject || "";
+      districtPart = parsed.district || "";
+      cityPart = parsed.city || "";
+      streetPart = parsed.street || "";
+      housePart = parsed.house || "";
+      buildingPart = parsed.building || "";
+      flatPart = parsed.flat || "";
+    } else {
+      subjectPart = parts[1] || "";
+      districtPart = parts[2] || "";
+      cityPart = parts[3] || "";
+      streetPart = parts[4] || "";
+      housePart = parts[5] || "";
+      buildingPart = parts[6] || "";
+      flatPart = parts[7] || "";
+    }
   } else {
     subjectPart = parts.find(hasSubjectMarker) || "";
     districtPart = parts.find(hasDistrictMarker) || "";
