@@ -583,8 +583,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 (36, 25): "Председатель Тестов",
             },
             "Суда": {
-                (7, 3): "7654321",
-                (7, 30): "7654321",
+                (7, 3): "",
+                (7, 30): "",
                 (14, 2): "Проверкин Алексей Сергеевич",
                 (14, 28): "Проверкин Алексей Сергеевич",
                 (36, 9): "Председатель Тестов",
@@ -716,7 +716,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
 
     def test_field_marker_can_move_in_any_direction_and_out_of_order(self):
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
-        source_coordinate = spec.dynamic_cells[0]
+        source_coordinate = (14, 2)
         destination = (42, 8)
         with tempfile.TemporaryDirectory() as temporary_dir:
             edited_path = Path(temporary_dir) / spec.file_name
@@ -741,9 +741,53 @@ class NewXlsTemplatesTests(unittest.TestCase):
             generated_sheet = xlrd.open_workbook(str(output_path)).sheet_by_index(0)
             self.assertEqual(
                 strip_new_xls_placeholder_padding(generated_sheet.cell_value(*destination)),
-                "7654321",
+                "Проверкин Алексей Сергеевич",
             )
             self.assertEqual(generated_sheet.cell_value(*source_coordinate), "")
+
+    def test_gims_does_not_print_the_blank_number_even_in_a_customer_copy(self):
+        """Номер бланка сверху ГИМС не печатается, а метки в правленой копии остаются."""
+        spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
+        number_cells = [(7, 3), (7, 30)]
+        moved_to = {(7, 3): (42, 8), (7, 30): (42, 20)}
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            edited_path = Path(temporary_dir) / spec.file_name
+            bundled_output = Path(temporary_dir) / "bundled.xls"
+            edited_output = Path(temporary_dir) / "edited.xls"
+            source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+            edited_book = copy_xls_workbook(source_book)
+            edited_sheet = edited_book.get_sheet(0)
+            for coordinate in number_cells:
+                edited_sheet.write(*coordinate, "")
+                edited_sheet.write(*moved_to[coordinate], new_xls_placeholder(spec, coordinate))
+            edited_book.save(str(edited_path))
+
+            validate_editable_xls_template(edited_path, spec)
+            for template_path, output_path in ((TEMPLATES_DIR / spec.file_name, bundled_output), (edited_path, edited_output)):
+                _generate_runtime_xls(
+                    template_path,
+                    output_path,
+                    self.context,
+                    self.client,
+                    self.encounter,
+                    {"exams": self.exams},
+                    print_variant=spec.print_variant,
+                )
+                sheet = xlrd.open_workbook(str(output_path)).sheet_by_index(0)
+                printed = [
+                    strip_new_xls_placeholder_padding(sheet.cell_value(row, col))
+                    for row in range(sheet.nrows)
+                    for col in range(sheet.ncols)
+                ]
+                self.assertFalse(any("7654321" in value for value in printed), template_path.name)
+                self.assertIn("Проверкин Алексей Сергеевич", printed, template_path.name)
+            for coordinate in moved_to.values():
+                self.assertEqual(
+                    strip_new_xls_placeholder_padding(
+                        xlrd.open_workbook(str(edited_output)).sheet_by_index(0).cell_value(*coordinate)
+                    ),
+                    "",
+                )
 
     def test_tractor_front_without_result_markers_is_not_swapped_for_the_bundled_one(self):
         """Старую копию 071у печать не подменяет встроенной: её откладывают при старте."""

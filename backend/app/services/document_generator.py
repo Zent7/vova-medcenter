@@ -3316,14 +3316,13 @@ def _fill_new_gims_xls_sheet(
     }
     if not any(address.values()) and context.get("AddressCalc"):
         address = _split_address(context.get("AddressCalc", ""))
-    blank_number = _first_non_empty(
-        context.get("BlankNumber"),
-        context.get("BlankFullNumber"),
-    )
     signer = _new_xls_signer(context, exams_by_role)
     values = [
-        ((7, 3), blank_number),
-        ((7, 30), blank_number),
+        # Номер бланка сверху заказчик просил не печатать. Поля «Номер бланка»
+        # остаются в шаблоне и получают пустое значение: без них правленую копию
+        # заказчика загрузка отклонит, а при старте отложит.
+        ((7, 3), ""),
+        ((7, 30), ""),
         ((14, 2), context.get("ClientCalc", "")),
         ((14, 28), context.get("ClientCalc", "")),
         ((15, 14), context.get("BirthDateCalc_DAY", "")),
