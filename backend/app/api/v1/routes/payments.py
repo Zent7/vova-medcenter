@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.v1.routes.auth import require_admin
 from app.db.session import get_db
 from app.models.center import Center
 from app.models.client import Client
@@ -16,7 +17,7 @@ from app.models.payment import Payment
 from app.models.service import Service
 from app.schemas.payment import CashReportRowRead, CashReportServiceRead, PaymentRead
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 def _client_full_name(client: Client) -> str:

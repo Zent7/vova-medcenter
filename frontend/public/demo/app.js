@@ -408,12 +408,19 @@ const navItems = [
   { id: "reports", label: "Отчеты", toast: "Открыт блок: Отчеты" },
 ];
 
+// Учетные записи сотрудников, отчеты и касса — только у админа. Председатель
+// заходит в программу постоянно, но этих разделов не видит; сервер закрывает те же
+// маршруты по роли, так что скрытого пункта меню для защиты недостаточно и не нужно.
 function canManageEmployeeWorkspace() {
-  return appState.auth.roleCode === "chairman";
+  return appState.auth.roleCode === "admin";
 }
 
 function canAccessReportsWorkspace() {
-  return appState.auth.roleCode === "chairman";
+  return appState.auth.roleCode === "admin";
+}
+
+function canAccessCashWorkspace() {
+  return appState.auth.roleCode === "admin";
 }
 
 const columnKeys = [
@@ -3171,19 +3178,12 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
 }
 
 async function loadStaffWorkspace() {
-  if (appState.auth.roleCode === "admin") {
+  if (!canManageEmployeeWorkspace()) {
     data.staffUsers = [];
     data.staffRoles = [];
     data.staffError = "";
     data.staffLoading = false;
     renderApp();
-    return;
-  }
-
-  if (appState.auth.roleCode !== "chairman") {
-    data.staffUsers = [];
-    data.staffRoles = [];
-    data.staffError = "Управление сотрудниками доступно только председателю.";
     return;
   }
 
@@ -5959,16 +5959,16 @@ function rerenderAndRestoreInput(inputId, value, caretPosition) {
 }
 
 function loadPageData(page) {
-  if (page === "employee" && (appState.auth.roleCode === "chairman" || appState.auth.roleCode === "admin") && !data.staffLoading) {
+  if (page === "employee" && canManageEmployeeWorkspace() && !data.staffLoading) {
     loadStaffWorkspace();
   }
   if (page === "calendar" && !data.recallItemsLoaded && !data.recallItemsLoading) {
     loadRecallCalendar();
   }
-  if (page === "reports" && !data.reportLoading) {
+  if (page === "reports" && canAccessReportsWorkspace() && !data.reportLoading) {
     loadReportsSummary();
   }
-  if (page === "cash" && !data.cashLoading) {
+  if (page === "cash" && canAccessCashWorkspace() && !data.cashLoading) {
     loadCashReport();
   }
   if ((page === "chart" || page === "xml" || page === "documents") && !data.workflowDataLoading) {
@@ -5985,7 +5985,11 @@ function renderNav() {
     navRoot.innerHTML = "";
     return;
   }
-  const visibleNavItems = navItems.filter((item) => (item.id === "reports" ? canAccessReportsWorkspace() : true));
+  const visibleNavItems = navItems.filter((item) => {
+    if (item.id === "reports") return canAccessReportsWorkspace();
+    if (item.id === "cash") return canAccessCashWorkspace();
+    return true;
+  });
 
   navRoot.innerHTML = repairDemoText(`
     <div class="nav-group">
@@ -6014,12 +6018,16 @@ function renderNav() {
       if (page === "dashboard") {
         resetDashboardClientSelection();
       }
+      if (page === "cash" && !canAccessCashWorkspace()) {
+        showToast("Касса доступна только админу");
+        return;
+      }
       if (page === "cash") {
         resetCashPeriodToToday();
         data.cashRequestKey = "";
       }
       if (page === "reports" && !canAccessReportsWorkspace()) {
-        showToast("Отчеты доступны только председателю");
+        showToast("Отчеты доступны только админу");
         return;
       }
       if (page === "chart") {
@@ -6903,9 +6911,8 @@ function renderStubPage(title) {
 }
 
 function renderEmployeePage() {
-  const isChairman = canManageEmployeeWorkspace();
-  const isAdmin = appState.auth.roleCode === "admin";
-  const canEndAllSessions = isChairman || isAdmin;
+  const canManageStaff = canManageEmployeeWorkspace();
+  const canEndAllSessions = ["chairman", "admin"].includes(appState.auth.roleCode);
   const userName = appState.auth.userName || "Не авторизован";
   const roleName = appState.auth.roleName || "Нет роли";
 
@@ -6924,14 +6931,14 @@ function renderEmployeePage() {
         </div>
         <div class="summary-card">
           <div class="summary-card__label">Распределение ролей</div>
-          <div class="summary-card__value">Только председатель</div>
-          <div class="summary-card__meta">Админ без отчетов и без назначения ролей</div>
+          <div class="summary-card__value">Только админ</div>
+          <div class="summary-card__meta">Учетные записи, отчеты и касса доступны только админу</div>
         </div>
       </div>
 
       <div class="actions">
         <button class="primary-button" id="openEmployeeLogin">${appState.auth.accessToken ? "Сменить пользователя" : "Войти по логину"}</button>
-        <button class="ghost-button" id="refreshEmployeeStaff" ${isChairman ? "" : "disabled"}>Обновить список</button>
+        <button class="ghost-button" id="refreshEmployeeStaff" ${canManageStaff ? "" : "disabled"}>Обновить список</button>
         <button class="ghost-button" id="employeeSignOut" ${appState.auth.accessToken ? "" : "disabled"}>Выйти</button>
         ${
           canEndAllSessions
@@ -6943,7 +6950,7 @@ function renderEmployeePage() {
       ${data.staffError ? `<div class="note employee-note employee-note--error">${escapeHtml(data.staffError)}</div>` : ""}
 
       ${
-        isChairman
+        canManageStaff
           ? `
             <div class="employee-card-grid">
               <section class="mini-card">
@@ -7029,17 +7036,17 @@ function renderEmployeePage() {
               </section>
             </div>
           `
-          : isAdmin
+          : appState.auth.accessToken
             ? `
               <div class="note">
-                Вы вошли как <strong>${escapeHtml(roleName)}</strong>. Здесь доступен только ограниченный режим:
-                без создания сотрудников, без распределения ролей и без доступа к отчетам.
+                Вы вошли как <strong>${escapeHtml(roleName)}</strong>. Учетные записи сотрудников, отчеты и касса
+                доступны только админу.
               </div>
             `
           : `
             <div class="note">
               Чтобы открыть контур сотрудников, нажмите <strong>Войти по логину</strong>.
-              Председатель увидит роли и список учетных записей, а админ откроется в ограниченном режиме.
+              Роли и список учетных записей увидит только админ.
             </div>
           `
       }
@@ -7228,6 +7235,11 @@ function getBackendCashRows() {
 }
 
 async function loadCashReport() {
+  if (!canAccessCashWorkspace()) {
+    data.cashLoading = false;
+    data.cashRows = [];
+    return;
+  }
   const { dateFrom, dateTo } = getCashReportPeriod();
   const requestId = ++data.cashRequestId;
   data.cashLoading = true;
@@ -11600,7 +11612,7 @@ async function loadRecallCalendar() {
 async function loadReportsSummary() {
   if (!canAccessReportsWorkspace()) {
     data.reportLoading = false;
-    data.reportError = "Отчеты доступны только председателю.";
+    data.reportError = "Отчеты доступны только админу.";
     renderApp();
     return;
   }
@@ -13760,8 +13772,11 @@ function bindMedicalRecordPanelResize() {
 
 function renderApp() {
   _clientPoolCache = null;
-  if (appState.page === "reports" && !canAccessReportsWorkspace()) {
-    appState.page = appState.auth.accessToken ? "employee" : "start";
+  if (
+    (appState.page === "reports" && !canAccessReportsWorkspace()) ||
+    (appState.page === "cash" && !canAccessCashWorkspace())
+  ) {
+    appState.page = appState.auth.accessToken ? "dashboard" : "start";
   }
   document.body.dataset.page = appState.page;
   const workspaceCenterName = getWorkspaceCenterName();
@@ -13907,7 +13922,7 @@ document.getElementById("performLogin")?.addEventListener("click", async () => {
     markAuthActivity();
     loginModal?.classList.add("hidden");
     showToast(`Вход выполнен: ${appState.auth.userName || login}`);
-    if (appState.auth.roleCode === "admin" || appState.auth.roleCode === "chairman") {
+    if (canManageEmployeeWorkspace()) {
       appState.page = "employee";
       persistDemoState();
       await loadStaffWorkspace();

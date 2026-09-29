@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.routes.auth import get_current_user
+from app.api.v1.routes.auth import require_admin
 from app.db.session import get_db
 from app.models.center import Center
 from app.models.encounter import Encounter
@@ -33,17 +33,11 @@ def _build_totals(
     )
 
 
-def require_chairman(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role.code != "chairman":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Доступ к отчетам разрешен только председателю")
-    return current_user
-
-
 @router.get("/daily-summary", response_model=DailySummaryReport)
 def get_daily_summary_report(
     date_from: date = Query(...),
     date_to: date = Query(...),
-    _: User = Depends(require_chairman),
+    _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> DailySummaryReport:
     if date_from > date_to:

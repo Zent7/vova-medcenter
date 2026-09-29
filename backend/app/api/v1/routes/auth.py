@@ -63,6 +63,14 @@ def require_session_manager(current_user: User = Depends(get_current_user)) -> U
     return current_user
 
 
+# Учетные записи сотрудников, отчеты и касса — только у админа. Председатель ими
+# не пользуется: он работает с осмотрами и бланками.
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role.code != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Доступ разрешен только админу")
+    return current_user
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest) -> LoginResponse:
     with SessionLocal() as db:
