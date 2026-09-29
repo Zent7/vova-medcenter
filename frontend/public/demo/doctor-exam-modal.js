@@ -1306,8 +1306,8 @@
 
     const chairmanTitle = chairmanInfo.label || template.name;
     const templateLabel = chairmanInfo.templateName || "шаблон будет выбран по услуге";
-    // «Лишение прав» врач должен увидеть сразу, а не среди мелких галочек внизу:
-    // от неё зависит, как печатается справка, поэтому отметка крупная и красная.
+    // «Лишение прав» стоит под галочками категорий, но крупно и красным: от неё
+    // зависит, как печатается справка, и среди мелких галочек её нельзя не заметить.
     const revocationControl = isDriverChairmanFlow || chairmanType === "tractor"
       ? `
             <label class="chairman-revocation${fields.licenseRevoked ? " chairman-revocation--on" : ""}" data-chairman-revocation>
@@ -1340,7 +1340,6 @@
               <strong>${escapeHtml(chairmanTitle)}</strong>
               <span>${escapeHtml(chairmanInfo.note || "")}</span>
             </div>
-            ${revocationControl}
 
             <div class="chairman-top">
               <div class="chairman-top-left">
@@ -1534,6 +1533,7 @@
                     ${renderCheckboxField("categoryTractor", !!fields.categoryTractor, "тракторы (п.8.)")}
                     ${renderCheckboxField("categoryBoat", !!fields.categoryBoat, "лайнеры и катера (п.9)")}
                     ${isDriverChairmanFlow ? "" : renderCheckboxField("categorySailing", !!fields.categorySailing, "парусный спорт")}
+                    ${revocationControl}
                   </div>
 
                   <div class="chairman-column">

@@ -120,14 +120,16 @@ test("открытая карточка председателя берёт от
   assert.equal(context.carry(same, visit), same);
 });
 
-test("окно председателя ВУ и 071у рисует крупную отметку «Лишение прав» сразу под заголовком", () => {
+test("окно председателя ВУ и 071у рисует крупную отметку «Лишение прав» под галочками категорий", () => {
   assert.match(modalSource, /const revocationControl = isDriverChairmanFlow \|\| chairmanType === "tractor"/);
   assert.match(modalSource, /<input type="checkbox" name="licenseRevoked" \$\{fields\.licenseRevoked \? "checked" : ""\} \/>/);
   assert.match(modalSource, /ЛИШЕНИЕ ПРАВ/);
+  // сразу после последней галочки колонки «Категории», до колонки «Показания»
   assert.match(
     modalSource,
-    /<span>\$\{escapeHtml\(chairmanInfo\.note \|\| ""\)\}<\/span>\s*<\/div>\s*\$\{revocationControl\}\s*<div class="chairman-top">/,
+    /renderCheckboxField\("categorySailing"[^\r\n]*\r?\n\s*\$\{revocationControl\}\s*<\/div>\s*<div class="chairman-column">\s*<div class="chairman-column-title">Показания:/,
   );
+  assert.equal(modalSource.split("${revocationControl}").length - 1, 1, "плашка выводится один раз");
 });
 
 test("цвет плашки «Лишение прав» следует за галочкой без сохранения карточки", () => {

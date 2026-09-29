@@ -3030,7 +3030,7 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-bottom: 12px;
+  margin: 10px 0 12px;
   padding: 12px 16px;
   border: 2px solid #b8c0cc;
   border-radius: 8px;
