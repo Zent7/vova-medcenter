@@ -1319,6 +1319,125 @@
     `;
   }
 
+  // Справка 095/у: в карточке только то, что печатается в самой справке. Печатать надо
+  // ровно то, что видно на экране, поэтому дату рождения берём у клиента и не даём править.
+  function renderCertificate095ChairmanClassic(template, exam, client, chairmanInfo) {
+    const fields = exam.fields || {};
+    const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
+    const birthDate = client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
+    // В старых карточках этих полей нет: показываем то же, что по умолчанию печатает сервер.
+    const isMarked = (key, byDefault) => (fields[key] == null || fields[key] === "" ? byDefault : Boolean(fields[key]));
+    const hasContact = fields.certificate095InfectiousContact === "ДА";
+    const contactRadio = (value) => `
+      <label class="doctor-classic-radio">
+        <input type="radio" name="certificate095InfectiousContact" value="${value}" ${(hasContact ? "ДА" : "НЕТ") === value ? "checked" : ""} />
+        <span>${value}</span>
+      </label>
+    `;
+    const textRow = (label, control) => `
+      <div class="certificate095-row">
+        <span class="certificate095-title">${escapeHtml(label)}</span>
+        ${control}
+      </div>
+    `;
+
+    return `
+      <div class="doctor-classic-backdrop" data-doctor-exam-modal>
+        <div class="chairman-window certificate095-chairman-window">
+          <div class="doctor-classic-titlebar">
+            <div class="doctor-classic-title doctor-classic-title--stacked">
+              <span>${escapeHtml(chairmanInfo.label || "Председатель: справка 095у")}</span>
+              <small>${escapeHtml(chairmanInfo.templateName || "Справка 095у")}</small>
+            </div>
+            <button type="button" class="doctor-classic-close" data-doctor-exam-close>×</button>
+          </div>
+
+          <form
+            class="chairman-form chairman-form--certificate095 certificate095-chairman-form"
+            data-doctor-exam-form
+            data-exam-id="${escapeHtml(exam.id)}"
+            data-doctor-role-id="${escapeHtml(template.id)}"
+            data-chairman-form-type="certificate095"
+          >
+            <div class="certificate095-patient">
+              <label>
+                <span>Фамилия, имя, отчество</span>
+                <input class="doctor-classic-input doctor-classic-input--fio" type="text" name="patientFullName" value="${escapeHtml(fullName)}" readonly />
+              </label>
+              <div>
+                <span>Дата рождения</span>
+                <div class="doctor-classic-input certificate095-static">${escapeHtml(birthDate)}</div>
+              </div>
+            </div>
+
+            <section class="certificate095-section">
+              <div class="certificate095-title">Наименование учебного заведения:</div>
+              <div class="certificate095-choices">
+                ${renderCheckboxField("certificate095KindSchool", isMarked("certificate095KindSchool", true), "школу")}
+                ${renderCheckboxField("certificate095KindPreschool", isMarked("certificate095KindPreschool", false), "детское дошкольное учреждение")}
+              </div>
+              <div class="certificate095-hint">Отмеченное попадает в заголовок справки.</div>
+            </section>
+
+            <section class="certificate095-section">
+              <div class="certificate095-title">Статус обучающегося:</div>
+              <div class="certificate095-choices">
+                ${renderCheckboxField("certificate095StatusStudent", isMarked("certificate095StatusStudent", false), "Студенту")}
+                ${renderCheckboxField("certificate095StatusPupil", isMarked("certificate095StatusPupil", true), "учащемуся")}
+                ${renderCheckboxField("certificate095StatusChild", isMarked("certificate095StatusChild", false), "ребенку, посещающему дошкольное учреждение")}
+              </div>
+              <div class="certificate095-hint">Отмеченное печатается в строке под датой выдачи.</div>
+            </section>
+
+            <section class="certificate095-section">
+              ${textRow(
+                "Название учебного заведения, дошкольного учреждения:",
+                `<input class="doctor-classic-input" type="text" name="educationInstitution" value="${escapeHtml(fields.educationInstitution ?? "")}" />`,
+              )}
+              ${textRow(
+                "Диагноз заболевания (прочие причины отсутствия):",
+                `<textarea class="doctor-classic-textarea certificate095-textarea" name="illnessDiagnosis">${escapeHtml(fields.illnessDiagnosis ?? "")}</textarea>`,
+              )}
+            </section>
+
+            <section class="certificate095-section">
+              <div class="certificate095-contact">
+                <span class="certificate095-title">Наличие контакта с инфекционными больными:</span>
+                <div class="doctor-classic-radio-group">
+                  ${contactRadio("НЕТ")}
+                  ${contactRadio("ДА")}
+                </div>
+              </div>
+              <label class="certificate095-row" data-certificate095-contact-who ${hasContact ? "" : "hidden"}>
+                <span class="certificate095-title">Какими:</span>
+                <input class="doctor-classic-input" type="text" name="certificate095InfectiousContactWho" value="${escapeHtml(fields.certificate095InfectiousContactWho ?? "")}" />
+              </label>
+            </section>
+
+            <section class="certificate095-section">
+              ${textRow(
+                "Дата окончания заболевания:",
+                `<input class="doctor-classic-input" type="text" name="sickLeaveEndDate" data-date-mask value="${escapeHtml(fields.sickLeaveEndDate ?? "")}" />`,
+              )}
+              ${textRow(
+                "Продлено с — по:",
+                `<div class="chairman-sick-leave-extension">
+                  <input class="doctor-classic-input" type="text" name="sickLeaveExtensionStartDate" data-date-mask value="${escapeHtml(fields.sickLeaveExtensionStartDate ?? "")}" />
+                  <input class="doctor-classic-input" type="text" name="sickLeaveExtensionEndDate" data-date-mask value="${escapeHtml(fields.sickLeaveExtensionEndDate ?? "")}" />
+                </div>`,
+              )}
+            </section>
+
+            <div class="chairman-actions certificate095-actions">
+              <button type="submit" class="chairman-action-btn">Сохранить</button>
+              <button type="button" class="chairman-action-btn" data-doctor-exam-close>Отмена</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
   function renderChairmanClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
@@ -1337,6 +1456,9 @@
     }
     if (chairmanType === "gto") {
       return renderGtoChairmanClassic(template, exam, client, chairmanInfo);
+    }
+    if (chairmanType === "certificate095") {
+      return renderCertificate095ChairmanClassic(template, exam, client, chairmanInfo);
     }
     const keepEkgFieldsManual = ["lmk", "prof"].includes(chairmanType);
     const ekgValue = emptyLegacyValue(fields.ekg, ['Медицинский центр ООО "ЦМО "ЮЛМЕД" ЭКГ от 07.04.2025']);
@@ -1523,31 +1645,6 @@
                   <input class="doctor-classic-input" type="text" name="mkb10" value="${escapeHtml(fields.mkb10 ?? "")}" />
                 </div>
               </div>
-
-              ${chairmanType !== "certificate095" ? "" : `
-              <div class="chairman-row chairman-row--education">
-                <label class="chairman-row-label">Учебное заведение:</label>
-                <input class="doctor-classic-input" type="text" name="educationInstitution" value="${escapeHtml(fields.educationInstitution ?? "")}" />
-              </div>
-
-              <div class="chairman-row chairman-row--illness-diagnosis">
-                <label class="chairman-row-label">Диагноз заболевания:</label>
-                <textarea class="doctor-classic-textarea chairman-textarea chairman-textarea--small" name="illnessDiagnosis">${escapeHtml(fields.illnessDiagnosis ?? "")}</textarea>
-              </div>
-
-              <div class="chairman-row chairman-row--sick-leave">
-                <label class="chairman-row-label">Болел по:</label>
-                <input class="doctor-classic-input" type="text" name="sickLeaveEndDate" data-date-mask value="${escapeHtml(fields.sickLeaveEndDate ?? "")}" />
-              </div>
-
-              <div class="chairman-row chairman-row--sick-leave-extension">
-                <label class="chairman-row-label">Продлено с — по:</label>
-                <div class="chairman-sick-leave-extension">
-                  <input class="doctor-classic-input" type="text" name="sickLeaveExtensionStartDate" data-date-mask value="${escapeHtml(fields.sickLeaveExtensionStartDate ?? "")}" />
-                  <input class="doctor-classic-input" type="text" name="sickLeaveExtensionEndDate" data-date-mask value="${escapeHtml(fields.sickLeaveExtensionEndDate ?? "")}" />
-                </div>
-              </div>
-              `}
 
               <div class="chairman-row chairman-row--diagnosis">
                 <label class="chairman-row-label">Диагноз:</label>
@@ -2259,6 +2356,21 @@
           input.addEventListener("change", () => syncRestrictionsText(true));
         });
         syncRestrictionsText();
+      }
+
+      // Строка «Какими» нужна только при контакте с инфекционными больными.
+      if (form.dataset.chairmanFormType === "certificate095") {
+        const contactWho = form.querySelector("[data-certificate095-contact-who]");
+        const syncContactWho = (focusText = false) => {
+          const answer = form.querySelector('input[name="certificate095InfectiousContact"]:checked')?.value;
+          if (!contactWho) return;
+          contactWho.hidden = answer !== "ДА";
+          if (focusText && !contactWho.hidden) contactWho.querySelector("input")?.focus();
+        };
+        form.querySelectorAll('input[name="certificate095InfectiousContact"]').forEach((input) => {
+          input.addEventListener("change", () => syncContactWho(true));
+        });
+        syncContactWho();
       }
 
       const medicalRequirementsInput = form.querySelector("[data-medical-requirements-input]");

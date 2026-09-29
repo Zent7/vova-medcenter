@@ -3276,6 +3276,95 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   }
 }
 
+/* Карточка председателя для справки 095/у. */
+.certificate095-chairman-window {
+  width: min(780px, 96vw);
+  background: #f7f4ec;
+}
+
+.certificate095-chairman-form {
+  display: grid;
+  gap: 18px;
+  padding: 20px 24px 24px;
+  color: #1d2b36;
+}
+
+.certificate095-patient {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 170px;
+  gap: 16px;
+  align-items: end;
+}
+
+.certificate095-patient label,
+.certificate095-patient > div {
+  display: grid;
+  gap: 6px;
+}
+
+.certificate095-patient span {
+  color: #455664;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.certificate095-static {
+  min-height: 34px;
+  background: #eef0f2;
+}
+
+.certificate095-section {
+  display: grid;
+  gap: 10px;
+}
+
+.certificate095-row {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.certificate095-row[hidden] {
+  display: none;
+}
+
+.certificate095-title {
+  color: #263a49;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.certificate095-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
+}
+
+.certificate095-hint {
+  color: #5b6b78;
+  font-size: 12px;
+}
+
+.certificate095-contact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+}
+
+.certificate095-textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+@media (max-width: 780px) {
+  .certificate095-patient,
+  .certificate095-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .sanatorium-patient-strip {
   display: grid;
   grid-template-columns: 170px minmax(320px, 1fr) auto;

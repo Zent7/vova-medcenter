@@ -838,9 +838,17 @@
     { key: "vaccinationRefusal", label: "Подписан отказ от прививок", type: "checkbox", defaultValue: false },
     { key: "needsKekReferral", label: "Нуждается в направлении на КЭК", type: "checkbox", defaultValue: false },
 
-    // Строки справки 095/у: их председатель заполняет от руки на бланке.
+    // Справка 095/у: в бланк идут только отмеченные варианты. По умолчанию школа и
+    // «учащемуся», контакта с инфекционными больными нет — врач меняет лишнее.
+    { key: "certificate095KindSchool", label: "школу", type: "checkbox", defaultValue: true },
+    { key: "certificate095KindPreschool", label: "детское дошкольное учреждение", type: "checkbox", defaultValue: false },
+    { key: "certificate095StatusStudent", label: "Студенту", type: "checkbox", defaultValue: false },
+    { key: "certificate095StatusPupil", label: "учащемуся", type: "checkbox", defaultValue: true },
+    { key: "certificate095StatusChild", label: "ребенку, посещающему дошкольное учреждение", type: "checkbox", defaultValue: false },
     { key: "educationInstitution", label: "Наименование учебного заведения", type: "text", defaultValue: "" },
     { key: "illnessDiagnosis", label: "Диагноз заболевания", type: "textarea", defaultValue: "" },
+    { key: "certificate095InfectiousContact", label: "Наличие контакта с инфекционными больными", type: "radio", options: ["НЕТ", "ДА"], defaultValue: "НЕТ" },
+    { key: "certificate095InfectiousContactWho", label: "Какими", type: "text", defaultValue: "" },
     { key: "sickLeaveEndDate", label: "Дата окончания заболевания", type: "text", defaultValue: "" },
     { key: "sickLeaveExtensionStartDate", label: "Продление: с", type: "text", defaultValue: "" },
     { key: "sickLeaveExtensionEndDate", label: "Продление: по", type: "text", defaultValue: "" },

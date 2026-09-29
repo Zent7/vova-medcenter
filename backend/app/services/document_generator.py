@@ -158,6 +158,21 @@ GTO_ATHLETE_FIELDS: tuple[tuple[str, str], ...] = (
     ("GtoTrainingStage", "gtoTrainingStage"),
 )
 
+# Справка 095/у: «школу / детское дошкольное учреждение» в заголовке и «студенту /
+# учащемуся / ребёнку…» в строке под датой выдачи врач отмечает галочками в карточке
+# председателя. В бланке печатается только отмеченное, а подпись «(нужное
+# подчеркнуть)» убрана из шаблона. Третье значение — отметка в карточке, в
+# которой этих полей ещё нет: то же, что карточка показывает по умолчанию.
+CERTIFICATE_095_INSTITUTION_KINDS: tuple[tuple[str, str, bool], ...] = (
+    ("certificate095KindSchool", "школу", True),
+    ("certificate095KindPreschool", "детское дошкольное учреждение", False),
+)
+CERTIFICATE_095_STUDENT_STATUSES: tuple[tuple[str, str, bool], ...] = (
+    ("certificate095StatusStudent", "студенту", False),
+    ("certificate095StatusPupil", "учащемуся", True),
+    ("certificate095StatusChild", "ребенку, посещающему дошкольное учреждение", False),
+)
+
 # Справка в бассейн печатает три подписи: строку дерматолога, строку терапевта
 # и итоговую строку «Врач». Каждая берёт фамилию из своего осмотра.
 POOL_CERTIFICATE_TEMPLATE_FILES = frozenset({"cправкабассейн_шаблон.docx"})
@@ -5953,13 +5968,53 @@ def _certificate_095_context_overrides(exams: list[DoctorExam]) -> dict[str, str
 
     chairman = _exam_map(exams).get("chairman")
     fields = dict(chairman.fields_json or {}) if chairman is not None else {}
+    contact_marked = _first_field_value(fields, "certificate095InfectiousContact").casefold() == "да"
+    contact_who = _gto_text(fields, "certificate095InfectiousContactWho") if contact_marked else ""
+    student_status = _certificate_095_marked_options(chairman, fields, CERTIFICATE_095_STUDENT_STATUSES)
     return {
+        "Certificate095InstitutionKind": _certificate_095_marked_options(
+            chairman, fields, CERTIFICATE_095_INSTITUTION_KINDS
+        ),
+        # Строка начинает предложение: «Студенту», «Учащемуся».
+        "Certificate095StudentStatus": student_status[:1].upper() + student_status[1:],
         "Certificate095EducationInstitution": _first_field_value(fields, "educationInstitution"),
         "Certificate095Diagnosis": _first_field_value(fields, "illnessDiagnosis"),
-        "Certificate095SickLeaveEnd": _first_field_value(fields, "sickLeaveEndDate"),
-        "Certificate095ExtensionStart": _first_field_value(fields, "sickLeaveExtensionStartDate"),
-        "Certificate095ExtensionEnd": _first_field_value(fields, "sickLeaveExtensionEndDate"),
+        # Как в карточке: без отметки «ДА» контакта нет, и вписанное прежде
+        # «какими» в справку не попадает. Без карточки председателя строка пуста.
+        "Certificate095InfectiousContact": "" if chairman is None else ("да" if contact_marked else "нет"),
+        "Certificate095InfectiousContactWho": f"какими: {contact_who}" if contact_who else "",
+        "Certificate095SickLeaveEnd": _certificate_095_date(fields, "sickLeaveEndDate"),
+        "Certificate095ExtensionStart": _certificate_095_date(fields, "sickLeaveExtensionStartDate"),
+        "Certificate095ExtensionEnd": _certificate_095_date(fields, "sickLeaveExtensionEndDate"),
     }
+
+
+def _certificate_095_date(fields: dict, key: str) -> str:
+    """Дата из карточки в том же виде, что «Дата выдачи» и «с …» рядом с ней: дд.мм.гг."""
+
+    text = _first_field_value(fields, key)
+    if re.fullmatch(r"\d{1,2}[./]\d{1,2}[./](\d{2}|\d{4})", text):
+        parsed = _parse_chairman_exam_date(text)
+        if parsed is not None:
+            return parsed.strftime("%d.%m.%y")
+    return text
+
+
+def _certificate_095_marked_options(
+    chairman: DoctorExam | None,
+    fields: dict,
+    options: tuple[tuple[str, str, bool], ...],
+) -> str:
+    """Отмеченные в карточке варианты справки 095/у через запятую, в порядке бланка."""
+
+    if chairman is None:
+        return ""
+    marked: list[str] = []
+    for field_key, text, default in options:
+        value = fields.get(field_key)
+        if (default if value in (None, "") else _truthy_driver_value(value)):
+            marked.append(text)
+    return ", ".join(marked)
 
 
 def _certificate_095_doctor_context_overrides(client: Client, exams: list[DoctorExam]) -> dict[str, str]:

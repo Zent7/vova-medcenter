@@ -32,7 +32,7 @@ from app.services.new_xls_templates import (  # noqa: E402
 
 
 TEMPLATE_FILE_NAME = "095У_справка_шаблон.docx"
-REQUIRED_TOKEN = "[Certificate095TherapistDoctor]"
+REQUIRED_TOKEN = "[Certificate095InstitutionKind]"
 BUNDLED_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2]
     / "assets"
@@ -89,7 +89,7 @@ class OutdatedTemplateOverrideTests(unittest.TestCase):
     def test_token_split_by_word_across_runs_is_still_found(self):
         write_docx(
             self.override_path,
-            "<w:t>[Certificate095</w:t><w:t>TherapistDoctor]</w:t>",
+            "<w:t>[Certificate095</w:t><w:t>InstitutionKind]</w:t>",
         )
 
         template_catalog.retire_outdated_template_overrides()
