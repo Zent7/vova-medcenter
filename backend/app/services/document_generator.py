@@ -437,15 +437,18 @@ def _has_context_bookmarks(xml_text: str, context: dict[str, str]) -> bool:
     return any(name and not name.startswith("_") and name in context_keys for name in bookmark_names)
 
 
-def _replace_text_tokens(xml_text: str, context: dict[str, str]) -> str:
+def _replace_text_tokens(xml_text: str, context: dict[str, str], *, xml_escape: bool = False) -> str:
     for key, value in _context_token_variants(context):
         key_pattern = _token_key_pattern(key)
         patterns = [
             rf"\[\s*\|\s*{key_pattern}\s*\|\s*\]",
             rf"\[\s*{key_pattern}\s*\]",
         ]
+        # Значение вставляется прямо в разметку Word: & и < в нём ломали бы документ,
+        # а обратный слэш строка замены прочитала бы как ссылку на группу.
+        replacement = (lambda _match, text=escape_xml_text(value): text) if xml_escape else value
         for pattern in patterns:
-            xml_text = re.sub(pattern, value, xml_text)
+            xml_text = re.sub(pattern, replacement, xml_text)
     return xml_text
 
 
@@ -562,8 +565,8 @@ def _replace_text_node_tokens(tree: ET.ElementTree, context: dict[str, str]) -> 
             continue
         for key, value in variants:
             key_pattern = _token_key_pattern(key)
-            text = re.sub(rf"\[\s*\|\s*{key_pattern}\s*\|\s*\]", value, text)
-            text = re.sub(rf"\[\s*{key_pattern}\s*\]", value, text)
+            text = re.sub(rf"\[\s*\|\s*{key_pattern}\s*\|\s*\]", lambda _match, value=value: value, text)
+            text = re.sub(rf"\[\s*{key_pattern}\s*\]", lambda _match, value=value: value, text)
         text_node.text = text
     return tree
 
@@ -580,8 +583,8 @@ def _replace_paragraph_tokens(tree: ET.ElementTree, context: dict[str, str]) -> 
         replaced = text
         for key, value in variants:
             key_pattern = _token_key_pattern(key)
-            replaced = re.sub(rf"\[\s*\|\s*{key_pattern}\s*\|\s*\]", value, replaced)
-            replaced = re.sub(rf"\[\s*{key_pattern}\s*\]", value, replaced)
+            replaced = re.sub(rf"\[\s*\|\s*{key_pattern}\s*\|\s*\]", lambda _match, value=value: value, replaced)
+            replaced = re.sub(rf"\[\s*{key_pattern}\s*\]", lambda _match, value=value: value, replaced)
         if replaced == text:
             continue
         text_nodes[0].text = replaced
@@ -715,7 +718,7 @@ def _generate_docx(
                 if item.filename == "word/document.xml":
                     xml_text = file_bytes.decode("utf-8")
                     namespace_declarations = _document_namespace_declarations(xml_text)
-                    xml_text = _replace_text_tokens(xml_text, context)
+                    xml_text = _replace_text_tokens(xml_text, context, xml_escape=True)
                     xml_text = _replace_chairman_082_static_country(template_path, xml_text, context)
                     xml_text = _replace_chairman_082_static_doctor(template_path, xml_text, context)
                     xml_text = _replace_prof_29n_static_doctor_names(xml_text, context)
