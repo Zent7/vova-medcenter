@@ -6260,33 +6260,48 @@ def generate_document(
                         blank_form_id=blank_form_id,
                     )
             else:
-                blank_form = reuse_blank_for_existing_document(
-                    db,
-                    blank_type=required_blank_type,
-                    client_id=client.id,
-                    encounter_id=encounter.id,
-                    template_id=template.id,
-                )
-                if blank_form is None:
-                    if blank_form_id is not None:
-                        blank_form = issue_specific_blank(
-                            db,
-                            form_id=blank_form_id,
-                            blank_type=required_blank_type,
-                            client_id=client.id,
-                            center_id=encounter.center_id,
-                            encounter_id=encounter.id,
-                            user_id=1,
-                        )
-                    else:
-                        blank_form = issue_next_blank(
-                            db,
-                            blank_type=required_blank_type,
-                            client_id=client.id,
-                            center_id=encounter.center_id,
-                            encounter_id=encounter.id,
-                            user_id=1,
-                        )
+                # Номер, который оператор нашёл в окне печати, важнее ранее
+                # выданного на это обращение: иначе после первой печати «Найти
+                # номер» показывает следующий, а печатается снова первый.
+                chosen_form = db.get(BlankForm, blank_form_id) if blank_form_id is not None else None
+                if chosen_form is not None and chosen_form.status == BLANK_STATUS_FREE:
+                    blank_form = issue_specific_blank(
+                        db,
+                        form_id=chosen_form.id,
+                        blank_type=required_blank_type,
+                        client_id=client.id,
+                        center_id=encounter.center_id,
+                        encounter_id=encounter.id,
+                        user_id=1,
+                    )
+                else:
+                    blank_form = reuse_blank_for_existing_document(
+                        db,
+                        blank_type=required_blank_type,
+                        client_id=client.id,
+                        encounter_id=encounter.id,
+                        template_id=template.id,
+                    )
+                    if blank_form is None:
+                        if blank_form_id is not None:
+                            blank_form = issue_specific_blank(
+                                db,
+                                form_id=blank_form_id,
+                                blank_type=required_blank_type,
+                                client_id=client.id,
+                                center_id=encounter.center_id,
+                                encounter_id=encounter.id,
+                                user_id=1,
+                            )
+                        else:
+                            blank_form = issue_next_blank(
+                                db,
+                                blank_type=required_blank_type,
+                                client_id=client.id,
+                                center_id=encounter.center_id,
+                                encounter_id=encounter.id,
+                                user_id=1,
+                            )
 
         elif blank_form_id is not None and not is_side_print:
             if encounter is None or encounter.center_id is None:
