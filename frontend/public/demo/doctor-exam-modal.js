@@ -1267,6 +1267,10 @@
       chairmanType === "tractor" || (chairmanType === "driver" && window.chairmanExamHasTractorService?.(exam))
         ? window.getChairmanTractorRestrictionChecks?.(fields) || []
         : null;
+    // Отмеченная A/B/C/D открывает свою подкатегорию и M. Печать добавляет их сама,
+    // поэтому и на экране они отмечены: врач видит то, что напечатается.
+    const impliedCategoryKeys = new Set(window.getChairmanImpliedCategoryFieldKeys?.(fields) || []);
+    const categoryChecked = (key, legacyValue = false) => Boolean(fields[key] || legacyValue || impliedCategoryKeys.has(key));
     const renderTractorChecks = (checks) =>
       checks.map(({ category, fieldKey, checked }) => renderCheckboxField(fieldKey, checked, category)).join("");
     const hideDriverDetails = [
@@ -1510,20 +1514,20 @@
                     ${tractorCategoryChecks
                       ? renderTractorChecks(tractorCategoryChecks)
                       : `
-                    ${renderCheckboxField("categoryA", !!fields.categoryA, "A")}
-                    ${renderCheckboxField("categoryB", !!fields.categoryB, "B")}
-                    ${renderCheckboxField("categoryC", !!fields.categoryC, "C")}
-                    ${renderCheckboxField("categoryD", !!fields.categoryD, "D")}
+                    ${renderCheckboxField("categoryA", categoryChecked("categoryA"), "A")}
+                    ${renderCheckboxField("categoryB", categoryChecked("categoryB"), "B")}
+                    ${renderCheckboxField("categoryC", categoryChecked("categoryC"), "C")}
+                    ${renderCheckboxField("categoryD", categoryChecked("categoryD"), "D")}
                     ${renderCheckboxField("categoryBE", !!(fields.categoryBE || fields.categoryE), "BE")}
                     ${renderCheckboxField("categoryCE", !!(fields.categoryCE || fields.categoryE), "CE")}
                     ${renderCheckboxField("categoryDE", !!(fields.categoryDE || fields.categoryE), "DE")}
                     ${renderCheckboxField("categoryTram", !!fields.categoryTram, "Tm")}
                     ${renderCheckboxField("categoryTrolleybus", !!fields.categoryTrolleybus, "Tb")}
-                    ${renderCheckboxField("categoryM", !!fields.categoryM, "M")}
-                    ${renderCheckboxField("categoryA1", !!fields.categoryA1, "A1")}
-                    ${renderCheckboxField("categoryB1", !!fields.categoryB1, "B1")}
-                    ${renderCheckboxField("categoryC1", !!fields.categoryC1, "C1")}
-                    ${renderCheckboxField("categoryD1", !!fields.categoryD1, "D1")}
+                    ${renderCheckboxField("categoryM", categoryChecked("categoryM"), "M")}
+                    ${renderCheckboxField("categoryA1", categoryChecked("categoryA1"), "A1")}
+                    ${renderCheckboxField("categoryB1", categoryChecked("categoryB1"), "B1")}
+                    ${renderCheckboxField("categoryC1", categoryChecked("categoryC1"), "C1")}
+                    ${renderCheckboxField("categoryD1", categoryChecked("categoryD1"), "D1")}
                     ${renderCheckboxField("categoryC1E", !!fields.categoryC1E, "C1E")}
                     ${renderCheckboxField("categoryD1E", !!fields.categoryD1E, "D1E")}
                     `}
@@ -2178,6 +2182,21 @@
         medicalRequirementsInput.addEventListener("change", rememberCurrentRequirements);
         medicalRequirementsInput.addEventListener("blur", rememberCurrentRequirements);
       }
+
+      // Как в карточке клиента: отметил категорию — её подкатегория и M отмечаются сами.
+      ["categoryA", "categoryB", "categoryC", "categoryD"].forEach((name) => {
+        const categoryInput = form.querySelector(`input[name="${name}"]`);
+        categoryInput?.addEventListener("change", () => {
+          if (!categoryInput.checked) return;
+          const marked = { [name]: true };
+          (window.getChairmanImpliedCategoryFieldKeys?.(marked) || []).forEach((impliedName) => {
+            const impliedInput = form.querySelector(`input[name="${impliedName}"]`);
+            if (!impliedInput || impliedInput.checked) return;
+            impliedInput.checked = true;
+            impliedInput.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+        });
+      });
 
       const revocation = form.querySelector("[data-chairman-revocation]");
       const revocationInput = revocation?.querySelector('input[name="licenseRevoked"]');

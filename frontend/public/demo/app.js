@@ -1983,6 +1983,31 @@ function collectChairmanDriverCategories(fields = {}) {
   return categories;
 }
 
+// Поля водительских категорий в карточке председателя.
+const CHAIRMAN_DRIVER_CATEGORY_FIELD_KEYS = {
+  A: "categoryA",
+  B: "categoryB",
+  C: "categoryC",
+  D: "categoryD",
+  M: "categoryM",
+  A1: "categoryA1",
+  B1: "categoryB1",
+  C1: "categoryC1",
+  D1: "categoryD1",
+};
+
+// Категория A/B/C/D открывает и свою подкатегорию, и M — как в карточке клиента
+// и при печати. Возвращает поля, которые должны быть отмечены из-за уже
+// отмеченных категорий: карточка председателя показывает то же, что напечатается.
+function getChairmanImpliedCategoryFieldKeys(fields = {}) {
+  const implied = new Set();
+  Object.entries(DRIVER_CATEGORY_IMPLIED).forEach(([category, extraCategories]) => {
+    if (!fields[CHAIRMAN_DRIVER_CATEGORY_FIELD_KEYS[category]]) return;
+    extraCategories.forEach((extra) => implied.add(CHAIRMAN_DRIVER_CATEGORY_FIELD_KEYS[extra]));
+  });
+  return [...implied];
+}
+
 function collectChairmanDriverIndications(fields = {}) {
   return Object.entries(DRIVER_INDICATION_FIELD_TO_LABEL)
     .filter(([fieldKey]) => Boolean(fields[fieldKey]))
