@@ -146,6 +146,7 @@ test("карточка клиента собирает адрес с типом 
   assert.match(modalSource, /withClientAddressMarker\(formData\.get\("building"\), "корп\.", "body"\)/);
   assert.match(modalSource, /withClientAddressMarker\(formData\.get\("flat"\), "кв\.", "apartment"\)/);
   assert.match(modalSource, /<select name="streetType">/);
+  assert.match(modalSource, /<span>Тип улицы<\/span>\s*<select name="streetType">/);
 });
 
 test("автозаполнение по городу не стирает район и регион, набранные руками", () => {

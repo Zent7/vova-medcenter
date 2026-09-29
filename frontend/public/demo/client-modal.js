@@ -1472,7 +1472,7 @@ function openClientModal(clientId = null, options = {}) {
             <input name="city" value="${escapeHtml(initialAddress.city || "")}" list="clientCitySuggestions" />
           </label>
           <label class="field">
-            <span>Тип</span>
+            <span>Тип улицы</span>
             <select name="streetType">
               <option value="">—</option>
               ${CLIENT_STREET_TYPE_OPTIONS.map(([value, label]) => `<option value="${escapeHtml(value)}" ${initialStreet.type === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
