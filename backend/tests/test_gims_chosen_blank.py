@@ -120,10 +120,19 @@ class GimsChosenBlankTests(unittest.TestCase):
             self.assertEqual(print_form(db.get(BlankForm, second.id)).blank_number, "ГИМС0000002")
             self.assertEqual(find_number().full_number, "ГИМС0000003")
 
-            # Освобождённый номер возвращается в свободные и снова находится первым.
+            # Освобождённый номер остаётся свободным, но автоподбор идёт дальше,
+            # как у водительской и тракторной справок.
             release_form(db, form_id=first.id, user_id=1)
             db.commit()
-            self.assertEqual(find_number().full_number, "ГИМС0000001")
+            self.assertEqual(db.get(BlankForm, first.id).status, BLANK_STATUS_FREE)
+            self.assertEqual(find_number().full_number, "ГИМС0000003")
+
+            # Освободили последний из использованных: он тоже не предлагается снова.
+            third = find_number()
+            self.assertEqual(print_form(third).blank_number, "ГИМС0000003")
+            release_form(db, form_id=third.id, user_id=1)
+            db.commit()
+            self.assertIsNone(find_number())
 
 
 if __name__ == "__main__":

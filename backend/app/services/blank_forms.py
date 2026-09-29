@@ -37,6 +37,7 @@ from app.models.blank_form import (
 )
 from app.models.client import Client
 from app.models.client_document import ClientDocument
+from app.models.audit_log import AuditLog
 from app.models.document_journal import DocumentJournalEntry
 from app.models.document_template import DocumentTemplate
 from app.models.encounter import Encounter
@@ -483,6 +484,37 @@ def list_free_series(
     )
 
 
+def _highest_used_number(
+    db: Session,
+    *,
+    blank_type: str,
+    center_id: int | None,
+    series_filter: tuple[bool, str | None],
+) -> int | None:
+    """Наибольший номер, который уже выдавали, портили, аннулировали или освобождали.
+
+    Автоподбор идёт дальше этого номера, как автонумерация водительской и
+    тракторной справок: номер, по которому уже была печать, повторно не
+    предлагается, даже если его освободили. Освобождённый номер остаётся
+    свободным и виден в разделе «Бланки».
+    """
+
+    released_ids = select(AuditLog.entity_id).where(
+        AuditLog.entity_type == "blank_form",
+        AuditLog.action == "release",
+    )
+    query = select(func.max(BlankForm.number_value)).where(
+        BlankForm.blank_type == blank_type,
+        or_(BlankForm.status != BLANK_STATUS_FREE, BlankForm.id.in_(released_ids)),
+    )
+    if center_id is not None:
+        query = query.where(BlankForm.center_id == center_id)
+    filter_by_series, series_value = series_filter
+    if filter_by_series:
+        query = query.where(BlankForm.series == series_value)
+    return db.execute(query).scalar_one_or_none()
+
+
 def get_next_free_form(
     db: Session,
     *,
@@ -505,6 +537,14 @@ def get_next_free_form(
     series_clean = (lookup_series or "").strip()
     if lookup_series is not None:
         query = query.where(BlankForm.series == (series_clean or None))
+    used_up_to = _highest_used_number(
+        db,
+        blank_type=blank_type,
+        center_id=center_id,
+        series_filter=(lookup_series is not None, series_clean or None),
+    )
+    if used_up_to is not None:
+        query = query.where(BlankForm.number_value > used_up_to)
     return db.execute(query).scalar_one_or_none()
 
 
