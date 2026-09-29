@@ -73,6 +73,11 @@ test("данные кассы, отчетов и сотрудников не з�
   assert.match(extractFunction("loadStaffWorkspace"), /if \(!canManageEmployeeWorkspace\(\)\) \{/);
 });
 
+test("страница «Сотрудник» не показывает на экране логин и пароль", () => {
+  const page = extractFunction("renderEmployeePage");
+  assert.doesNotMatch(page, /chairman123|admin123|chairman \//);
+});
+
 test("после входа на страницу «Сотрудник» попадает только админ", () => {
   const login = sourceBetween('getElementById("performLogin")', 'getElementById("closeLogin")', "обработчик входа");
   assert.match(login, /if \(canManageEmployeeWorkspace\(\)\) \{\s*appState\.page = "employee"/);

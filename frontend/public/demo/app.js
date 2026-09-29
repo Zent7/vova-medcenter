@@ -6925,11 +6925,6 @@ function renderEmployeePage() {
           <div class="summary-card__meta">${escapeHtml(roleName)}</div>
         </div>
         <div class="summary-card">
-          <div class="summary-card__label">Точка входа</div>
-          <div class="summary-card__value">Сотрудники</div>
-          <div class="summary-card__meta">chairman / chairman123</div>
-        </div>
-        <div class="summary-card">
           <div class="summary-card__label">Распределение ролей</div>
           <div class="summary-card__value">Только админ</div>
           <div class="summary-card__meta">Учетные записи, отчеты и касса доступны только админу</div>
