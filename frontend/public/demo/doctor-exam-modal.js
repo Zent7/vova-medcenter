@@ -1302,6 +1302,17 @@
 
     const chairmanTitle = chairmanInfo.label || template.name;
     const templateLabel = chairmanInfo.templateName || "шаблон будет выбран по услуге";
+    // «Лишение прав» врач должен увидеть сразу, а не среди мелких галочек внизу:
+    // от неё зависит, как печатается справка, поэтому отметка крупная и красная.
+    const revocationControl = isDriverChairmanFlow || chairmanType === "tractor"
+      ? `
+            <label class="chairman-revocation${fields.licenseRevoked ? " chairman-revocation--on" : ""}" data-chairman-revocation>
+              <input type="checkbox" name="licenseRevoked" ${fields.licenseRevoked ? "checked" : ""} />
+              <span class="chairman-revocation__title">ЛИШЕНИЕ ПРАВ</span>
+              <span class="chairman-revocation__hint">Строка лабораторных исследований в справке остаётся пустой</span>
+            </label>
+      `
+      : "";
 
     return `
       <div class="doctor-classic-backdrop" data-doctor-exam-modal>
@@ -1325,6 +1336,7 @@
               <strong>${escapeHtml(chairmanTitle)}</strong>
               <span>${escapeHtml(chairmanInfo.note || "")}</span>
             </div>
+            ${revocationControl}
 
             <div class="chairman-top">
               <div class="chairman-top-left">
@@ -2165,6 +2177,14 @@
         medicalRequirementsInput.addEventListener("input", rememberCurrentRequirementsSoon);
         medicalRequirementsInput.addEventListener("change", rememberCurrentRequirements);
         medicalRequirementsInput.addEventListener("blur", rememberCurrentRequirements);
+      }
+
+      const revocation = form.querySelector("[data-chairman-revocation]");
+      const revocationInput = revocation?.querySelector('input[name="licenseRevoked"]');
+      if (revocation && revocationInput) {
+        const syncRevocation = () => revocation.classList.toggle("chairman-revocation--on", revocationInput.checked);
+        revocationInput.addEventListener("change", syncRevocation);
+        syncRevocation();
       }
 
       form.querySelectorAll(".chairman-checkbox, .chairman-checkbox input").forEach((element) => {

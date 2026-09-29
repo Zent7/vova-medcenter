@@ -3025,6 +3025,49 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   font-size: 12px;
 }
 
+/* «Лишение прав» в карточке председателя: крупно, чтобы врач видел сразу. */
+.chairman-revocation {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border: 2px solid #b8c0cc;
+  border-radius: 8px;
+  background: #f6f8fa;
+  cursor: pointer;
+}
+
+.chairman-revocation input {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  accent-color: #b71c1c;
+}
+
+.chairman-revocation__title {
+  color: #5a6673;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.chairman-revocation__hint {
+  color: #5a6673;
+  font-size: 13px;
+}
+
+.chairman-revocation--on {
+  border-color: #7f0000;
+  background: #c62828;
+}
+
+.chairman-revocation--on .chairman-revocation__title,
+.chairman-revocation--on .chairman-revocation__hint {
+  color: #ffffff;
+}
+
 .sanatorium-chairman-window {
   width: min(1480px, 98vw);
   background: #f5f1e8;

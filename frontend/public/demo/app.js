@@ -2150,6 +2150,20 @@ function getDriverDetailFromVisit(visit) {
   return driverDetails[0] || {};
 }
 
+// «Лишение прав» — одна отметка на обращение: оператор ставит её в карточке
+// клиента, председатель — в своей, и обе пишут в данные обращения. Открытая
+// карточка председателя показывает то, что записано там, иначе врач видел бы
+// устаревшую отметку и при сохранении затирал бы свежую.
+function carryLicenseRevocationFromVisit(fields = {}, visit = null) {
+  if (!visit) return fields;
+  const detail = getDriverDetailFromVisit(visit);
+  if (!Object.hasOwn(detail, "licenseRevoked")) return fields;
+  const revoked = Boolean(detail.licenseRevoked);
+  return Boolean(fields.licenseRevoked) === revoked && Object.hasOwn(fields, "licenseRevoked")
+    ? fields
+    : { ...fields, licenseRevoked: revoked };
+}
+
 function getDoctorRoleCodeById(roleId) {
   return doctorRoles.find((role) => String(role.id) === String(roleId))?.code || null;
 }
@@ -4977,7 +4991,10 @@ function getOrCreateDoctorExam(clientId, visitId, doctorRoleId, options = {}) {
   let exam = getDoctorExam(clientId, visitId, doctorRoleId);
   if (exam) {
     if (doctorRoleId === "chairman") {
-      const nextFields = applyCertificateDefaultsToChairmanFields(exam.fields || {}, visit);
+      const nextFields = carryLicenseRevocationFromVisit(
+        applyCertificateDefaultsToChairmanFields(exam.fields || {}, visit),
+        visit,
+      );
       if (JSON.stringify(nextFields) !== JSON.stringify(exam.fields || {})) {
         exam.fields = nextFields;
         exam.updatedAt = new Date().toISOString();
@@ -5211,6 +5228,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
   const fields = exam.fields || {};
   const chairmanFormInfo = getChairmanFormInfo(visit, client);
   const isDriverChairmanFlow = chairmanFormInfo.printMode === "driver-flow";
+  const carriesLicenseRevocation = isDriverChairmanFlow || chairmanFormInfo.type === "tractor";
 
   const chairmanCategories = isDriverChairmanFlow ? collectChairmanDriverCategories(fields) : [];
   const admissionCategory = isDriverChairmanFlow
@@ -5221,11 +5239,15 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
   const indicationsText = indicationsList.join(", ") || String(fields.diagnosis || raw.indications || "").trim() || null;
   const chairmanMedicalRecordData = buildChairmanMedicalRecordData(fields);
 
-  if (isDriverChairmanFlow && visit) {
-    driverDetail.categories = chairmanCategories.slice();
-    driverDetail.indications = indicationsList;
-    driverDetail.limitations = limitationsList;
-    driverDetail.boatFit = Boolean(fields.categoryBoat);
+  if (carriesLicenseRevocation && visit) {
+    if (isDriverChairmanFlow) {
+      driverDetail.categories = chairmanCategories.slice();
+      driverDetail.indications = indicationsList;
+      driverDetail.limitations = limitationsList;
+      driverDetail.boatFit = Boolean(fields.categoryBoat);
+    }
+    // Иначе при печати отметка из карточки клиента затёрла бы отметку председателя.
+    driverDetail.licenseRevoked = Boolean(fields.licenseRevoked);
     if (visit.__backendSyncPromise) {
       await visit.__backendSyncPromise;
     }
