@@ -10322,6 +10322,13 @@ function isPreenteredBlankSeries(series) {
   return PREENTERED_BLANK_SERIES_SET.has(normalizeBlankSeries(series).toLowerCase());
 }
 
+// Бланки ГИМС всегда типографские и заводятся партией в разделе «Бланки», а у
+// партии может быть любая серия (40, ГМ и т.д.). Номер такой серии берём из
+// заведённого диапазона, а не выдаём автоматически.
+function isPreenteredBlankFlow(series, blankType) {
+  return blankType === BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE || isPreenteredBlankSeries(series);
+}
+
 function buildServiceSeriesAbbreviation(service, options = {}) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
@@ -10373,7 +10380,7 @@ function closeDriverPrintSeriesPicker() {
   document.querySelector("[data-driver-series-picker]")?.remove();
 }
 
-function openDriverPrintSeriesPicker({ value, options, onSelect }) {
+function openDriverPrintSeriesPicker({ value, options, onSelect, onlyListed = false }) {
   closeDriverPrintSeriesPicker();
 
   let selectedValue = normalizeBlankSeries(value) || options[0] || "";
@@ -10401,7 +10408,13 @@ function openDriverPrintSeriesPicker({ value, options, onSelect }) {
   const selectedNode = overlay.querySelector("[data-driver-series-selected]");
 
   const applySelection = () => {
-    onSelect(normalizeBlankSeries(selectedValue || searchInput?.value));
+    const chosen = normalizeBlankSeries(selectedValue || searchInput?.value);
+    const listed = options.find((item) => item.toLowerCase() === chosen.toLowerCase());
+    if (onlyListed && !listed) {
+      if (selectedNode) selectedNode.textContent = "Выберите серию из списка заведённых бланков";
+      return;
+    }
+    onSelect(listed ?? chosen);
     closeDriverPrintSeriesPicker();
   };
 
@@ -10637,6 +10650,8 @@ async function openDriverPrintFlow(options = {}) {
     selectedCertificateType: options.selectedCertificateType || preselectedCertificateType,
     certificateTypes: requestedCertificateTypes,
   });
+  // В окне ГИМС предлагаем только серии, где в этом медцентре есть свободные бланки.
+  const stockSeriesOnly = blankType === BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE;
 
   let seriesOptions = [];
   let fallbackBlank = options.preselectedBlank || null;
@@ -10677,17 +10692,19 @@ async function openDriverPrintFlow(options = {}) {
     const series = normalizeBlankSeries(item?.series);
     if (series) seriesOptionMap.set(series.toLowerCase(), item);
   });
-  getDriverPrintSeriesPickerOptions(seriesOptions, { includeSuggestedSeries: !isOrdinaryDriverFlow }).forEach((series) => {
-    const normalizedKey = normalizeBlankSeries(series).toLowerCase();
-    if (!seriesOptionMap.has(normalizedKey)) {
-      seriesOptionMap.set(normalizedKey, {
-        series,
-        free_count: isPreenteredBlankSeries(series) ? 0 : "",
-        next_form_id: null,
-        next_full_number: "",
-      });
-    }
-  });
+  if (!stockSeriesOnly) {
+    getDriverPrintSeriesPickerOptions(seriesOptions, { includeSuggestedSeries: !isOrdinaryDriverFlow }).forEach((series) => {
+      const normalizedKey = normalizeBlankSeries(series).toLowerCase();
+      if (!seriesOptionMap.has(normalizedKey)) {
+        seriesOptionMap.set(normalizedKey, {
+          series,
+          free_count: isPreenteredBlankSeries(series) ? 0 : "",
+          next_form_id: null,
+          next_full_number: "",
+        });
+      }
+    });
+  }
   seriesOptions = Array.from(seriesOptionMap.values());
 
   if ((!Array.isArray(seriesOptions) || !seriesOptions.length) && !isOrdinaryDriverFlow) {
@@ -10712,6 +10729,11 @@ async function openDriverPrintFlow(options = {}) {
     }
   }
 
+  if (stockSeriesOnly && preselectedSeries && (!Array.isArray(seriesOptions) || !seriesOptions.length)) {
+    // Свободных бланков ГИМС нет: окно всё равно открываем, оно подскажет, что завести.
+    seriesOptions = [{ series: preselectedSeries, free_count: 0, next_form_id: null, next_full_number: "" }];
+  }
+
   if (!Array.isArray(seriesOptions) || !seriesOptions.length) {
     showToast("Для водительской справки нет свободных номерных бланков");
     return;
@@ -10733,6 +10755,7 @@ async function openDriverPrintFlow(options = {}) {
       normalizeBlankSeries(seriesOptions[0]?.series),
     selectedCertificateType: "",
     certificateTypes: requestedCertificateTypes,
+    stockSeriesOnly,
     compactCertificateFlow,
     legacyCertificateFlow,
     currentBlank: normalizeDriverPrintBlank(fallbackBlank),
@@ -10752,7 +10775,7 @@ async function openDriverPrintFlow(options = {}) {
     flowState.selectedSeries = flowState.selectedSeries || normalizeBlankSeries(seriesOptions[0]?.series);
   }
 
-  if (!flowState.currentBlank && isPreenteredBlankSeries(flowState.selectedSeries)) {
+  if (!flowState.currentBlank && isPreenteredBlankFlow(flowState.selectedSeries, flowState.blankType)) {
     try {
       const query = new URLSearchParams({
         blank_type: flowState.blankType,
@@ -10957,7 +10980,7 @@ async function openDriverPrintFlow(options = {}) {
       if (options.targetWindow && !options.targetWindow.closed) {
         options.targetWindow.close();
       }
-      flowState.error = isPreenteredBlankSeries(flowState.selectedSeries)
+      flowState.error = isPreenteredBlankFlow(flowState.selectedSeries, flowState.blankType)
         ? "Сначала нажмите \"Найти номер\", чтобы подобрать свободный бланк из заведенного диапазона."
         : "Сначала нажмите \"Найти номер\", чтобы присвоить следующий 7-значный номер.";
       renderFlow();
@@ -11070,7 +11093,13 @@ async function openDriverPrintFlow(options = {}) {
     const selectSeries = (value) => {
       const normalizedSeries = normalizeBlankSeries(value);
       const nextCertificateType = getDriverPrintCertificateType(normalizedSeries);
-      flowState.selectedCertificateType = nextCertificateType || (flowState.legacyCertificateFlow ? flowState.selectedCertificateType : "");
+      // Окно, открытое под одну справку (ГИМС, 071у), остаётся ею и для серии, чьё
+      // имя не совпадает с названием справки, например «ГМ»: иначе пропадут кнопки
+      // «Освободить номер» и «Бракованный бланк».
+      const fixedCertificateType =
+        flowState.compactCertificateFlow && flowState.certificateTypes.length === 1 ? flowState.certificateTypes[0] : "";
+      flowState.selectedCertificateType =
+        nextCertificateType || (flowState.legacyCertificateFlow ? flowState.selectedCertificateType : fixedCertificateType);
       flowState.selectedSeries = flowState.legacyCertificateFlow
         ? getNumberedCertificateDisplaySeries(normalizedSeries, flowState.selectedCertificateType, client)
         : normalizedSeries;
@@ -11090,8 +11119,11 @@ async function openDriverPrintFlow(options = {}) {
       event.stopPropagation();
       openDriverPrintSeriesPicker({
         value: flowState.selectedSeries,
-        options: getDriverPrintSeriesPickerOptions(flowState.seriesOptions),
+        options: getDriverPrintSeriesPickerOptions(flowState.seriesOptions, {
+          includeSuggestedSeries: !flowState.stockSeriesOnly,
+        }),
         onSelect: selectSeries,
+        onlyListed: flowState.stockSeriesOnly,
       });
     };
     seriesInput?.addEventListener("pointerdown", openSeriesPicker);
@@ -11123,7 +11155,7 @@ async function openDriverPrintFlow(options = {}) {
           return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         };
         const shouldAutoCreateImmediately =
-          !isPreenteredBlankSeries(requestedSeries) &&
+          !isPreenteredBlankFlow(requestedSeries, flowState.blankType) &&
           !canAutoCreateChairmanBlankSeries(requestedSeries);
         try {
           flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
@@ -11198,7 +11230,7 @@ async function openDriverPrintFlow(options = {}) {
           flowState.seriesOptions,
         );
         const requestedSeries = lookupSeries || flowState.selectedSeries;
-        const autoCreate = !isPreenteredBlankSeries(requestedSeries);
+        const autoCreate = !isPreenteredBlankFlow(requestedSeries, flowState.blankType);
 
         if (currentBlank.status === "free") {
           await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/spoil`, {

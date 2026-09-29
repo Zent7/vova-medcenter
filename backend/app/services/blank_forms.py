@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import Integer, and_, case, cast, delete, func, or_, select, update
+from sqlalchemy import Integer, and_, case, cast, delete, func, not_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -459,12 +459,19 @@ def list_free_series(
     blank_type: str,
     center_id: int | None = None,
 ) -> list[dict[str, object]]:
-    forms = list_forms(
-        db,
-        blank_type=blank_type,
-        status=BLANK_STATUS_FREE,
-        center_id=center_id,
-        limit=1000,
+    # Серию, в которой остались только пропускаемые номера, окну печати не
+    # предлагаем: иначе оно застревает на ней, хотя подобрать номер уже нельзя.
+    query = select(BlankForm).where(
+        BlankForm.blank_type == blank_type,
+        BlankForm.status == BLANK_STATUS_FREE,
+    )
+    if center_id is not None:
+        query = query.where(BlankForm.center_id == center_id)
+    skip_used = _skip_used_numbers(db, blank_type=blank_type, center_id=center_id)
+    if skip_used is not None:
+        query = query.where(skip_used)
+    forms = list(
+        db.execute(query.order_by(BlankForm.number_value.asc(), BlankForm.id.asc()).limit(1000)).scalars()
     )
     grouped: dict[str | None, dict[str, object]] = {}
     for form in forms:
@@ -484,35 +491,44 @@ def list_free_series(
     )
 
 
-def _highest_used_number(
+def _skip_used_numbers(
     db: Session,
     *,
     blank_type: str,
     center_id: int | None,
-    series_filter: tuple[bool, str | None],
-) -> int | None:
-    """Наибольший номер, который уже выдавали, портили, аннулировали или освобождали.
+):
+    """Условие для запроса свободных бланков: не предлагать номера, по которым уже была печать.
 
-    Автоподбор идёт дальше этого номера, как автонумерация водительской и
-    тракторной справок: номер, по которому уже была печать, повторно не
-    предлагается, даже если его освободили. Освобождённый номер остаётся
-    свободным и виден в разделе «Бланки».
+    Автоподбор идёт дальше наибольшего номера, который в той же партии уже
+    выдавали, портили, аннулировали или освобождали, как автонумерация
+    водительской и тракторной справок. Освобождённый номер остаётся свободным
+    и виден в разделе «Бланки», но сам не предлагается. Считаем по партии, а не
+    по серии: партию с меньшими номерами, заведённую позже, пропускать нельзя.
+    Возвращает None, если ограничивать нечего.
     """
 
     released_ids = select(AuditLog.entity_id).where(
         AuditLog.entity_type == "blank_form",
         AuditLog.action == "release",
     )
-    query = select(func.max(BlankForm.number_value)).where(
-        BlankForm.blank_type == blank_type,
-        or_(BlankForm.status != BLANK_STATUS_FREE, BlankForm.id.in_(released_ids)),
+    query = (
+        select(BlankForm.batch_id, func.max(BlankForm.number_value))
+        .where(
+            BlankForm.blank_type == blank_type,
+            or_(BlankForm.status != BLANK_STATUS_FREE, BlankForm.id.in_(released_ids)),
+        )
+        .group_by(BlankForm.batch_id)
     )
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
-    filter_by_series, series_value = series_filter
-    if filter_by_series:
-        query = query.where(BlankForm.series == series_value)
-    return db.execute(query).scalar_one_or_none()
+
+    conditions = []
+    for batch_id, used_up_to in db.execute(query).all():
+        if used_up_to is None:
+            continue
+        in_batch = BlankForm.batch_id.is_(None) if batch_id is None else BlankForm.batch_id == batch_id
+        conditions.append(and_(in_batch, BlankForm.number_value <= used_up_to))
+    return not_(or_(*conditions)) if conditions else None
 
 
 def get_next_free_form(
@@ -537,14 +553,9 @@ def get_next_free_form(
     series_clean = (lookup_series or "").strip()
     if lookup_series is not None:
         query = query.where(BlankForm.series == (series_clean or None))
-    used_up_to = _highest_used_number(
-        db,
-        blank_type=blank_type,
-        center_id=center_id,
-        series_filter=(lookup_series is not None, series_clean or None),
-    )
-    if used_up_to is not None:
-        query = query.where(BlankForm.number_value > used_up_to)
+    skip_used = _skip_used_numbers(db, blank_type=blank_type, center_id=center_id)
+    if skip_used is not None:
+        query = query.where(skip_used)
     return db.execute(query).scalar_one_or_none()
 
 
@@ -951,6 +962,9 @@ def issue_next_blank(
     )
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
+    skip_used = _skip_used_numbers(db, blank_type=blank_type, center_id=center_id)
+    if skip_used is not None:
+        query = query.where(skip_used)
 
     form: BlankForm | None = db.execute(query).scalar_one_or_none()
     if form is None:
