@@ -28,6 +28,7 @@ from app.services.blank_forms import (
     enrich_form_for_read,
     get_form_by_printed_number,
     get_next_free_form,
+    is_paper_certificate_series,
     list_free_series,
     list_batches,
     list_blank_types,
@@ -85,6 +86,7 @@ def get_batches(
         payload.issued_count = counts.get("issued", 0)
         payload.spoiled_count = counts.get("spoiled", 0)
         payload.cancelled_count = counts.get("cancelled", 0)
+        payload.is_paper_certificate = is_paper_certificate_series(batch.series, batch.comment)
         result.append(payload)
     return result
 

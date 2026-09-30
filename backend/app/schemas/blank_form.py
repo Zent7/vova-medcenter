@@ -47,6 +47,9 @@ class BlankBatchRead(BlankBatchBase):
     spoiled_count: int = 0
     cancelled_count: int = 0
 
+    # Партия автономеров справок на бумаге (ГТО, 095у и др.), а не бланков ВУ.
+    is_paper_certificate: bool = False
+
     model_config = {"from_attributes": True}
 
 
@@ -76,6 +79,10 @@ class BlankFormRead(BaseModel):
     client_full_name: str | None = None
     document_label: str | None = None
     issued_by_name: str | None = None
+
+    # Автономер справки на бумаге (ГТО, 095у и др.): в разделе «Бланки» его
+    # показывают отдельно от бланков ВУ, хотя blank_type у него «Водительская».
+    is_paper_certificate: bool = False
 
     model_config = {"from_attributes": True}
 

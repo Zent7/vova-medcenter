@@ -50,6 +50,65 @@ from app.services.audit import write_audit_log
 AUTO_NUMBER_BATCH_COMMENT = "Автонумерация по сокращению услуги"
 AUTO_NUMBER_LOCK_NAMESPACE = 1_870_341_624
 
+# Справки на обычной бумаге (ГТО, 095у, 29Н и др.) получают автономер и хранятся
+# в том же типе «Водительская», потому что у их шаблонов такой blank_type. В
+# разделе «Бланки» их показываем отдельно, чтобы в «Водительской» были только
+# ВУ. Это виртуальный тип: в базе его нет, он лишь фильтр и группа для списков.
+BLANK_VIEW_PAPER_CERTIFICATES = "paper_certificates"
+BLANK_VIEW_PAPER_CERTIFICATES_NAME = "Справки на бумаге"
+
+# Серии автономеров справок; совпадает с CERTIFICATE_PRINT_SERIES_OPTIONS и
+# CHAIRMAN_AUTO_CREATE_BLANK_SERIES в frontend/public/demo/app.js (ЛМК, ГИМС и
+# 4026 — свои типы бланков, сюда не входят). Регистр в базе бывает любой:
+# фронтенд пишет серию так, как её выбрали или ввели.
+_PAPER_CERTIFICATE_SERIES_BASE = (
+    "070У", "071У", "072У", "082У", "086У", "086у (М)", "086у (Ж)", "095У",
+    "001 ГСУ", "989Н", "342Н", "ГТО", "ГТ", "ГС", "БАСС", "СПОРТ", "СЭНД",
+    "ЭКГ", "ЭКГР", "ЭКГН", "29Н", "ПРОФ", "ДРАГ", "МОРСКАЯ", "13082", "13098",
+)
+PAPER_CERTIFICATE_SERIES = tuple(
+    sorted({variant for base in _PAPER_CERTIFICATE_SERIES_BASE for variant in (base, base.lower(), base.capitalize())})
+)
+
+
+def is_paper_certificate_series(series: str | None, batch_comment: str | None) -> bool:
+    """Автономер справки на бумаге: партия автонумерации и серия справки."""
+
+    return batch_comment == AUTO_NUMBER_BATCH_COMMENT and (series or "") in PAPER_CERTIFICATE_SERIES
+
+
+def _auto_batch_ids():
+    return select(BlankBatch.id).where(BlankBatch.comment == AUTO_NUMBER_BATCH_COMMENT)
+
+
+def _paper_certificate_forms():
+    return and_(BlankForm.series.in_(PAPER_CERTIFICATE_SERIES), BlankForm.batch_id.in_(_auto_batch_ids()))
+
+
+def _not_paper_certificate_forms():
+    return or_(
+        BlankForm.series.is_(None),
+        BlankForm.series.not_in(PAPER_CERTIFICATE_SERIES),
+        BlankForm.batch_id.is_(None),
+        BlankForm.batch_id.not_in(_auto_batch_ids()),
+    )
+
+
+def _paper_certificate_batches():
+    return and_(
+        BlankBatch.comment == AUTO_NUMBER_BATCH_COMMENT,
+        BlankBatch.series.in_(PAPER_CERTIFICATE_SERIES),
+    )
+
+
+def _not_paper_certificate_batches():
+    return or_(
+        BlankBatch.comment.is_(None),
+        BlankBatch.comment != AUTO_NUMBER_BATCH_COMMENT,
+        BlankBatch.series.is_(None),
+        BlankBatch.series.not_in(PAPER_CERTIFICATE_SERIES),
+    )
+
 
 class BlankServiceError(Exception):
     """Базовая ошибка сервиса бланков."""
@@ -201,8 +260,15 @@ def list_batches(
         .where(BlankBatch.deleted_at.is_(None))
         .order_by(BlankBatch.created_at.desc(), BlankBatch.id.desc())
     )
-    if blank_type:
+    if blank_type == BLANK_VIEW_PAPER_CERTIFICATES:
+        query = query.where(
+            BlankBatch.blank_type == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+            _paper_certificate_batches(),
+        )
+    elif blank_type:
         query = query.where(BlankBatch.blank_type == blank_type)
+        if blank_type == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE:
+            query = query.where(_not_paper_certificate_batches())
     if center_id is not None:
         query = query.where(BlankBatch.center_id == center_id)
     batches = list(db.execute(query).scalars())
@@ -358,8 +424,15 @@ def _build_forms_query(
     search: str | None = None,
 ):
     query = select(BlankForm)
-    if blank_type:
+    if blank_type == BLANK_VIEW_PAPER_CERTIFICATES:
+        query = query.where(
+            BlankForm.blank_type == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+            _paper_certificate_forms(),
+        )
+    elif blank_type:
         query = query.where(BlankForm.blank_type == blank_type)
+        if blank_type == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE:
+            query = query.where(_not_paper_certificate_forms())
     if batch_id is not None:
         query = query.where(BlankForm.batch_id == batch_id)
     if status:
@@ -438,6 +511,22 @@ def stats(db: Session, *, center_id: int | None = None) -> list[dict[str, object
         if blank_type in by_type and status in by_type[blank_type]:
             by_type[blank_type][status] = int(count or 0)
 
+    # Справки на бумаге считаем отдельно и вычитаем из «Водительской».
+    paper_query = select(BlankForm.status, func.count(BlankForm.id)).where(
+        BlankForm.blank_type == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+        _paper_certificate_forms(),
+    )
+    if center_id is not None:
+        paper_query = paper_query.where(BlankForm.center_id == center_id)
+    paper = {"free": 0, "issued": 0, "spoiled": 0, "cancelled": 0}
+    for status, count in db.execute(paper_query.group_by(BlankForm.status)).all():
+        if status in paper:
+            paper[status] = int(count or 0)
+    driver_bucket = by_type.get(BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE)
+    if driver_bucket is not None:
+        for status, count in paper.items():
+            driver_bucket[status] = max(0, driver_bucket[status] - count)
+
     result = []
     for bt in types:
         bucket = by_type.get(bt.code, {"free": 0, "issued": 0, "spoiled": 0, "cancelled": 0})
@@ -450,6 +539,15 @@ def stats(db: Session, *, center_id: int | None = None) -> list[dict[str, object
                 **bucket,
             }
         )
+        if bt.code == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE:
+            result.append(
+                {
+                    "blank_type": BLANK_VIEW_PAPER_CERTIFICATES,
+                    "blank_type_name": BLANK_VIEW_PAPER_CERTIFICATES_NAME,
+                    "total": sum(paper.values()),
+                    **paper,
+                }
+            )
     return result
 
 
@@ -1246,7 +1344,13 @@ def enrich_form_for_read(
         "client_full_name": None,
         "document_label": None,
         "issued_by_name": None,
+        "is_paper_certificate": False,
     }
+    if form.blank_type == BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE and form.series in PAPER_CERTIFICATE_SERIES:
+        batch = db.get(BlankBatch, form.batch_id) if form.batch_id else None
+        payload["is_paper_certificate"] = batch is not None and is_paper_certificate_series(
+            form.series, batch.comment
+        )
     if form.client_id:
         client = db.get(Client, form.client_id)
         if client is not None:

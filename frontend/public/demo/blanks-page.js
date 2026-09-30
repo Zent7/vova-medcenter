@@ -44,6 +44,17 @@
     return item?.name || code;
   }
 
+  // Справки на обычной бумаге (ГТО, 095у и др.) получают автономер и в базе лежат
+  // под типом «Водительская». Показываем их отдельным разделом, чтобы в
+  // «Водительской» были только ВУ. Тип виртуальный: бэкенд принимает его код как
+  // фильтр списка и партий и отдаёт в статистике отдельной строкой.
+  const PAPER_CERTIFICATES_CODE = "paper_certificates";
+  const PAPER_CERTIFICATES_NAME = "Справки на бумаге";
+
+  function getFormTypeName(item) {
+    return item?.is_paper_certificate ? PAPER_CERTIFICATES_NAME : getTypeName(item?.blank_type);
+  }
+
   function getStatusMeta(status) {
     const map = {
       free: { label: "Свободен", className: "free" },
@@ -321,7 +332,7 @@
                         (item) => `
                           <tr>
                             <td>${esc(formatDate(item.received_at || item.created_at))}</td>
-                            <td>${esc(getTypeName(item.blank_type))}</td>
+                            <td>${esc(getFormTypeName(item))}</td>
                             <td>${esc(item.series || "—")}</td>
                             <td>${esc(item.series || "")}${String(item.number_from).padStart(item.number_width || 6, "0")}–${esc(item.series || "")}${String(item.number_to).padStart(item.number_width || 6, "0")}</td>
                             <td>${Number(item.quantity || 0)}</td>
@@ -365,7 +376,7 @@
     const groups = types.map((item) => ({
       code: item.code,
       name: item.name,
-      items: issuedForms.filter((form) => form.blank_type === item.code),
+      items: issuedForms.filter((form) => form.blank_type === item.code && !form.is_paper_certificate),
     }));
 
     issuedForms.forEach((form) => {
@@ -376,6 +387,12 @@
         name: getTypeName(form.blank_type),
         items: issuedForms.filter((item) => item.blank_type === form.blank_type),
       });
+    });
+
+    groups.push({
+      code: PAPER_CERTIFICATES_CODE,
+      name: PAPER_CERTIFICATES_NAME,
+      items: issuedForms.filter((form) => form.is_paper_certificate),
     });
 
     return groups;
@@ -504,6 +521,7 @@
               ${typeOptions
                 .map((item) => `<option value="${esc(item.code)}" ${appState.blanksFilterType === item.code ? "selected" : ""}>${esc(item.name)}</option>`)
                 .join("")}
+              <option value="${PAPER_CERTIFICATES_CODE}" ${appState.blanksFilterType === PAPER_CERTIFICATES_CODE ? "selected" : ""}>${PAPER_CERTIFICATES_NAME}</option>
             </select>
           </label>
           <label class="field blanks-filters__search">
@@ -536,7 +554,7 @@
                         return `
                           <tr>
                             <td>${esc(item.full_number)}</td>
-                            <td>${esc(getTypeName(item.blank_type))}</td>
+                            <td>${esc(getFormTypeName(item))}</td>
                             <td><span class="blank-status blank-status--${meta.className}">${esc(meta.label)}</span></td>
                             <td>${esc(item.client_full_name || "—")}</td>
                             <td>${esc(item.document_label || "—")}</td>
