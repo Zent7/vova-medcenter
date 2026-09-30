@@ -3,12 +3,15 @@ import re
 DRIVER_CATEGORY_KEYS = ("A", "B", "C", "D", "BE", "CE", "DE", "Tm", "Tb", "M", "A1", "B1", "C1", "D1", "C1E", "D1E")
 DRIVER_EXTENDED_CATEGORIES = {"C", "D", "CE", "DE", "C1", "D1", "C1E", "D1E", "Tm", "Tb"}
 # Открытая категория открывает и свою подкатегорию, и M: отметили B — в справке
-# появляются B, B1, M. То же правило продублировано в demo/app.js.
+# появляются B, B1, M. CE и DE открывают C1E и D1E. То же правило продублировано
+# в demo/app.js.
 DRIVER_IMPLIED_CATEGORIES = {
     "A": ("A1", "M"),
     "B": ("B1", "M"),
     "C": ("C1", "M"),
     "D": ("D1", "M"),
+    "CE": ("C1E",),
+    "DE": ("D1E",),
 }
 
 

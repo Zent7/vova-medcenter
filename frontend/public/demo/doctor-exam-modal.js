@@ -1718,8 +1718,8 @@
                     ${renderCheckboxField("categoryB1", categoryChecked("categoryB1"), "B1")}
                     ${renderCheckboxField("categoryC1", categoryChecked("categoryC1"), "C1")}
                     ${renderCheckboxField("categoryD1", categoryChecked("categoryD1"), "D1")}
-                    ${renderCheckboxField("categoryC1E", !!fields.categoryC1E, "C1E")}
-                    ${renderCheckboxField("categoryD1E", !!fields.categoryD1E, "D1E")}
+                    ${renderCheckboxField("categoryC1E", categoryChecked("categoryC1E"), "C1E")}
+                    ${renderCheckboxField("categoryD1E", categoryChecked("categoryD1E"), "D1E")}
                     `}
                     ${renderCheckboxField("categoryTractor", !!fields.categoryTractor, "тракторы (п.8.)")}
                     ${renderCheckboxField("categoryBoat", !!fields.categoryBoat, "лайнеры и катера (п.9)")}
@@ -2396,8 +2396,9 @@
         medicalRequirementsInput.addEventListener("blur", rememberCurrentRequirements);
       }
 
-      // Как в карточке клиента: отметил категорию — её подкатегория и M отмечаются сами.
-      ["categoryA", "categoryB", "categoryC", "categoryD"].forEach((name) => {
+      // Как в карточке клиента: отметил категорию — её подкатегория и M отмечаются сами,
+      // а CE и DE отмечают C1E и D1E.
+      ["categoryA", "categoryB", "categoryC", "categoryD", "categoryCE", "categoryDE"].forEach((name) => {
         const categoryInput = form.querySelector(`input[name="${name}"]`);
         categoryInput?.addEventListener("change", () => {
           if (!categoryInput.checked) return;

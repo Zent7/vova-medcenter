@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.document_generator import (  # noqa: E402
     _apply_print_variant_to_xls_workbook,
+    DRIVER_XLS_CATEGORY_KEYS,
     _driver_categories_for_documents,
+    _driver_category_marks,
     _driver_certificate_lines,
     _driver_document_context_overrides,
     _exam_map,
@@ -126,6 +128,34 @@ class DriverDocumentContextTests(unittest.TestCase):
                             expected[-1] = ""
                         self.assertEqual(actual, expected)
 
+    def test_front_prints_issue_month_in_digits_in_both_parts(self):
+        """Дата выдачи на лицевой ВУ — день, месяц и год цифрами, в обеих частях
+        бланка. Месяц рождения остаётся словом."""
+
+        templates = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
+        patient = client("B")
+        patient.birth_date = date(1990, 1, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            for issued, expected in ((date(2026, 9, 5), ["5", "09", "2026"]), (date(2026, 12, 30), ["30", "12", "2026"])):
+                with self.subTest(issued=issued):
+                    path = Path(directory) / "водительская лицевая.xls"
+                    _generate_runtime_xls(
+                        templates / "водительская лицевая.xls", path,
+                        {"ClientCalc": "Проверкин Иван Иванович", "BirthDateCalc_DATEMONTH": "января",
+                         "VisitDate_DATEMONTH": "сентября"},
+                        patient, SimpleNamespace(encounter_date=issued),
+                        {"exams": list(self.certificate_exams().values())}, print_variant="driver_front",
+                    )
+                    sheet = xlrd.open_workbook(str(path)).sheet_by_index(0)
+
+                    def printed(row, col):
+                        return strip_new_xls_placeholder_padding(sheet.cell_value(row, col)).strip()
+
+                    self.assertEqual([printed(23, col) for col in (15, 19, 23)], expected)
+                    self.assertEqual([printed(23, col) for col in (41, 45, 49)], expected)
+                    self.assertEqual(printed(16, 15), "января")
+                    self.assertEqual(printed(16, 41), "января")
+
     def test_completed_chairman_categories_override_client_categories(self):
         selected = _driver_categories_for_documents(
             client(admission_category="A B C D"),
@@ -178,6 +208,9 @@ class DriverDocumentContextTests(unittest.TestCase):
             ("C", {"C", "C1", "M"}),
             ("D", {"D", "D1", "M"}),
             ("BE", {"BE"}),
+            ("CE", {"CE", "C1E"}),
+            ("DE", {"DE", "D1E"}),
+            ("C1E", {"C1E"}),
             ("Tm", {"Tm"}),
         ]:
             with self.subTest(source=source):
@@ -187,6 +220,18 @@ class DriverDocumentContextTests(unittest.TestCase):
             _driver_categories_for_documents(client(), [chairman({"categoryC": True})]),
             {"C", "C1", "M"},
         )
+        self.assertEqual(
+            _driver_categories_for_documents(client(), [chairman({"categoryCE": True, "categoryDE": True})]),
+            {"CE", "C1E", "DE", "D1E"},
+        )
+
+    def test_ce_and_de_print_their_subcategories_on_the_back(self):
+        """Отметка CE и DE в карточке ставит на обороте ещё и C1E и D1E."""
+
+        marks = _driver_category_marks({}, client(), {"chairman": chairman({"categoryCE": True, "categoryDE": True})})
+
+        marked = {category for category, mark in zip(DRIVER_XLS_CATEGORY_KEYS, marks) if mark}
+        self.assertEqual(marked, {"CE", "C1E", "DE", "D1E"})
 
     def test_back_side_prints_only_the_two_allowed_statuses(self):
         context = _driver_document_context_overrides(
@@ -205,7 +250,7 @@ class DriverDocumentContextTests(unittest.TestCase):
             [chairman({"categoryE": True})],
         )
 
-        self.assertEqual(selected, {"BE", "CE", "DE"})
+        self.assertEqual(selected, {"BE", "CE", "DE", "C1E", "D1E"})
 
     def test_document_context_includes_categories_and_conditions(self):
         context = _driver_document_context_overrides(
@@ -432,7 +477,7 @@ class DriverDocumentContextTests(unittest.TestCase):
         result_book = xlrd.open_workbook(str(output_path), formatting_info=True)
         front_sheet = result_book.sheet_by_name("Водительская Лицевая")
 
-        for col_index, expected in [(15, "31"), (19, "июля"), (23, "2026"), (41, "31"), (45, "июля"), (49, "2026")]:
+        for col_index, expected in [(15, "31"), (19, "07"), (23, "2026"), (41, "31"), (45, "07"), (49, "2026")]:
             cell = front_sheet.cell(23, col_index)
             self.assertEqual(cell.value, expected)
             self.assertEqual(cell.ctype, xlrd.XL_CELL_TEXT)
@@ -517,6 +562,41 @@ class DriverDocumentContextTests(unittest.TestCase):
         self.assertEqual(shapes, expected_shapes)
         # Правая часть бланка отмечается так же, как левая.
         self.assertEqual([shape(col) for col in range(35, 67, 2)], expected_shapes)
+
+    def test_back_draws_ticks_on_c1e_and_d1e_when_ce_and_de_are_marked(self):
+        """В карточке отмечены только CE и DE: на обороте галочки встают и на
+        C1E, D1E — в обеих частях бланка."""
+
+        template_path = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates" / "водительская обратн ст.xls"
+        output_path = Path(tempfile.gettempdir()) / "driver_back_ce_de_subcategories_test.xls"
+        test_client = client()
+        exams = [chairman({"categoryCE": True, "categoryDE": True})]
+        context = {"ClientCalc": "Иванов Иван Иванович"}
+        context.update(_driver_document_context_overrides(test_client, exams))
+
+        _generate_runtime_xls(
+            template_path,
+            output_path,
+            context,
+            test_client,
+            SimpleNamespace(encounter_date=date(2026, 9, 30)),
+            {"exams": exams, "service_names": []},
+            print_variant="driver_back",
+        )
+
+        book = xlrd.open_workbook(str(output_path), formatting_info=True)
+        sheet = book.sheet_by_name("Водительская Оборотная")
+
+        def ticked(columns):
+            def has_tick(col_index):
+                border = book.xf_list[sheet.cell_xf_index(10, col_index)].border
+                closed = border.top_line_style and border.bottom_line_style
+                return bool(border.diag_line_style and border.left_line_style and not closed)
+
+            return {category for category, col in zip(DRIVER_XLS_CATEGORY_KEYS, columns) if has_tick(col)}
+
+        self.assertEqual(ticked(range(2, 34, 2)), {"CE", "C1E", "DE", "D1E"})
+        self.assertEqual(ticked(range(35, 67, 2)), {"CE", "C1E", "DE", "D1E"})
 
     def test_driver_print_variants_keep_only_selected_side(self):
         for variant, expected_sheet, template_path in [

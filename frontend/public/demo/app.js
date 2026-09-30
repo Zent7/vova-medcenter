@@ -1830,12 +1830,15 @@ const DRIVER_CATEGORY_ALIASES = {
 };
 
 // Открытая категория открывает и свою подкатегорию, и M: отметил оператор B —
-// в справке появляются B, B1, M. Правило повторяет _driver_category_tokens.
+// в справке появляются B, B1, M. CE и DE открывают C1E и D1E. Правило повторяет
+// _driver_category_tokens.
 const DRIVER_CATEGORY_IMPLIED = {
   A: ["A1", "M"],
   B: ["B1", "M"],
   C: ["C1", "M"],
   D: ["D1", "M"],
+  CE: ["C1E"],
+  DE: ["D1E"],
 };
 
 function normalizeDriverCategoryToken(token) {
@@ -2001,15 +2004,22 @@ const CHAIRMAN_DRIVER_CATEGORY_FIELD_KEYS = {
   B1: "categoryB1",
   C1: "categoryC1",
   D1: "categoryD1",
+  CE: "categoryCE",
+  DE: "categoryDE",
+  C1E: "categoryC1E",
+  D1E: "categoryD1E",
 };
 
-// Категория A/B/C/D открывает и свою подкатегорию, и M — как в карточке клиента
-// и при печати. Возвращает поля, которые должны быть отмечены из-за уже
-// отмеченных категорий: карточка председателя показывает то же, что напечатается.
+// Категория A/B/C/D открывает и свою подкатегорию, и M, CE и DE — C1E и D1E, как
+// в карточке клиента и при печати. Возвращает поля, которые должны быть отмечены
+// из-за уже отмеченных категорий: карточка председателя показывает то же, что
+// напечатается. Старая галочка «E» без BE, CE и DE считается отметкой CE и DE.
 function getChairmanImpliedCategoryFieldKeys(fields = {}) {
   const implied = new Set();
+  const legacyE = Boolean(fields.categoryE) && !fields.categoryBE && !fields.categoryCE && !fields.categoryDE;
   Object.entries(DRIVER_CATEGORY_IMPLIED).forEach(([category, extraCategories]) => {
-    if (!fields[CHAIRMAN_DRIVER_CATEGORY_FIELD_KEYS[category]]) return;
+    const marked = fields[CHAIRMAN_DRIVER_CATEGORY_FIELD_KEYS[category]] || (legacyE && (category === "CE" || category === "DE"));
+    if (!marked) return;
     extraCategories.forEach((extra) => implied.add(CHAIRMAN_DRIVER_CATEGORY_FIELD_KEYS[extra]));
   });
   return [...implied];
