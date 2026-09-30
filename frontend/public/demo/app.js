@@ -10325,6 +10325,26 @@ function isPreenteredBlankFlow(series, blankType) {
   return blankType === BLANK_TYPE_GIMS_MEDICAL_CERTIFICATE || isPreenteredBlankSeries(series);
 }
 
+// ВУ печатается на строгом типографском бланке: его номер берём только из
+// заведённой партии. Автономер получают справки на обычной бумаге (ГТО, 095у,
+// спорт и др.), а серия, которая не называет справку, например «41», ею не
+// является: без партии она даёт ошибку, а не новый «выданный» номер.
+function isStrictDriverBlankSeries(series, blankType) {
+  if (blankType !== BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE) return false;
+  const normalized = normalizeBlankSeries(series);
+  if (!normalized) return false;
+  return (
+    !getDriverPrintCertificateType(normalized) &&
+    !CERTIFICATE_PRINT_SERIES_OPTION_SET.has(normalized.toLowerCase()) &&
+    !canAutoCreateChairmanBlankSeries(normalized)
+  );
+}
+
+// Номер берётся из заведённой партии, а автоматически не выдаётся.
+function isStockNumberedFlow(series, blankType) {
+  return isPreenteredBlankFlow(series, blankType) || isStrictDriverBlankSeries(series, blankType);
+}
+
 function buildServiceSeriesAbbreviation(service, options = {}) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
@@ -10656,6 +10676,8 @@ async function openDriverPrintFlow(options = {}) {
       blank_type: blankType,
       center_id: String(centerId),
     });
+    // Обычной ВУ остатки автонумерации не предлагаем: только заведённые партии.
+    if (isOrdinaryDriverFlow && blankType === BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE) query.set("strict_only", "true");
     seriesOptions = await apiRequest(`/blanks/series?${query.toString()}`);
   } catch (error) {
     console.warn("Не удалось загрузить свободные серии бланков", error);
@@ -10778,6 +10800,7 @@ async function openDriverPrintFlow(options = {}) {
         center_id: String(flowState.centerId),
       });
       query.set("series", flowState.selectedSeries || "");
+      if (isStrictDriverBlankSeries(flowState.selectedSeries, flowState.blankType)) query.set("strict_only", "true");
       flowState.currentBlank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
     } catch (error) {
       flowState.error = humanizeApiError(error, "Не удалось подобрать свободный бланк");
@@ -10976,7 +10999,7 @@ async function openDriverPrintFlow(options = {}) {
       if (options.targetWindow && !options.targetWindow.closed) {
         options.targetWindow.close();
       }
-      flowState.error = isPreenteredBlankFlow(flowState.selectedSeries, flowState.blankType)
+      flowState.error = isStockNumberedFlow(flowState.selectedSeries, flowState.blankType)
         ? "Сначала нажмите \"Найти номер\", чтобы подобрать свободный бланк из заведенного диапазона."
         : "Сначала нажмите \"Найти номер\", чтобы присвоить следующий 7-значный номер.";
       renderFlow();
@@ -11147,11 +11170,13 @@ async function openDriverPrintFlow(options = {}) {
           query.set("series", lookupSeries || "");
           if (autoCreate) {
             query.set("auto_create", "true");
+          } else if (isStrictDriverBlankSeries(requestedSeries, flowState.blankType)) {
+            query.set("strict_only", "true");
           }
           return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
         };
         const shouldAutoCreateImmediately =
-          !isPreenteredBlankFlow(requestedSeries, flowState.blankType) &&
+          !isStockNumberedFlow(requestedSeries, flowState.blankType) &&
           !canAutoCreateChairmanBlankSeries(requestedSeries);
         try {
           flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
@@ -11179,7 +11204,7 @@ async function openDriverPrintFlow(options = {}) {
         flowState.currentBlank = null;
         const requestedSeriesLabel = normalizeBlankSeries(lookupSeries || flowState.selectedSeries) || "выбранной серии";
         const message = humanizeApiError(error, "Не удалось подобрать свободный бланк");
-        flowState.error = message.includes("Свободные бланки по выбранной серии не найдены")
+        flowState.error = message.includes("Свободные бланки") && message.includes("не найдены")
           ? `В «${flowState.centerName}» нет свободных бланков серии ${requestedSeriesLabel}. Добавьте диапазон в разделе «Бланки» этого медцентра.`
           : message;
       } finally {
@@ -11226,7 +11251,7 @@ async function openDriverPrintFlow(options = {}) {
           flowState.seriesOptions,
         );
         const requestedSeries = lookupSeries || flowState.selectedSeries;
-        const autoCreate = !isPreenteredBlankFlow(requestedSeries, flowState.blankType);
+        const autoCreate = !isStockNumberedFlow(requestedSeries, flowState.blankType);
 
         if (currentBlank.status === "free") {
           await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/spoil`, {
@@ -11249,7 +11274,11 @@ async function openDriverPrintFlow(options = {}) {
           center_id: String(flowState.centerId),
           series: lookupSeries || "",
         });
-        if (autoCreate) query.set("auto_create", "true");
+        if (autoCreate) {
+          query.set("auto_create", "true");
+        } else if (isStrictDriverBlankSeries(requestedSeries, flowState.blankType)) {
+          query.set("strict_only", "true");
+        }
         flowState.currentBlank = normalizeDriverPrintBlank(
           await apiRequest(`/blanks/forms/next?${query.toString()}`),
         );
@@ -13462,9 +13491,12 @@ function bindContentEvents() {
             series: lookupSeries,
           });
           let blank = null;
+          const blankType = query.get("blank_type");
           const shouldAutoCreateImmediately =
             !isPreenteredBlankSeries(normalizedSeries) &&
+            !isStrictDriverBlankSeries(lookupSeries, blankType) &&
             !canAutoCreateChairmanBlankSeries(lookupSeries);
+          if (isStrictDriverBlankSeries(lookupSeries, blankType)) query.set("strict_only", "true");
           try {
             if (shouldAutoCreateImmediately) query.set("auto_create", "true");
             blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));

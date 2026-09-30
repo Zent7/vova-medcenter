@@ -453,11 +453,25 @@ def stats(db: Session, *, center_id: int | None = None) -> list[dict[str, object
     return result
 
 
+def _not_auto_numbered():
+    """Условие: номер заведён партией, а не создан автонумерацией.
+
+    Автономер создаёт окно печати, когда серии нет в заведённых партиях, и не
+    расходует его, если печать не состоялась: свободные остатки такой серии
+    остаются в базе. Строгому бланку (ВУ) они не подходят: его номер обязан быть
+    на настоящем типографском бланке из заведённой партии.
+    """
+
+    auto_batches = select(BlankBatch.id).where(BlankBatch.comment == AUTO_NUMBER_BATCH_COMMENT)
+    return or_(BlankForm.batch_id.is_(None), BlankForm.batch_id.not_in(auto_batches))
+
+
 def list_free_series(
     db: Session,
     *,
     blank_type: str,
     center_id: int | None = None,
+    strict_only: bool = False,
 ) -> list[dict[str, object]]:
     # Серию, в которой остались только пропускаемые номера, окну печати не
     # предлагаем: иначе оно застревает на ней, хотя подобрать номер уже нельзя.
@@ -465,6 +479,8 @@ def list_free_series(
         BlankForm.blank_type == blank_type,
         BlankForm.status == BLANK_STATUS_FREE,
     )
+    if strict_only:
+        query = query.where(_not_auto_numbered())
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
     skip_used = _skip_used_numbers(db, blank_type=blank_type, center_id=center_id)
@@ -537,6 +553,7 @@ def get_next_free_form(
     blank_type: str,
     center_id: int | None = None,
     series: str | None = None,
+    strict_only: bool = False,
 ) -> BlankForm | None:
     query = (
         select(BlankForm)
@@ -547,6 +564,8 @@ def get_next_free_form(
         .order_by(BlankForm.number_value.asc(), BlankForm.id.asc())
         .limit(1)
     )
+    if strict_only:
+        query = query.where(_not_auto_numbered())
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
     lookup_series = normalize_lookup_series(blank_type, series)
@@ -956,6 +975,7 @@ def issue_next_blank(
             BlankForm.blank_type == blank_type,
             BlankForm.status == BLANK_STATUS_FREE,
         )
+        .where(_not_auto_numbered())
         .order_by(BlankForm.number_value.asc(), BlankForm.id.asc())
         .limit(1)
         .with_for_update(skip_locked=True)

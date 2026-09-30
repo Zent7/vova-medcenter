@@ -94,8 +94,9 @@ test("номер ГИМС любой серии берётся из заведё
   assert.equal(rules.isPreenteredBlankFlow("ГИМС", rules.driver), true);
 
   assert.doesNotMatch(printFlowSource, /isPreenteredBlankSeries\((?:requestedSeries|flowState\.selectedSeries)\)/);
-  assert.match(printFlowSource, /!isPreenteredBlankFlow\(requestedSeries, flowState\.blankType\) &&\s*!canAutoCreateChairmanBlankSeries/);
-  assert.match(printFlowSource, /const autoCreate = !isPreenteredBlankFlow\(requestedSeries, flowState\.blankType\);/);
+  // isStockNumberedFlow = isPreenteredBlankFlow + строгие серии ВУ (driver-strict-blank-series.test.mjs).
+  assert.match(printFlowSource, /!isStockNumberedFlow\(requestedSeries, flowState\.blankType\) &&\s*!canAutoCreateChairmanBlankSeries/);
+  assert.match(printFlowSource, /const autoCreate = !isStockNumberedFlow\(requestedSeries, flowState\.blankType\);/);
 });
 
 test("выбор серии ГИМС не снимает тип справки и не прячет «Освободить номер»", () => {

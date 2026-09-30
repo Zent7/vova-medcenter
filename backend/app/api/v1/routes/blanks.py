@@ -64,9 +64,10 @@ def get_blank_types(db: Session = Depends(get_db)) -> list[BlankTypeRead]:
 def get_free_series(
     blank_type: str = Query(...),
     center_id: int | None = Query(default=None),
+    strict_only: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> list[BlankSeriesRead]:
-    items = list_free_series(db, blank_type=blank_type, center_id=center_id)
+    items = list_free_series(db, blank_type=blank_type, center_id=center_id, strict_only=strict_only)
     return [BlankSeriesRead(**item) for item in items]
 
 
@@ -179,9 +180,15 @@ def get_next_form(
     center_id: int | None = Query(default=None),
     series: str | None = Query(default=None),
     auto_create: bool = Query(default=False),
+    strict_only: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> BlankFormRead:
     blank_type = resolve_blank_type_for_series(blank_type, series)
+    if auto_create and strict_only:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Для строгого бланка автонумерация не применяется: номер берётся из заведённой партии",
+        )
     if auto_create:
         try:
             form = create_auto_number_form(
@@ -204,7 +211,13 @@ def get_next_form(
         db.refresh(form)
         return BlankFormRead.model_validate(enrich_form_for_read(db, form))
 
-    form = get_next_free_form(db, blank_type=blank_type, center_id=center_id, series=series)
+    form = get_next_free_form(
+        db,
+        blank_type=blank_type,
+        center_id=center_id,
+        series=series,
+        strict_only=strict_only,
+    )
     if form is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
