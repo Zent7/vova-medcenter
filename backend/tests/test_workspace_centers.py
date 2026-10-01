@@ -20,7 +20,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app.models  # noqa: E402,F401
 from app.db.base import Base  # noqa: E402
 from app.models.center import Center  # noqa: E402
-from app.services.seed import WORKSPACE_CENTERS, _ensure_workspace_centers  # noqa: E402
+from app.services.seed import (  # noqa: E402
+    LEGACY_CENTER_NAMES,
+    WORKSPACE_CENTERS,
+    _ensure_workspace_centers,
+)
 
 
 DEMO_DIR = Path(__file__).resolve().parents[2] / "frontend" / "public" / "demo"
@@ -70,6 +74,56 @@ class WorkspaceCentersTests(unittest.TestCase):
             renamed = db.execute(select(Center).where(Center.code == "center-a")).scalar_one()
             self.assertEqual(renamed.name, "Переименованный центр")
             self.assertEqual(renamed.inn, "7712345678")
+
+    def test_centers_carry_the_names_the_customer_gave(self):
+        self.assertEqual(
+            [name for _, name in WORKSPACE_CENTERS],
+            ["Мед-Авто", "Медилэнд", "ПЕРВАЯ ЗДРАВНИЦА"],
+        )
+
+    def test_placeholder_names_of_a_working_installation_are_renamed(self):
+        """Живая база хранит «Медцентр N»: сид заменяет их на настоящие названия."""
+
+        with self.Session() as db:
+            db.add(Center(code="center-a", name="Медцентр 1", inn="7712345678"))
+            db.add(Center(code="center-b", name="Медцентр 2"))
+            db.add(Center(code="center-c", name="Медцентр 3"))
+            db.commit()
+
+            _ensure_workspace_centers(db)
+            db.commit()
+
+            self.assertEqual(self._codes_and_names(db), WORKSPACE_CENTERS)
+            first = db.execute(select(Center).where(Center.code == "center-a")).scalar_one()
+            self.assertEqual(first.inn, "7712345678")
+
+    def test_only_placeholder_names_are_renamed(self):
+        """Название, которое правили руками, не затирается: у центра оно своё."""
+
+        with self.Session() as db:
+            db.add(Center(code="center-a", name="Медцентр 1"))
+            db.add(Center(code="center-b", name="Медилэнд на Ленина"))
+            db.commit()
+
+            _ensure_workspace_centers(db)
+            db.commit()
+
+            names = dict(self._codes_and_names(db))
+            self.assertEqual(names["center-a"], "Мед-Авто")
+            self.assertEqual(names["center-b"], "Медилэнд на Ленина")
+
+    def test_legacy_names_in_the_ui_match_the_backend(self):
+        """Старые названия в app.js ведут в те же центры, что и в сиде."""
+
+        app_js = (DEMO_DIR / "app.js").read_text(encoding="utf-8")
+        legacy_block = re.search(r"const LEGACY_CENTER_NAMES = \{(.*?)\};", app_js, re.S)
+        self.assertIsNotNone(legacy_block, "LEGACY_CENTER_NAMES не найден в app.js")
+        ui_mapping = dict(re.findall(r'"([^"]+)":\s*"([^"]+)"', legacy_block.group(1)))
+
+        expected = {
+            LEGACY_CENTER_NAMES[code]: name for code, name in WORKSPACE_CENTERS
+        }
+        self.assertEqual(ui_mapping, expected)
 
     def test_repeated_startup_does_not_duplicate_centers(self):
         with self.Session() as db:

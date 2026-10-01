@@ -1696,7 +1696,7 @@ function openClientModal(clientId = null, options = {}) {
     const encounterDateText = String(
       editingClient?.encounterDate || editingClient?.lastVisit || formatDateTime(new Date()),
     ).trim();
-    const center = appState.centerFilter === "all" ? "Медцентр 1" : appState.centerFilter;
+    const center = getWorkspaceCenterName();
     const fullName = [formData.get("lastName"), formData.get("firstName"), formData.get("middleName")]
       .map((value) => String(value || "").trim())
       .filter(Boolean)

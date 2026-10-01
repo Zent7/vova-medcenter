@@ -14,9 +14,19 @@ function getLocalDateInputValue(value = new Date()) {
 // Медцентры, доступные в переключателе. Это начало списка WORKSPACE_CENTERS из
 // backend/app/services/seed.py: центр подбирается по названию, поэтому имена и
 // порядок обязаны совпадать, а варианты #centerSelect в index.html — этому
-// списку. «Медцентр 3» в базе заведён, но в работу пока не введён и скрыт;
-// чтобы открыть его, достаточно дописать сюда и в index.html.
-const WORKSPACE_CENTER_NAMES = ["Медцентр 1", "Медцентр 2"];
+// списку. «ПЕРВАЯ ЗДРАВНИЦА» в базе заведена, но в работу пока не введена и скрыта;
+// чтобы открыть её, достаточно дописать сюда и в index.html.
+const WORKSPACE_CENTER_NAMES = ["Мед-Авто", "Медилэнд"];
+
+// Рабочие названия центров, пока заказчик не назвал их. Они остались в
+// localStorage открытой вкладки (выбранный центр, кэш справочника врачей, центр
+// заведённых клиентов и обращений); при чтении сохранения их заменяют на
+// настоящие. Те же названия — LEGACY_CENTER_NAMES в backend/app/services/seed.py.
+const LEGACY_CENTER_NAMES = {
+  "Медцентр 1": "Мед-Авто",
+  "Медцентр 2": "Медилэнд",
+  "Медцентр 3": "ПЕРВАЯ ЗДРАВНИЦА",
+};
 
 const appState = {
   page: "start",
@@ -1139,6 +1149,36 @@ function cacheDoctorDirectoryForCurrentCenter() {
   data.doctorDirectoryByCenter[getWorkspaceCenterName()] = { ...(data.doctorDirectory || {}) };
 }
 
+// Заменяет в сохранении прежние названия центров на нынешние. Без этого вкладка
+// регистратора второго центра после обновления тихо переключилась бы на первый.
+function renameLegacyCentersInSavedState(saved) {
+  const renameCenter = (name) => (Object.hasOwn(LEGACY_CENTER_NAMES, name) ? LEGACY_CENTER_NAMES[name] : name);
+  const renameCenterField = (record) => {
+    if (record && typeof record === "object" && typeof record.center === "string") {
+      record.center = renameCenter(record.center);
+    }
+  };
+
+  if (saved.appState && typeof saved.appState === "object") {
+    saved.appState.centerFilter = renameCenter(saved.appState.centerFilter);
+  }
+  [saved.createdClients, saved.visits].forEach((records) => {
+    if (Array.isArray(records)) records.forEach(renameCenterField);
+  });
+  if (saved.clientOverrides && typeof saved.clientOverrides === "object") {
+    Object.values(saved.clientOverrides).forEach(renameCenterField);
+  }
+
+  const directories = saved.doctorDirectoryByCenter;
+  if (directories && typeof directories === "object") {
+    Object.entries(LEGACY_CENTER_NAMES).forEach(([legacyName, name]) => {
+      if (!Object.hasOwn(directories, legacyName)) return;
+      if (!Object.hasOwn(directories, name)) directories[name] = directories[legacyName];
+      delete directories[legacyName];
+    });
+  }
+}
+
 function applyPersistedDemoState() {
   resetAuthForNewPageLoad();
 
@@ -1148,6 +1188,7 @@ function applyPersistedDemoState() {
     applyDefaultDoctorDirectory();
     return;
   }
+  renameLegacyCentersInSavedState(saved);
 
   data.clientOverrides = saved.clientOverrides && typeof saved.clientOverrides === "object"
     ? saved.clientOverrides

@@ -32,10 +32,21 @@ from app.services.template_catalog import sync_document_template_catalog, templa
 # заведён, но ещё не введён в работу и скрыт от оператора — так сейчас с третьим.
 # Новый центр дописывается в конец, коды уже заведённых менять нельзя.
 WORKSPACE_CENTERS = [
-    ("center-a", "Медцентр 1"),
-    ("center-b", "Медцентр 2"),
-    ("center-c", "Медцентр 3"),
+    ("center-a", "Мед-Авто"),
+    ("center-b", "Медилэнд"),
+    ("center-c", "ПЕРВАЯ ЗДРАВНИЦА"),
 ]
+
+# Рабочие названия, под которыми центры жили, пока заказчик не назвал их. В уже
+# работающей базе они так и лежат; в таком виде их переименовывает сид, а центр с
+# любым другим названием считается правкой заказчика и остаётся как есть.
+# Прежние названия нужны и интерфейсу: в localStorage открытой вкладки хранится
+# выбранный центр (LEGACY_CENTER_NAMES в frontend/public/demo/app.js).
+LEGACY_CENTER_NAMES = {
+    "center-a": "Медцентр 1",
+    "center-b": "Медцентр 2",
+    "center-c": "Медцентр 3",
+}
 
 
 SERVICE_GROUPS = [
@@ -568,7 +579,9 @@ def _ensure_workspace_centers(db: Session) -> list[Center]:
     Раньше центры создавались только на пустой базе, поэтому новый медцентр не
     появлялся у уже работающей установки. Функция вызывается на каждом старте и
     добавляет только отсутствующие коды: имена и реквизиты уже заведённых
-    центров она не трогает, чтобы не затереть правки заказчика.
+    центров она не трогает, чтобы не затереть правки заказчика. Исключение —
+    рабочее название из LEGACY_CENTER_NAMES («Медцентр 1»): оно заменяется на
+    настоящее, потому что его никто не вводил.
     """
 
     centers_by_code = {
@@ -576,7 +589,10 @@ def _ensure_workspace_centers(db: Session) -> list[Center]:
         for center in db.execute(select(Center)).scalars().all()
     }
     for code, name in WORKSPACE_CENTERS:
-        if code in centers_by_code:
+        existing = centers_by_code.get(code)
+        if existing is not None:
+            if existing.name == LEGACY_CENTER_NAMES.get(code):
+                existing.name = name
             continue
         center = Center(code=code, name=name)
         db.add(center)
