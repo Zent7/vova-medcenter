@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MedCenters Demo</title>
-    <link rel="stylesheet" href="./styles.css?v=20260929-certificate095-card-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20261001-topbar-compact-v1" />
   </head>
   <body>
     <div class="app-shell">
@@ -14,6 +14,22 @@
         </div>
 
         <nav class="nav" id="nav"></nav>
+
+        <div class="topbar-actions">
+          <label class="workspace-center" id="workspaceCenter">
+            <span class="workspace-center__label">Работа в медцентре</span>
+            <select class="center-select" id="centerSelect" aria-label="Текущий медцентр">
+              <option value="Мед-Авто">Мед-Авто</option>
+              <option value="Медилэнд">Медилэнд</option>
+              <option value="ПЕРВАЯ ЗДРАВНИЦА">ПЕРВАЯ ЗДРАВНИЦА</option>
+            </select>
+          </label>
+          <div class="center-pill">
+            <strong id="authStatusLabel">Гость</strong>
+          </div>
+          <button class="primary-button" id="showLogin" type="button">Войти по логину</button>
+          <button class="ghost-button hidden" id="signOut" type="button">Выйти</button>
+        </div>
       </aside>
 
       <main class="main">
@@ -21,21 +37,6 @@
           <div>
             <div class="eyebrow"></div>
             <h1 id="page-title">Главная</h1>
-          </div>
-          <div class="topbar-actions">
-            <label class="workspace-center" id="workspaceCenter">
-              <span class="workspace-center__label">Работа в медцентре</span>
-              <select class="center-select" id="centerSelect" aria-label="Текущий медцентр">
-                <option value="Мед-Авто">Мед-Авто</option>
-                <option value="Медилэнд">Медилэнд</option>
-                <option value="ПЕРВАЯ ЗДРАВНИЦА">ПЕРВАЯ ЗДРАВНИЦА</option>
-              </select>
-            </label>
-            <div class="center-pill">
-              <strong id="authStatusLabel">Гость</strong>
-            </div>
-            <button class="primary-button" id="showLogin" type="button">Войти по логину</button>
-            <button class="ghost-button hidden" id="signOut" type="button">Выйти</button>
           </div>
         </header>
 
@@ -90,7 +91,7 @@
             : "/api/v1";
     </script>
     <script src="./services-data.js?v=20260922-gto-v1"></script>
-    <script src="./app.js?v=20261001-center-pinning-v1"></script>
+    <script src="./app.js?v=20261002-topbar-compact-v2"></script>
     <script src="./blanks-page.js?v=20260930-paper-certificates-v1"></script>
     <script src="./services-page.js?v=20260917-service-doctor-chips-v1"></script>
     <script src="./client-modal.js?v=20261001-center-names-v1"></script>

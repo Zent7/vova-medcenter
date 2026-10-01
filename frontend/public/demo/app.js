@@ -3898,6 +3898,7 @@ function getDoctorRoleIdByLabel(label) {
     "офтальмолог": "ophthalmologist",
     "терапевт": "therapist",
     "психиатр-нарколог": "psychiatrist-narcologist",
+    "нарколог": "psychiatrist-narcologist",
     "психиатр": "psychiatrist",
     "инфекционист": "infectionist",
     "фтизиатр": "phthisiatrist",
@@ -6540,7 +6541,7 @@ function renderSketchHome() {
     "Офтальмолог",
     "Терапевт",
     "Психиатр",
-    "Психиатр-нарколог",
+    "Нарколог",
     "Инфекционист",
     "Фтизиатр",
     "Узист",
@@ -6562,7 +6563,7 @@ function renderSketchHome() {
     "Офтальмолог",
     "Терапевт",
     "Психиатр",
-    "Психиатр-нарколог",
+    "Нарколог",
     "Инфекционист",
     "Фтизиатр",
     "Узист",
@@ -13946,6 +13947,8 @@ function renderApp() {
         ? `${appState.auth.userName || "Сотрудник"} · ${appState.auth.roleName || "Без роли"}`
         : "Гость",
     );
+    // В строке меню плашка узкая и длинное имя обрезается многоточием.
+    authStatusLabel.title = authStatusLabel.textContent;
   }
 
   // Кнопки входа и выхода стоят в шапке, а она общая для всех разделов, поэтому

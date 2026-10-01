@@ -231,21 +231,8 @@ textarea {
   line-height: 1.05;
 }
 
-body[data-page="dashboard"] .eyebrow {
-  display: none;
-}
-
 body[data-page="calendar"] .topbar {
   display: none;
-}
-
-body[data-page="dashboard"] .topbar h1 {
-  font-size: 22px;
-}
-
-body[data-page="dashboard"] .topbar {
-  min-height: 32px;
-  align-items: center;
 }
 
 body[data-page="dashboard"] .sketch-toolbar .primary-button,
@@ -6705,45 +6692,64 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   flex-direction: row;
 }
 
+/* На главной заголовок страницы не нужен: раздел и так подсвечен в меню, а
+   каждая строка над таблицей отнимает место у клиентов. */
 body[data-page="dashboard"] .topbar {
-  flex-direction: row;
-  justify-content: space-between;
-  min-height: 32px;
-  min-width: 0;
-  overflow: hidden;
+  display: none;
 }
 
-body[data-page="dashboard"] .topbar h1 {
+/* Медцентр, сотрудник и вход/выход стоят в строке меню справа, а не в своей
+   строке под ней. Название центра задаёт сам список, подпись слева не нужна.
+   В календаре, как и раньше, этого блока нет. */
+.sidebar .topbar-actions {
   flex: 0 0 auto;
+  gap: 6px;
+  margin-left: auto;
 }
 
-body[data-page="dashboard"] .topbar-actions {
-  flex: 1 1 auto;
-  justify-content: flex-end;
-  min-width: 0;
-  overflow: hidden;
+body[data-page="calendar"] .sidebar .topbar-actions {
+  display: none;
 }
 
-body[data-page="dashboard"] .center-pill {
-  flex: 1 1 auto;
-  max-width: min(220px, calc(100% - 72px));
+.sidebar .workspace-center {
+  min-height: 34px;
+  padding: 2px 3px;
+}
+
+.sidebar .workspace-center__label {
+  display: none;
+}
+
+.sidebar .center-select {
+  min-width: 112px;
+}
+
+.sidebar .center-pill {
+  color: var(--text);
+  max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-body[data-page="dashboard"] .workspace-center {
-  flex: 0 1 auto;
-  min-width: 0;
+/* Меню и блок справа вместе уже не помещаются в одну строку: имя сотрудника
+   прячем, иначе у меню появится прокрутка и строка станет выше. */
+@media (max-width: 1340px) {
+  .sidebar .center-pill {
+    display: none;
+  }
 }
 
-body[data-page="dashboard"] .workspace-center__label {
-  white-space: nowrap;
-}
+@media (max-width: 900px) {
+  .sidebar {
+    flex-wrap: wrap;
+  }
 
-body[data-page="dashboard"] .topbar-actions .primary-button,
-body[data-page="dashboard"] .topbar-actions .ghost-button {
-  flex: 0 0 auto;
+  .sidebar .topbar-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
 }
 
 body[data-page="dashboard"] .dashboard-sticky-controls {

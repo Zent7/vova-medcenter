@@ -100,7 +100,10 @@ test("психиатр-нарколог стоит в таблице своим 
 
   const narcologistIndex = appContext.columnKeys.indexOf("narcologist");
   assert.notEqual(narcologistIndex, -1);
-  assert.equal(appContext.excelColumns[narcologistIndex], "Психиатр-нарколог");
+  // Подпись короткая: вертикальный заголовок не должен раздувать шапку таблицы.
+  assert.equal(appContext.excelColumns[narcologistIndex], "Нарколог");
+  assert.ok(appContext.doctorButtons.includes("Нарколог"));
+  assert.equal(appContext.roleIdByLabel("Нарколог"), "psychiatrist-narcologist");
 });
 
 test("ГС и гостайна ведут клиента к наркологу", () => {
