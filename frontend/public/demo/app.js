@@ -14,9 +14,8 @@ function getLocalDateInputValue(value = new Date()) {
 // Медцентры, доступные в переключателе. Это начало списка WORKSPACE_CENTERS из
 // backend/app/services/seed.py: центр подбирается по названию, поэтому имена и
 // порядок обязаны совпадать, а варианты #centerSelect в index.html — этому
-// списку. «ПЕРВАЯ ЗДРАВНИЦА» в базе заведена, но в работу пока не введена и скрыта;
-// чтобы открыть её, достаточно дописать сюда и в index.html.
-const WORKSPACE_CENTER_NAMES = ["Мед-Авто", "Медилэнд"];
+// списку. Новый центр достаточно дописать сюда и в index.html.
+const WORKSPACE_CENTER_NAMES = ["Мед-Авто", "Медилэнд", "ПЕРВАЯ ЗДРАВНИЦА"];
 
 // Рабочие названия центров, пока заказчик не назвал их. Они остались в
 // localStorage открытой вкладки (выбранный центр, кэш справочника врачей, центр
@@ -36,6 +35,8 @@ const appState = {
     userName: "",
     roleCode: "",
     roleName: "",
+    centerName: "",
+    allCenters: false,
   },
   selectedClientId: null,
   centerFilter: WORKSPACE_CENTER_NAMES[0],
@@ -1071,7 +1072,7 @@ function loadPersistedDemoState() {
 // браузер не дает. Теперь любая загрузка страницы начинается с экрана входа, а
 // сохраненные данные и выбранный клиент остаются на месте.
 function createEmptyAuth() {
-  return { accessToken: "", userName: "", roleCode: "", roleName: "" };
+  return { accessToken: "", userName: "", roleCode: "", roleName: "", centerName: "", allCenters: false };
 }
 
 function clearPersistedAuth() {
@@ -3056,7 +3057,18 @@ function normalizeCenterLookupValue(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+// Центр, за которым закреплён вошедший сотрудник. Пусто у админа (он видит все
+// центры), у гостя и у того, чей центр интерфейс не знает: им переключатель
+// остаётся, как был.
+function getPinnedCenterName() {
+  const { accessToken, allCenters, centerName } = appState.auth;
+  if (!accessToken || allCenters) return "";
+  return WORKSPACE_CENTER_NAMES.includes(centerName) ? centerName : "";
+}
+
 function getWorkspaceCenterName() {
+  const pinnedCenterName = getPinnedCenterName();
+  if (pinnedCenterName) return pinnedCenterName;
   return WORKSPACE_CENTER_NAMES.includes(appState.centerFilter)
     ? appState.centerFilter
     : WORKSPACE_CENTER_NAMES[0];
@@ -3112,7 +3124,7 @@ async function resolveCenterIdForVisit(visit, client) {
   const candidateNames = [
     visit?.center,
     client?.center,
-    appState.centerFilter !== "all" ? appState.centerFilter : null,
+    getWorkspaceCenterName(),
   ]
     .map((value) => String(value || "").trim())
     .filter(Boolean);
@@ -3180,12 +3192,20 @@ async function loginDemoStaff(login, password) {
     };
   }
 
+  const centerBeforeLogin = getWorkspaceCenterName();
   appState.auth = {
     accessToken: response.access_token || "",
     userName: response.user_name || "",
     roleCode: response.role_code || "",
     roleName: response.role_name || "",
+    centerName: response.center_name || "",
+    allCenters: Boolean(response.all_centers),
   };
+  // Закреплённый сотрудник сразу оказывается в своём центре: данные и справочник
+  // врачей прежнего выбора на экране оставаться не должны.
+  if (getWorkspaceCenterName() !== centerBeforeLogin) {
+    switchWorkspaceCenter(getWorkspaceCenterName(), { announce: false });
+  }
   persistDemoState();
   return response;
 }
@@ -3246,6 +3266,7 @@ async function loadStaffWorkspace() {
     const [roles, users] = await Promise.all([
       apiRequest("/staff/roles"),
       apiRequest("/staff"),
+      ensureCentersLoaded(),
     ]);
     data.staffRoles = Array.isArray(roles) ? roles : [];
     data.staffUsers = Array.isArray(users) ? users : [];
@@ -5766,7 +5787,7 @@ function matchesCenter(center) {
   // второго или третьего медцентра не нашёл бы ни одного заведённого клиента.
   const centerName = String(center || "").trim();
   if (!centerName) return true;
-  return centerName === appState.centerFilter;
+  return centerName === getWorkspaceCenterName();
 }
 
 function normalizeEncounterDateFilterValue(value) {
@@ -6961,6 +6982,11 @@ function renderStubPage(title) {
   `;
 }
 
+function formatStaffCenterLabel(user) {
+  if (user?.all_centers) return "все медцентры";
+  return user?.center_name || "медцентр не указан";
+}
+
 function renderEmployeePage() {
   const canManageStaff = canManageEmployeeWorkspace();
   const canEndAllSessions = ["chairman", "admin"].includes(appState.auth.roleCode);
@@ -7033,6 +7059,20 @@ function renderEmployeePage() {
                       ${(data.staffRoles || []).map((role) => `<option value="${escapeHtml(role.code)}">${escapeHtml(role.name)}</option>`).join("")}
                     </select>
                   </label>
+                  <label class="field" id="employeeCenterField">
+                    <span>Медцентр, в котором работает</span>
+                    <select name="center_id" required>
+                      <option value="">Выберите медцентр</option>
+                      ${(data.centers || [])
+                        .filter((center) => WORKSPACE_CENTER_NAMES.includes(center.name))
+                        .map((center) => `<option value="${escapeHtml(center.id)}">${escapeHtml(center.name)}</option>`)
+                        .join("")}
+                    </select>
+                  </label>
+                  <div class="field hidden" id="employeeAllCentersNote">
+                    <span>Медцентр</span>
+                    <div class="note">Админ видит все медцентры и переключается между ними.</div>
+                  </div>
                   <label class="field field--wide">
                     <span>Email</span>
                     <input name="email" placeholder="optional@example.com" />
@@ -7053,6 +7093,7 @@ function renderEmployeePage() {
                         <strong>${escapeHtml(data.lastCreatedStaffUser.full_name || data.lastCreatedStaffUser.login || "Сотрудник")}</strong>
                         · логин <strong>${escapeHtml(data.lastCreatedStaffUser.login || "")}</strong>
                         · роль <strong>${escapeHtml(data.lastCreatedStaffUser.role?.name || data.lastCreatedStaffUser.role?.code || "")}</strong>
+                        · <strong>${escapeHtml(formatStaffCenterLabel(data.lastCreatedStaffUser))}</strong>
                       </div>
                     `
                     : ""
@@ -7072,7 +7113,7 @@ function renderEmployeePage() {
                                   ${user.role?.code !== "chairman" ? `<button class="ghost-button" type="button" data-delete-staff-user="${escapeHtml(user.id)}" data-delete-staff-name="${escapeHtml(user.full_name || user.login || "сотрудник")}">Удалить</button>` : ""}
                                 </div>
                               </div>
-                              <div class="table-row__meta">${escapeHtml(user.login)} · ${escapeHtml(user.role?.name || "Без роли")}</div>
+                              <div class="table-row__meta">${escapeHtml(user.login)} · ${escapeHtml(user.role?.name || "Без роли")} · ${escapeHtml(formatStaffCenterLabel(user))}</div>
                             </div>
                           `).join("") || `<div class="empty">Сотрудники пока не найдены.</div>`
                         }
@@ -12846,15 +12887,31 @@ function bindContentEvents() {
 
   const employeeCreateForm = document.getElementById("employeeCreateForm");
   if (employeeCreateForm) {
+    // Центр выбирают для всех, кроме админа: он видит их все, и поле ему не нужно.
+    const syncEmployeeCenterField = () => {
+      const isAdmin = employeeCreateForm.elements.role_code?.value === "admin";
+      const centerSelectField = employeeCreateForm.elements.center_id;
+      document.getElementById("employeeCenterField")?.classList.toggle("hidden", isAdmin);
+      document.getElementById("employeeAllCentersNote")?.classList.toggle("hidden", !isAdmin);
+      if (centerSelectField) {
+        centerSelectField.required = !isAdmin;
+        centerSelectField.disabled = isAdmin;
+      }
+    };
+    employeeCreateForm.elements.role_code?.addEventListener("change", syncEmployeeCenterField);
+    syncEmployeeCenterField();
+
     employeeCreateForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const formData = new FormData(employeeCreateForm);
+      const roleCode = String(formData.get("role_code") || "").trim();
       await createDemoStaffUser({
         full_name: String(formData.get("full_name") || "").trim(),
         login: String(formData.get("login") || "").trim(),
         password: String(formData.get("password") || "").trim(),
         email: String(formData.get("email") || "").trim(),
-        role_code: String(formData.get("role_code") || "").trim(),
+        role_code: roleCode,
+        center_id: roleCode === "admin" ? null : Number(formData.get("center_id")) || null,
       });
     });
   }
@@ -13863,12 +13920,16 @@ function renderApp() {
   const workspaceCenterSlot = WORKSPACE_CENTER_NAMES.indexOf(workspaceCenterName);
   document.body.dataset.center = `center-${workspaceCenterSlot >= 0 ? workspaceCenterSlot + 1 : 1}`;
 
+  const isCenterPinned = Boolean(getPinnedCenterName());
   if (centerSelect) {
     centerSelect.value = workspaceCenterName;
+    centerSelect.disabled = isCenterPinned;
   }
   if (workspaceCenter) {
     workspaceCenter.dataset.center = document.body.dataset.center;
-    workspaceCenter.title = `Текущая работа: ${workspaceCenterName}`;
+    workspaceCenter.title = isCenterPinned
+      ? `Вы работаете только в этом медцентре: ${workspaceCenterName}`
+      : `Текущая работа: ${workspaceCenterName}`;
   }
 
   // Раньше здесь снимался выбор клиента из чужого медцентра. База клиентов
@@ -13937,45 +13998,58 @@ window.addEventListener("resize", () => {
   window.requestAnimationFrame(updateDashboardStickyOffset);
 });
 
+// Переводит программу в другой медцентр: сбрасывает всё, что относилось к
+// прежнему, и заново грузит данные нового. Зовётся при выборе в переключателе и
+// при входе закреплённого сотрудника.
+function switchWorkspaceCenter(nextCenter, { announce = true } = {}) {
+  appState.centerFilter = nextCenter;
+  appState.dashboardPage = 1;
+  appState.selectedClientId = null;
+  appState.selectedEncounterId = null;
+  appState.activeVisitId = null;
+  appState.clientSearch = "";
+  data.blanksLoaded = false;
+  data.blanksCenterId = null;
+  data.blanksStats = [];
+  data.blanksBatches = [];
+  data.blanksForms = [];
+  data.cashRequestKey = "";
+  data.cashRows = [];
+  // Врачи у нового медцентра свои: показываем его кэш и перезапрашиваем
+  // справочник, иначе на экране остались бы ФИО прошлого центра.
+  data.doctorDirectory = readCachedDoctorDirectory(nextCenter);
+  data.doctorDirectoryCenterId = null;
+  data.doctorDirectoryLoaded = false;
+  invalidateRecallCalendar();
+  actionModal?.classList.add("hidden");
+  persistDemoState();
+  renderApp();
+  void loadServicesFromBackend();
+  if (appState.page === "cash" && !data.cashLoading) {
+    loadCashReport();
+  }
+  if (appState.page === "blanks" && typeof window.loadBlanksData === "function") {
+    window.loadBlanksData({ force: true });
+  }
+  if (appState.page === "calendar") {
+    loadRecallCalendar();
+  }
+  if (announce) showToast(`Рабочий медцентр: ${nextCenter}`);
+}
+
 if (centerSelect) {
   centerSelect.addEventListener("change", (event) => {
+    // Закреплённому сотруднику выбор недоступен; обработчик на случай, если
+    // поле включили руками, возвращает показанное значение на место.
+    if (getPinnedCenterName()) {
+      renderApp();
+      return;
+    }
     const nextCenter = WORKSPACE_CENTER_NAMES.includes(event.target.value)
       ? event.target.value
       : WORKSPACE_CENTER_NAMES[0];
     if (nextCenter === getWorkspaceCenterName()) return;
-    appState.centerFilter = nextCenter;
-    appState.dashboardPage = 1;
-    appState.selectedClientId = null;
-    appState.selectedEncounterId = null;
-    appState.activeVisitId = null;
-    appState.clientSearch = "";
-    data.blanksLoaded = false;
-    data.blanksCenterId = null;
-    data.blanksStats = [];
-    data.blanksBatches = [];
-    data.blanksForms = [];
-    data.cashRequestKey = "";
-    data.cashRows = [];
-    // Врачи у нового медцентра свои: показываем его кэш и перезапрашиваем
-    // справочник, иначе на экране остались бы ФИО прошлого центра.
-    data.doctorDirectory = readCachedDoctorDirectory(nextCenter);
-    data.doctorDirectoryCenterId = null;
-    data.doctorDirectoryLoaded = false;
-    invalidateRecallCalendar();
-    actionModal?.classList.add("hidden");
-    persistDemoState();
-    renderApp();
-    void loadServicesFromBackend();
-    if (appState.page === "cash" && !data.cashLoading) {
-      loadCashReport();
-    }
-    if (appState.page === "blanks" && typeof window.loadBlanksData === "function") {
-      window.loadBlanksData({ force: true });
-    }
-    if (appState.page === "calendar") {
-      loadRecallCalendar();
-    }
-    showToast(`Рабочий медцентр: ${nextCenter}`);
+    switchWorkspaceCenter(nextCenter);
   });
 }
 

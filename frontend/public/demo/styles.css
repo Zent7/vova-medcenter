@@ -329,6 +329,16 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   font-weight: 800;
 }
 
+/* Закреплённому за центром сотруднику выбор недоступен: поле показывает, где он
+   работает, но не выглядит выключенным. */
+.center-select:disabled {
+  appearance: none;
+  -webkit-appearance: none;
+  opacity: 1;
+  color: var(--text);
+  cursor: default;
+}
+
 .ghost-button,
 .primary-button,
 .secondary-button {

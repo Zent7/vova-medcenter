@@ -24,6 +24,7 @@ from app.api.v1.routes import reports as reports_routes  # noqa: E402
 from app.api.v1.routes import staff as staff_routes  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
+from app.models.center import Center  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
 from app.schemas.user_admin import StaffUserCreate  # noqa: E402
 
@@ -86,8 +87,13 @@ class AdminOnlyAccessTests(unittest.TestCase):
                 )
 
     def test_admin_creates_and_deletes_staff_but_not_chairman_or_self(self):
-        payload = StaffUserCreate(login="new", password="temp12345", full_name="Новый", role_code="doctor")
         with self.Session() as db:
+            center = Center(code="center-a", name="Центр")
+            db.add(center)
+            db.flush()
+            payload = StaffUserCreate(
+                login="new", password="temp12345", full_name="Новый", role_code="doctor", center_id=center.id
+            )
             admin = self._user(db, "admin")
             created = staff_routes.create_staff(payload=payload, current_user=admin, db=db)
             self.assertEqual(created.login, "new")

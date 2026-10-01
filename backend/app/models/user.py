@@ -7,6 +7,10 @@ from app.core.security import generate_session_epoch
 from app.db.base import Base
 from app.models.mixins import TimestampMixin
 
+# Единственная роль, которая видит все медцентры и может переключаться между
+# ними. Остальные сотрудники закреплены за одним центром (users.center_id).
+ALL_CENTERS_ROLE_CODE = "admin"
+
 
 class Role(Base):
     __tablename__ = "roles"
@@ -33,3 +37,18 @@ class User(TimestampMixin, Base):
 
     center: Mapped["Center | None"] = relationship("Center")
     role: Mapped[Role] = relationship(Role)
+
+    @property
+    def sees_all_centers(self) -> bool:
+        return self.role.code == ALL_CENTERS_ROLE_CODE
+
+    @property
+    def pinned_center_id(self) -> int | None:
+        """Центр, за которым закреплён сотрудник; у админа его нет."""
+        return None if self.sees_all_centers else self.center_id
+
+    @property
+    def pinned_center_name(self) -> str | None:
+        if self.sees_all_centers or self.center is None:
+            return None
+        return self.center.name

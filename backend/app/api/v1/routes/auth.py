@@ -91,6 +91,9 @@ def login(payload: LoginRequest) -> LoginResponse:
             user_name=user.full_name,
             role_code=user.role.code,
             role_name=user.role.name,
+            center_id=user.pinned_center_id,
+            center_name=user.pinned_center_name,
+            all_centers=user.sees_all_centers,
         )
 
 

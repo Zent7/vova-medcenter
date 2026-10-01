@@ -17,6 +17,10 @@ class StaffUserRead(BaseModel):
     email: str | None = None
     is_active: bool
     role: RoleRead
+    # Закреплённый медцентр; у админа его нет — он видит все центры.
+    center_id: int | None = Field(default=None, validation_alias="pinned_center_id")
+    center_name: str | None = Field(default=None, validation_alias="pinned_center_name")
+    all_centers: bool = Field(default=False, validation_alias="sees_all_centers")
 
     model_config = {"from_attributes": True}
 
@@ -27,6 +31,8 @@ class StaffUserCreate(BaseModel):
     full_name: str = Field(min_length=1, max_length=255)
     email: str | None = None
     role_code: str = Field(min_length=3, max_length=50)
+    # Медцентр, в котором работает сотрудник. Для админа не нужен: он видит все.
+    center_id: int | None = None
 
     @field_validator("login", "password", "full_name", "role_code", mode="before")
     @classmethod

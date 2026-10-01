@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.v1.routes.auth import require_admin
 from app.core.security import hash_password
 from app.db.session import get_db
-from app.models.user import Role, User
+from app.models.center import Center
+from app.models.user import ALL_CENTERS_ROLE_CODE, Role, User
 from app.schemas.user_admin import RoleRead, StaffUserCreate, StaffUserRead
 
 router = APIRouter()
@@ -26,7 +27,7 @@ def list_staff_roles(_: User = Depends(require_admin), db: Session = Depends(get
 def list_staff(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[StaffUserRead]:
     users = db.execute(
         select(User)
-        .options(joinedload(User.role))
+        .options(joinedload(User.role), joinedload(User.center))
         .join(Role)
         .where(Role.code.in_(STAFF_ROLE_CODES))
         .order_by(User.is_active.desc(), User.full_name.asc(), User.id.asc())
@@ -48,8 +49,17 @@ def create_staff(
     if role is None or role.code not in ASSIGNABLE_ROLE_CODES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимая роль сотрудника")
 
+    center_id = None
+    if role.code != ALL_CENTERS_ROLE_CODE:
+        if payload.center_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Выберите медцентр сотрудника")
+        center = db.get(Center, payload.center_id)
+        if center is None or not center.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Медцентр не найден")
+        center_id = center.id
+
     user = User(
-        center_id=current_user.center_id,
+        center_id=center_id,
         role_id=role.id,
         login=payload.login,
         password_hash=hash_password(payload.password),

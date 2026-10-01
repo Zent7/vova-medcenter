@@ -26,6 +26,10 @@ class LoginResponse(BaseModel):
     user_name: str
     role_code: str
     role_name: str
+    # Закреплённый медцентр сотрудника. У админа его нет: он видит все центры.
+    center_id: int | None = None
+    center_name: str | None = None
+    all_centers: bool = False
 
 
 class LogoutAllResponse(BaseModel):
