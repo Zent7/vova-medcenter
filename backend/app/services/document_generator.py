@@ -61,6 +61,7 @@ from app.services.document_context import (
     _split_address,
     build_document_context,
 )
+from app.services.medical_autofill import required_doctor_roles_for_encounter
 from app.services.new_xls_templates import (
     LEGACY_XLS_TEMPLATE_BY_FILE,
     NEW_XLS_TEMPLATE_BY_FILE,
@@ -216,8 +217,8 @@ PROF_EXTRACT_DOCTOR_ROWS: tuple[tuple[str, str, int], ...] = (
     ("dentist", "Стоматолог", 52),
 )
 PROF_EXTRACT_DOCTOR_COL = 44
-PROF_EXTRACT_DATE_COL = 54
-PROF_EXTRACT_CONCLUSION_COL = 63
+PROF_EXTRACT_DATE_COL = 59
+PROF_EXTRACT_CONCLUSION_COL = 65
 PROF_EXTRACT_SEQUENCE_COL = 42
 PROF_EXTRACT_CLEARED_DOCTOR_ROWS: tuple[int, ...] = ()
 PROF_EXTRACT_CLIENT_DOCTOR_FIELDS = {
@@ -1773,15 +1774,30 @@ def _prof_extract_doctor_row_values(
     exams_by_role: dict[str, DoctorExam],
     encounter: Encounter | None,
     client: Client | None = None,
+    required_doctors: dict[str, str] | None = None,
 ) -> list[tuple[int, str, object, str]]:
+    """Строки таблицы «План осмотра» по врачам с отметкой на главном экране.
+
+    Врач с закрытым осмотром идёт с датой и заключением. Врач с открытой
+    карточкой и врач, которого требуют услуги обращения, но осмотра у него ещё
+    нет (``required_doctors``: код специальности -> ФИО из справочника центра),
+    идут с одной фамилией, а дата и заключение остаются пустыми. Снятый с
+    обращения врач в таблицу не попадает, пока его осмотр не закрыт.
+    """
+
     rows: list[tuple[int, str, object, str]] = []
     row_indices = [row_index for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS]
+    suppressed_roles = {
+        str(role_id or "").strip() for role_id in (getattr(encounter, "suppressed_doctor_role_ids", None) or [])
+    }
+    required_doctors = required_doctors or {}
     for role_id, specialty, row_index in PROF_EXTRACT_DOCTOR_ROWS:
         exam = exams_by_role.get(role_id)
-        if exam is None or not exam.is_completed:
+        completed = exam is not None and exam.is_completed
+        if not completed and (role_id in suppressed_roles or (exam is None and role_id not in required_doctors)):
             continue
 
-        exam_data = _build_exam_export(exam)
+        exam_data = _build_exam_export(exam) if exam is not None else {"doctor": required_doctors.get(role_id, "")}
         doctor_name = _prof_extract_doctor_name(client, role_id, exam_data)
         doctor_line = " ".join(part for part in [specialty, doctor_name] if part).strip()
         target_row_index = row_indices[len(rows)]
@@ -1789,8 +1805,8 @@ def _prof_extract_doctor_row_values(
             (
                 target_row_index,
                 doctor_line,
-                _prof_extract_exam_date(exam, encounter),
-                _prof_extract_exam_conclusion(exam),
+                _prof_extract_exam_date(exam, encounter) if completed else "",
+                _prof_extract_exam_conclusion(exam) if completed else "",
             )
         )
     return rows
@@ -3572,6 +3588,7 @@ def _fill_prof_extract_doctor_rows(
     exams_by_role: dict[str, DoctorExam],
     encounter: Encounter | None,
     client: Client | None,
+    required_doctors: dict[str, str] | None = None,
 ) -> None:
     pairs: list[tuple[tuple[int, int], object]] = []
     for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS:
@@ -3583,7 +3600,7 @@ def _fill_prof_extract_doctor_rows(
                 ((row_index, PROF_EXTRACT_CONCLUSION_COL), ""),
             ]
         )
-    row_values = _prof_extract_doctor_row_values(exams_by_role, encounter, client)
+    row_values = _prof_extract_doctor_row_values(exams_by_role, encounter, client, required_doctors)
     doctor_style_by_row = {
         row_index: _xls_shrink_to_fit_style(source_book, source_sheet, row_index, PROF_EXTRACT_DOCTOR_COL)
         for row_index in {row_index for row_index, _, _, _ in row_values}
@@ -5282,7 +5299,15 @@ def _generate_unpreserved_runtime_xls(
     source_sheet, target_sheet, _ = _sheet_pair(source_book, target_book, "ПЗ2")
     if source_sheet and target_sheet:
         _fill_prof_extract_fields(source_sheet, target_sheet, context, encounter, client, exams_by_role)
-        _fill_prof_extract_doctor_rows(source_book, source_sheet, target_sheet, exams_by_role, encounter, client)
+        _fill_prof_extract_doctor_rows(
+            source_book,
+            source_sheet,
+            target_sheet,
+            exams_by_role,
+            encounter,
+            client,
+            required_doctors=runtime_values.get("extract_required_doctors"),
+        )
 
     _apply_xls_auto_markers(source_book, target_book, context, client, encounter, exams_by_role)
     _apply_print_variant_to_xls_workbook(target_book, print_variant)
@@ -6165,6 +6190,9 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
             # protects generation invoked while older data is still being migrated.
             exam.doctor_name = current_name
     chairman_name = role_names.get("chairman", "")
+    required_doctors = {
+        role.code: role_names.get(role.code, "") for role in required_doctor_roles_for_encounter(db, encounter)
+    }
     diagnosis = ""
     mkb10 = ""
     medical_record = db.execute(
@@ -6233,6 +6261,7 @@ def _load_encounter_document_values(db: Session, client: Client, encounter: Enco
         "diagnosis": diagnosis,
         "mkb10": mkb10,
         "exams": exams,
+        "extract_required_doctors": required_doctors,
         "context_overrides": context_overrides,
     }
 

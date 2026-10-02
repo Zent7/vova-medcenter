@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.services.document_generator import (  # noqa: E402
     PROF_AMB_EXAM_BLOCKS,
     PROF_EXTRACT_CLEARED_DOCTOR_ROWS,
+    PROF_EXTRACT_CONCLUSION_COL,
     PROF_EXTRACT_DATE_COL,
     PROF_EXTRACT_DOCTOR_COL,
     PROF_EXTRACT_DOCTOR_ROWS,
@@ -136,14 +137,77 @@ class ProfExtractDoctorRowsTests(unittest.TestCase):
 
         self.assertEqual(rows[0], (32, "Терапевт Казаков И.В.", date(2026, 6, 24), "годен"))
 
-    def test_uncompleted_or_missing_roles_are_skipped(self):
+    def test_template_doctor_table_columns_match_the_filled_cells(self):
+        book = xlrd.open_workbook(str(self._prof_template_path()), formatting_info=True)
+        sheet = book.sheet_by_name("ПЗ2")
+        merges = {(r1, c1, c2) for r1, _r2, c1, c2 in sheet.merged_cells}
+        widths = lambda first, last: sum(
+            sheet.colinfo_map[col].width if col in sheet.colinfo_map else 0 for col in range(first, last)
+        ) / 256
+
+        for _, _, row_index in PROF_EXTRACT_DOCTOR_ROWS:
+            self.assertIn((row_index, PROF_EXTRACT_DOCTOR_COL, PROF_EXTRACT_DATE_COL), merges)
+            self.assertIn((row_index, PROF_EXTRACT_DATE_COL, PROF_EXTRACT_CONCLUSION_COL), merges)
+        # «Дерматовенеролог Мехдиева Н.Ш.К.» — самая длинная строка врача; на ячейку
+        # в 21 знак она не влезала и обрезалась.
+        self.assertGreaterEqual(widths(PROF_EXTRACT_DOCTOR_COL, PROF_EXTRACT_DATE_COL), 30)
+
+    def test_open_exam_card_is_listed_by_name_without_date_and_conclusion(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
         rows = _prof_extract_doctor_row_values(
             {"therapist": exam("therapist", "Казаков И.В.", is_completed=False)},
             encounter,
         )
 
-        self.assertEqual(rows, [])
+        self.assertEqual(rows, [(32, "Терапевт Казаков И.В.", "", "")])
+
+    def test_missing_role_is_skipped_unless_services_require_it(self):
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+
+        self.assertEqual(_prof_extract_doctor_row_values({}, encounter), [])
+        self.assertEqual(
+            _prof_extract_doctor_row_values({}, encounter, required_doctors={"neurologist": "Сибирцев В.А."}),
+            [(32, "Невролог Сибирцев В.А.", "", "")],
+        )
+
+    def test_required_doctors_keep_template_order_with_completed_ones(self):
+        encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))
+        rows = _prof_extract_doctor_row_values(
+            {"surgeon": exam("surgeon", "Конюк М.В.", completed_at=datetime(2026, 6, 23, 9, 30))},
+            encounter,
+            required_doctors={"surgeon": "Конюк М.В.", "therapist": "Казаков И.В.", "dentist": "Шадрикова Ю.А."},
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                (32, "Терапевт Казаков И.В.", "", ""),
+                (34, "Хирург Конюк М.В.", date(2026, 6, 23), "годен"),
+                (37, "Стоматолог Шадрикова Ю.А.", "", ""),
+            ],
+        )
+
+    def test_suppressed_doctor_is_skipped_until_exam_is_completed(self):
+        encounter = SimpleNamespace(
+            encounter_date=date(2026, 6, 24),
+            suppressed_doctor_role_ids=["therapist", "surgeon"],
+        )
+        rows = _prof_extract_doctor_row_values(
+            {
+                "therapist": exam("therapist", "Казаков И.В.", is_completed=False),
+                "surgeon": exam("surgeon", "Конюк М.В.", completed_at=datetime(2026, 6, 23, 9, 30)),
+            },
+            encounter,
+            required_doctors={"therapist": "Казаков И.В.", "dentist": "Шадрикова Ю.А."},
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                (32, "Хирург Конюк М.В.", date(2026, 6, 23), "годен"),
+                (34, "Стоматолог Шадрикова Ю.А.", "", ""),
+            ],
+        )
 
     def test_psychiatrist_narcologist_is_exported_as_separate_row(self):
         encounter = SimpleNamespace(encounter_date=date(2026, 6, 24))

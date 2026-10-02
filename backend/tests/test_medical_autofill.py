@@ -19,7 +19,10 @@ from app.models.encounter_service import EncounterService
 from app.models.medical_record import MedicalRecordEntry
 from app.models.encounter import Encounter  # noqa: E402
 from app.models.service import DoctorRole, Service, ServiceDoctorRole  # noqa: E402
-from app.services.medical_autofill import autofill_completed_doctors_for_service  # noqa: E402
+from app.services.medical_autofill import (  # noqa: E402
+    autofill_completed_doctors_for_service,
+    required_doctor_roles_for_encounter,
+)
 
 
 TRACTOR_BASE_DOCTORS = {"therapist", "ophthalmologist", "psychiatrist", "psychiatrist-narcologist"}
@@ -95,6 +98,25 @@ class MedicalAutofillTests(unittest.TestCase):
             .order_by(DoctorExam.doctor_role_id)
         ).scalars().all()
         self.assertEqual([exam.doctor_role_id for exam in exams], ["surgeon"])
+
+    def test_required_doctors_skip_suppressed_and_gynecologist_for_male_client(self):
+        self.db.add(DoctorRole(id=3, code="gynecologist", name="Gynecologist", sort_order=3))
+        self.db.add(ServiceDoctorRole(service_id=1, doctor_role_id=3))
+        self.db.add(EncounterService(encounter_id=1, service_id=1))
+        self.db.commit()
+        encounter = self.db.get(Encounter, 1)
+
+        # Терапевт снят с обращения, гинеколога у мужчины нет: остаётся хирург.
+        self.assertEqual([role.code for role in required_doctor_roles_for_encounter(self.db, encounter)], ["surgeon"])
+
+        encounter.suppressed_doctor_role_ids = []
+        self.db.get(Client, 1).sex = "female"
+        self.db.commit()
+
+        self.assertEqual(
+            [role.code for role in required_doctor_roles_for_encounter(self.db, encounter)],
+            ["therapist", "surgeon", "gynecologist"],
+        )
 
     def check_certificate(self, legacy_id, categories, expected, notes_override=None, admission_category="C D"):
         service = self.db.get(Service, 1)

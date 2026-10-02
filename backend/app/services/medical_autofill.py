@@ -172,8 +172,12 @@ def _ensure_medical_record_entry(
     _apply_if_empty(entry, "conclusion", phrase_text)
 
 
-def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, service_id: int) -> None:
-    client_sex = db.scalar(select(Client.sex).where(Client.id == encounter.client_id))
+def doctor_roles_for_service(db: Session, encounter: Encounter, service_id: int) -> list[DoctorRole]:
+    """Врачи, которых услуга требует в обращении, без снятых с обращения.
+
+    Пол клиента здесь не учитывается: гинеколога у мужчины отсекает вызывающий.
+    """
+
     suppressed_role_ids = {
         str(role_id or "").strip()
         for role_id in (encounter.suppressed_doctor_role_ids or [])
@@ -214,7 +218,29 @@ def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, se
                 selected = [db.scalar(select(Client.admission_category).where(Client.id == encounter.client_id))]
             allowed = certificate_doctor_roles(selected)
         roles = [role for role in roles if role.code in allowed]
-    roles = [role for role in roles if role.code not in suppressed_role_ids]
+    return [role for role in roles if role.code not in suppressed_role_ids]
+
+
+def required_doctor_roles_for_encounter(db: Session, encounter: Encounter) -> list[DoctorRole]:
+    """Врачи с отметкой «требуется» на главном экране: по услугам обращения."""
+
+    client_sex = db.scalar(select(Client.sex).where(Client.id == encounter.client_id))
+    service_ids = db.scalars(
+        select(EncounterService.service_id)
+        .where(EncounterService.encounter_id == encounter.id)
+        .order_by(EncounterService.id.asc())
+    ).all()
+    roles_by_code: dict[str, DoctorRole] = {}
+    for service_id in dict.fromkeys(service_ids):
+        for role in doctor_roles_for_service(db, encounter, service_id):
+            if should_include_doctor_role_for_client_sex(role.code, client_sex):
+                roles_by_code.setdefault(role.code, role)
+    return list(roles_by_code.values())
+
+
+def autofill_completed_doctors_for_service(db: Session, encounter: Encounter, service_id: int) -> None:
+    client_sex = db.scalar(select(Client.sex).where(Client.id == encounter.client_id))
+    roles = doctor_roles_for_service(db, encounter, service_id)
     if not roles:
         return
 

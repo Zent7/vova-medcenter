@@ -624,7 +624,7 @@ _PZ2_DOCTOR_ROWS = (32, 34, 37, 39, 41, 43, 45, 48, 50, 52)
 _PZ2_DOCTOR_FIELDS = tuple(
     LegacyXlsField(f"doctor_{slot}_{key}", "ПЗ2", (row, col))
     for slot, row in enumerate(_PZ2_DOCTOR_ROWS, start=1)
-    for key, col in (("sequence", 42), ("name", 44), ("date", 54), ("conclusion", 63))
+    for key, col in (("sequence", 42), ("name", 44), ("date", 59), ("conclusion", 65))
 )
 # One digit of the 16-digit policy per box of the «5. Номер страхового полиса
 # ОМС» grid. They go last in the spec because the older hidden markers are
