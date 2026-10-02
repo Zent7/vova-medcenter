@@ -12,11 +12,11 @@
   --warn-soft: rgba(169, 91, 23, 0.12);
   --danger: #9d2f2f;
   --shadow: 0 24px 60px rgba(15, 31, 56, 0.08);
-  --excel-col-encounterDate: clamp(86px, 5.4vw, 112px);
-  --excel-col-fio: clamp(190px, 14vw, 290px);
+  --excel-col-encounterDate: clamp(94px, 6.4vw, 120px);
+  --excel-col-fio: clamp(230px, 16.5vw, 320px);
   --excel-col-birth: clamp(82px, 5.2vw, 104px);
   --excel-col-registration: clamp(150px, 11vw, 230px);
-  --excel-col-category: clamp(96px, 6.6vw, 138px);
+  --excel-col-category: clamp(126px, 8.6vw, 160px);
   --excel-col-reference: clamp(96px, 6vw, 124px);
   --excel-col-gynecologist: clamp(34px, 2.4vw, 46px);
   --excel-col-stomatologist: clamp(34px, 2.4vw, 46px);
@@ -2668,10 +2668,29 @@ body[data-page="dashboard"] .sketch-table__grid > span {
   font-weight: 600;
 }
 
+body[data-page="dashboard"] .sketch-table__grid--row > span {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
 body[data-page="dashboard"] .sketch-table__grid--row > .sketch-table__fio {
   font-size: 15px;
-  font-weight: 800;
-  line-height: 0.95;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* Дата с временем и категории короткие: пусть переносятся, а не режутся на полуслове. */
+body[data-page="dashboard"] .sketch-table__grid--row > span:nth-child(1),
+body[data-page="dashboard"] .sketch-table__grid--row > span:nth-child(5) {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Между строками таблицы клиентов был зазор в 10px: он ломал линии столбцов и съедал место. */
+body[data-page="dashboard"] .sketch-table--excel {
+  gap: 0;
 }
 
 body[data-page="dashboard"] .sketch-table__grid--head > span {
@@ -2679,9 +2698,15 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
   font-weight: 800;
 }
 
-.sketch-table__grid--row:hover,
-.sketch-table__grid--active {
-  background: #f3f5f7;
+.sketch-table__grid--row:hover {
+  background: #eef4f7;
+}
+
+/* Выбранное обращение: яркая заливка и полоса слева, чтобы строку было видно издалека. */
+.sketch-table__grid--active,
+.sketch-table__grid--active:hover {
+  background: #cdeae6;
+  box-shadow: inset 5px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
 }
 
 .sketch-table__grid--row:hover > span,
@@ -2691,6 +2716,12 @@ body[data-page="dashboard"] .sketch-table__grid--head > span {
 
 .excel-doctor-mark {
   justify-content: center;
+  font-weight: 700;
+}
+
+/* Отметка врача занимала меньше половины клетки: крупнее и жирнее. */
+body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
+  font-size: 19px;
   font-weight: 700;
 }
 
