@@ -21,6 +21,9 @@ EXTRACT_TEMPLATE = (
 )
 # «5. Номер страхового полиса ОМС»: 24 клеточки, полис печатается в первые 16.
 OMS_BOXES = [(33, col_index) for col_index in range(15, 39)]
+# «10. Даты предварительных» и «11. Даты периодических медицинских осмотров».
+PRELIMINARY_DATE_CELL = (10, 42)
+PERIODIC_DATE_CELL = (17, 42)
 
 
 class ClientOmsPolicyPayloadTests(unittest.TestCase):
@@ -76,6 +79,39 @@ class AmbulatoryExtractOmsPolicyTests(unittest.TestCase):
 
     def test_missing_policy_leaves_the_boxes_blank(self):
         self.assertEqual(self.generate(""), [""] * len(OMS_BOXES))
+
+
+class AmbulatoryExtractExamDateTests(unittest.TestCase):
+    def exam_dates(self, services: str):
+        client = SimpleNamespace(
+            birth_date=date(1990, 1, 2),
+            document_type="Паспорт РФ",
+            admission_category="",
+            legacy_payload_json={},
+            doctor_therapist="",
+        )
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            output_path = Path(temporary_dir) / EXTRACT_TEMPLATE.name
+            _generate_runtime_xls(
+                EXTRACT_TEMPLATE,
+                output_path,
+                {"CompanyName": "ООО Тест", "Services": services},
+                client,
+                SimpleNamespace(encounter_date=date(2026, 10, 2)),
+                {"exams": []},
+                print_variant="ambulatory_extract",
+            )
+            sheet = xlrd.open_workbook(str(output_path)).sheet_by_name("ПЗ2")
+            return [
+                strip_new_xls_placeholder_padding(sheet.cell_value(*cell)) for cell in (PRELIMINARY_DATE_CELL, PERIODIC_DATE_CELL)
+            ]
+
+    def test_periodic_exam_date_is_text_not_an_excel_serial_number(self):
+        # Раньше печаталось число 46297 вместо даты.
+        self.assertEqual(self.exam_dates("периодический осмотр"), ["", "02.10.26"])
+
+    def test_preliminary_exam_date_goes_to_its_own_cell(self):
+        self.assertEqual(self.exam_dates("предварительный осмотр"), ["02.10.26", ""])
 
 
 if __name__ == "__main__":

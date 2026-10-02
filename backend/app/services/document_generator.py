@@ -3636,8 +3636,10 @@ def _fill_prof_extract_fields(
     issue_date = encounter.encounter_date if encounter else date.today()
     service_text = str(context.get("Services") or "").casefold()
     is_preliminary = "предвар" in service_text
-    preliminary_date = _xls_excel_date(issue_date) if is_preliminary else ""
-    periodic_date = "" if is_preliminary else _xls_excel_date(issue_date)
+    # Клетки дат осмотра в шаблоне с форматом «Общий»: серийное число даты печаталось
+    # в них как «46297». Дата идёт текстом, как в таблице врачей («02.10.26»).
+    preliminary_date = _prof_xls_display_date(issue_date) if is_preliminary else ""
+    periodic_date = "" if is_preliminary else _prof_xls_display_date(issue_date)
     blank_number = _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))
     company_name = _first_non_empty(context.get("CompanyName"), context.get("WorkPlace"))
     position = _first_non_empty(context.get("Post"), context.get("PositionApplied"))
