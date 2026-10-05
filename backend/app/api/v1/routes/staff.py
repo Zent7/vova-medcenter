@@ -1,18 +1,32 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.v1.routes.auth import require_admin
-from app.core.security import hash_password
+from app.core.security import generate_session_epoch, hash_password
 from app.db.session import get_db
 from app.models.center import Center
 from app.models.user import ALL_CENTERS_ROLE_CODE, Role, User
-from app.schemas.user_admin import RoleRead, StaffUserCreate, StaffUserRead
+from app.schemas.user_admin import RoleRead, StaffCentersUpdate, StaffUserCreate, StaffUserRead
 
 router = APIRouter()
 
 STAFF_ROLE_CODES = ("chairman", "doctor", "admin", "operator")
 ASSIGNABLE_ROLE_CODES = ("doctor", "admin", "operator")
+
+
+def resolve_work_centers(db: Session, center_ids: list[int]) -> list[Center]:
+    """Центры сотрудника в порядке запроса, первый — основной; повторы отбрасываются."""
+    unique_ids = list(dict.fromkeys(center_ids))
+    if not unique_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Выберите медцентр сотрудника")
+    centers = []
+    for center_id in unique_ids:
+        center = db.get(Center, center_id)
+        if center is None or not center.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Медцентр не найден")
+        centers.append(center)
+    return centers
 
 
 @router.get("/roles", response_model=list[RoleRead])
@@ -27,7 +41,7 @@ def list_staff_roles(_: User = Depends(require_admin), db: Session = Depends(get
 def list_staff(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[StaffUserRead]:
     users = db.execute(
         select(User)
-        .options(joinedload(User.role), joinedload(User.center))
+        .options(joinedload(User.role), joinedload(User.center), selectinload(User.extra_centers))
         .join(Role)
         .where(Role.code.in_(STAFF_ROLE_CODES))
         .order_by(User.is_active.desc(), User.full_name.asc(), User.id.asc())
@@ -49,17 +63,11 @@ def create_staff(
     if role is None or role.code not in ASSIGNABLE_ROLE_CODES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимая роль сотрудника")
 
-    center_id = None
-    if role.code != ALL_CENTERS_ROLE_CODE:
-        if payload.center_id is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Выберите медцентр сотрудника")
-        center = db.get(Center, payload.center_id)
-        if center is None or not center.is_active:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Медцентр не найден")
-        center_id = center.id
+    centers = [] if role.code == ALL_CENTERS_ROLE_CODE else resolve_work_centers(db, payload.requested_center_ids)
 
     user = User(
-        center_id=center_id,
+        center_id=centers[0].id if centers else None,
+        extra_centers=centers[1:],
         role_id=role.id,
         login=payload.login,
         password_hash=hash_password(payload.password),
@@ -71,6 +79,36 @@ def create_staff(
     db.commit()
     db.refresh(user)
     db.refresh(user, attribute_names=["role"])
+    return StaffUserRead.model_validate(user)
+
+
+@router.put("/{user_id}/centers", response_model=StaffUserRead)
+def update_staff_centers(
+    user_id: int,
+    payload: StaffCentersUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StaffUserRead:
+    """Задаёт центры существующего сотрудника: первый основной, остальные дополнительные."""
+    user = db.execute(
+        select(User)
+        .options(joinedload(User.role), joinedload(User.center), selectinload(User.extra_centers))
+        .where(User.id == user_id)
+    ).scalar_one_or_none()
+    if user is None or user.role.code not in STAFF_ROLE_CODES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден")
+    if user.sees_all_centers:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Админ видит все медцентры")
+
+    centers = resolve_work_centers(db, payload.center_ids)
+    if [center.id for center in centers] != [center.id for center in user.work_centers]:
+        user.center_id = centers[0].id
+        user.extra_centers = centers[1:]
+        # Интерфейс узнаёт свои центры при входе: открытый сеанс завершается, чтобы
+        # забранный центр не остался доступен до выхода.
+        user.session_epoch = generate_session_epoch()
+        db.commit()
+        db.refresh(user)
     return StaffUserRead.model_validate(user)
 
 

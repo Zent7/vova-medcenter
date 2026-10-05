@@ -6495,6 +6495,60 @@ body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
   margin-top: 16px;
 }
 
+.employee-centers {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.employee-centers legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.employee-centers__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+}
+
+.employee-centers__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.employee-centers__option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.employee-centers__hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.employee-centers-edit {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.employee-centers-edit .actions {
+  margin-top: 4px;
+}
+
 .employee-note--error {
   background: rgba(157, 47, 47, 0.12);
   color: var(--danger);

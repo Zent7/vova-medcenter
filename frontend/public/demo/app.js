@@ -36,6 +36,7 @@ const appState = {
     roleCode: "",
     roleName: "",
     centerName: "",
+    centerNames: [],
     allCenters: false,
   },
   selectedClientId: null,
@@ -187,6 +188,8 @@ const data = {
   staffLoading: false,
   staffError: "",
   staffCreateError: "",
+  editingStaffCentersId: null,
+  staffCentersError: "",
   lastCreatedStaffUser: null,
   reportSummary: null,
   reportLoading: false,
@@ -1081,7 +1084,15 @@ function loadPersistedDemoState() {
 // браузер не дает. Теперь любая загрузка страницы начинается с экрана входа, а
 // сохраненные данные и выбранный клиент остаются на месте.
 function createEmptyAuth() {
-  return { accessToken: "", userName: "", roleCode: "", roleName: "", centerName: "", allCenters: false };
+  return {
+    accessToken: "",
+    userName: "",
+    roleCode: "",
+    roleName: "",
+    centerName: "",
+    centerNames: [],
+    allCenters: false,
+  };
 }
 
 function clearPersistedAuth() {
@@ -3066,18 +3077,28 @@ function normalizeCenterLookupValue(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-// Центр, за которым закреплён вошедший сотрудник. Пусто у админа (он видит все
-// центры), у гостя и у того, чей центр интерфейс не знает: им переключатель
-// остаётся, как был.
+// Центры, в которых вошедший сотрудник может работать, основной первым. Пусто у
+// админа (он видит все центры), у гостя и у того, чьих центров интерфейс не
+// знает: им переключатель остаётся, как был.
+function getAllowedCenterNames() {
+  const { accessToken, allCenters, centerName, centerNames } = appState.auth;
+  if (!accessToken || allCenters) return [];
+  const known = [centerName, ...(centerNames || [])].filter((name) => WORKSPACE_CENTER_NAMES.includes(name));
+  return [...new Set(known)];
+}
+
+// Единственный центр сотрудника, у которого выбирать не из чего: переключатель
+// заперт. У сотрудника с несколькими центрами пусто — он переключается между ними.
 function getPinnedCenterName() {
-  const { accessToken, allCenters, centerName } = appState.auth;
-  if (!accessToken || allCenters) return "";
-  return WORKSPACE_CENTER_NAMES.includes(centerName) ? centerName : "";
+  const allowed = getAllowedCenterNames();
+  return allowed.length === 1 ? allowed[0] : "";
 }
 
 function getWorkspaceCenterName() {
-  const pinnedCenterName = getPinnedCenterName();
-  if (pinnedCenterName) return pinnedCenterName;
+  const allowed = getAllowedCenterNames();
+  if (allowed.length) {
+    return allowed.includes(appState.centerFilter) ? appState.centerFilter : allowed[0];
+  }
   return WORKSPACE_CENTER_NAMES.includes(appState.centerFilter)
     ? appState.centerFilter
     : WORKSPACE_CENTER_NAMES[0];
@@ -3208,10 +3229,12 @@ async function loginDemoStaff(login, password) {
     roleCode: response.role_code || "",
     roleName: response.role_name || "",
     centerName: response.center_name || "",
+    centerNames: (response.centers || []).map((center) => center.name).filter(Boolean),
     allCenters: Boolean(response.all_centers),
   };
-  // Закреплённый сотрудник сразу оказывается в своём центре: данные и справочник
-  // врачей прежнего выбора на экране оставаться не должны.
+  // Сотрудник сразу оказывается в своём центре, а если выбранный раньше ему не
+  // доступен — в основном: данные и справочник врачей прежнего выбора на экране
+  // оставаться не должны.
   if (getWorkspaceCenterName() !== centerBeforeLogin) {
     switchWorkspaceCenter(getWorkspaceCenterName(), { announce: false });
   }
@@ -3239,6 +3262,8 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
   data.staffRoles = [];
   data.staffError = "";
   data.staffCreateError = "";
+  data.editingStaffCentersId = null;
+  data.staffCentersError = "";
   appState.page = "start";
   appState.doctorExamModal = {
     isOpen: false,
@@ -3301,6 +3326,25 @@ async function createDemoStaffUser(payload) {
     showToast(`Сотрудник ${payload.full_name} создан`);
   } catch (error) {
     data.staffCreateError = humanizeApiError(error, "Не удалось создать сотрудника");
+    renderApp();
+  }
+}
+
+async function updateDemoStaffCenters(userId, centerIds) {
+  data.staffCentersError = "";
+  try {
+    const updatedUser = await apiRequest(`/staff/${encodeURIComponent(userId)}/centers`, {
+      method: "PUT",
+      body: JSON.stringify({ center_ids: centerIds }),
+      headers: {},
+    });
+    data.staffUsers = (data.staffUsers || []).map((user) => (Number(user.id) === Number(userId) ? updatedUser : user));
+    data.editingStaffCentersId = null;
+    persistDemoState();
+    renderApp();
+    showToast(`Медцентры сотрудника ${updatedUser.full_name || updatedUser.login || userId} сохранены`);
+  } catch (error) {
+    data.staffCentersError = humanizeApiError(error, "Не удалось сохранить медцентры");
     renderApp();
   }
 }
@@ -6997,7 +7041,36 @@ function renderStubPage(title) {
 
 function formatStaffCenterLabel(user) {
   if (user?.all_centers) return "все медцентры";
+  const names = (user?.centers || []).map((center) => center.name).filter(Boolean);
+  if (names.length) return names.join(", ");
   return user?.center_name || "медцентр не указан";
+}
+
+// Рабочие центры, которые можно выдать сотруднику: только те, что есть в
+// переключателе программы.
+function getAssignableCenters() {
+  return (data.centers || []).filter((center) => WORKSPACE_CENTER_NAMES.includes(center.name));
+}
+
+function renderStaffCenterCheckboxes(checkedIds = []) {
+  const checked = new Set(checkedIds.map(Number));
+  return getAssignableCenters()
+    .map(
+      (center) => `
+        <label class="employee-centers__option">
+          <input type="checkbox" name="center_ids" value="${escapeHtml(center.id)}" ${checked.has(Number(center.id)) ? "checked" : ""} />
+          <span>${escapeHtml(center.name)}</span>
+        </label>`,
+    )
+    .join("");
+}
+
+// Порядок для сервера: первый центр основной, с него сотрудник начинает работу.
+// У существующего сотрудника основной остаётся прежним, пока его не сняли.
+function orderStaffCenterIds(checkedIds, mainCenterId = null) {
+  const ids = checkedIds.map(Number).filter(Boolean);
+  const main = ids.includes(Number(mainCenterId)) ? [Number(mainCenterId)] : [];
+  return [...main, ...ids.filter((id) => !main.includes(id))];
 }
 
 function renderEmployeePage() {
@@ -7072,18 +7145,12 @@ function renderEmployeePage() {
                       ${(data.staffRoles || []).map((role) => `<option value="${escapeHtml(role.code)}">${escapeHtml(role.name)}</option>`).join("")}
                     </select>
                   </label>
-                  <label class="field" id="employeeCenterField">
-                    <span>Медцентр, в котором работает</span>
-                    <select name="center_id" required>
-                      <option value="">Выберите медцентр</option>
-                      ${(data.centers || [])
-                        .filter((center) => WORKSPACE_CENTER_NAMES.includes(center.name))
-                        .map((center) => `<option value="${escapeHtml(center.id)}">${escapeHtml(center.name)}</option>`)
-                        .join("")}
-                    </select>
-                  </label>
-                  <div class="field hidden" id="employeeAllCentersNote">
-                    <span>Медцентр</span>
+                  <fieldset class="employee-centers field--wide" id="employeeCenterField">
+                    <legend>Медцентры, в которых работает</legend>
+                    <div class="employee-centers__list">${renderStaffCenterCheckboxes()}</div>
+                    <div class="employee-centers__hint">Можно отметить несколько. Начинает работу сотрудник с первого отмеченного центра.</div>
+                  </fieldset>
+                  <div class="employee-centers field--wide hidden" id="employeeAllCentersNote">
                     <div class="note">Админ видит все медцентры и переключается между ними.</div>
                   </div>
                   <label class="field field--wide">
@@ -7123,10 +7190,26 @@ function renderEmployeePage() {
                                 <div class="table-row__title">${escapeHtml(user.full_name || user.login)}</div>
                                 <div class="actions">
                                   <span class="status ${user.is_active ? "ok" : "warn"}">${user.is_active ? "Активен" : "Отключен"}</span>
+                                  ${user.all_centers ? "" : `<button class="ghost-button" type="button" data-edit-staff-centers="${escapeHtml(user.id)}">Центры</button>`}
                                   ${user.role?.code !== "chairman" ? `<button class="ghost-button" type="button" data-delete-staff-user="${escapeHtml(user.id)}" data-delete-staff-name="${escapeHtml(user.full_name || user.login || "сотрудник")}">Удалить</button>` : ""}
                                 </div>
                               </div>
                               <div class="table-row__meta">${escapeHtml(user.login)} · ${escapeHtml(user.role?.name || "Без роли")} · ${escapeHtml(formatStaffCenterLabel(user))}</div>
+                              ${
+                                Number(data.editingStaffCentersId) === Number(user.id)
+                                  ? `
+                                    <form class="employee-centers-edit" data-staff-centers-form="${escapeHtml(user.id)}" data-staff-main-center="${escapeHtml(user.center_id || "")}">
+                                      <div class="employee-centers__list">${renderStaffCenterCheckboxes((user.centers || []).map((center) => center.id))}</div>
+                                      <div class="employee-centers__hint">После сохранения сотрудник войдёт в программу заново, чтобы изменения вступили в силу.</div>
+                                      ${data.staffCentersError ? `<div class="note employee-note employee-note--error">${escapeHtml(data.staffCentersError)}</div>` : ""}
+                                      <div class="actions">
+                                        <button class="primary-button" type="submit">Сохранить</button>
+                                        <button class="ghost-button" type="button" data-cancel-staff-centers>Отмена</button>
+                                      </div>
+                                    </form>
+                                  `
+                                  : ""
+                              }
                             </div>
                           `).join("") || `<div class="empty">Сотрудники пока не найдены.</div>`
                         }
@@ -12900,18 +12983,21 @@ function bindContentEvents() {
 
   const employeeCreateForm = document.getElementById("employeeCreateForm");
   if (employeeCreateForm) {
-    // Центр выбирают для всех, кроме админа: он видит их все, и поле ему не нужно.
+    // Центры выбирают для всех, кроме админа: он видит их все, и поле ему не нужно.
+    const centerBoxes = Array.from(employeeCreateForm.querySelectorAll('input[name="center_ids"]'));
     const syncEmployeeCenterField = () => {
       const isAdmin = employeeCreateForm.elements.role_code?.value === "admin";
-      const centerSelectField = employeeCreateForm.elements.center_id;
       document.getElementById("employeeCenterField")?.classList.toggle("hidden", isAdmin);
       document.getElementById("employeeAllCentersNote")?.classList.toggle("hidden", !isAdmin);
-      if (centerSelectField) {
-        centerSelectField.required = !isAdmin;
-        centerSelectField.disabled = isAdmin;
-      }
+      centerBoxes.forEach((box) => {
+        box.disabled = isAdmin;
+      });
+      // Хотя бы один центр обязателен; браузер показывает подсказку на первом поле.
+      const hasChecked = centerBoxes.some((box) => box.checked);
+      centerBoxes[0]?.setCustomValidity(isAdmin || hasChecked ? "" : "Отметьте хотя бы один медцентр");
     };
     employeeCreateForm.elements.role_code?.addEventListener("change", syncEmployeeCenterField);
+    centerBoxes.forEach((box) => box.addEventListener("change", syncEmployeeCenterField));
     syncEmployeeCenterField();
 
     employeeCreateForm.addEventListener("submit", async (event) => {
@@ -12924,10 +13010,42 @@ function bindContentEvents() {
         password: String(formData.get("password") || "").trim(),
         email: String(formData.get("email") || "").trim(),
         role_code: roleCode,
-        center_id: roleCode === "admin" ? null : Number(formData.get("center_id")) || null,
+        center_ids: roleCode === "admin" ? [] : orderStaffCenterIds(formData.getAll("center_ids")),
       });
     });
   }
+
+  contentRoot.querySelectorAll("[data-edit-staff-centers]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = Number(button.dataset.editStaffCenters || 0);
+      data.editingStaffCentersId = Number(data.editingStaffCentersId) === userId ? null : userId;
+      data.staffCentersError = "";
+      renderApp();
+    });
+  });
+
+  contentRoot.querySelector("[data-cancel-staff-centers]")?.addEventListener("click", () => {
+    data.editingStaffCentersId = null;
+    data.staffCentersError = "";
+    renderApp();
+  });
+
+  contentRoot.querySelectorAll("[data-staff-centers-form]").forEach((form) => {
+    const boxes = Array.from(form.querySelectorAll('input[name="center_ids"]'));
+    const syncValidity = () => {
+      boxes[0]?.setCustomValidity(boxes.some((box) => box.checked) ? "" : "Отметьте хотя бы один медцентр");
+    };
+    boxes.forEach((box) => box.addEventListener("change", syncValidity));
+    syncValidity();
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const userId = Number(form.dataset.staffCentersForm || 0);
+      if (!userId) return;
+      const checked = new FormData(form).getAll("center_ids");
+      await updateDemoStaffCenters(userId, orderStaffCenterIds(checked, form.dataset.staffMainCenter));
+    });
+  });
 
   contentRoot.querySelectorAll("[data-delete-staff-user]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -13935,7 +14053,9 @@ function renderApp() {
   document.body.dataset.center = `center-${workspaceCenterSlot >= 0 ? workspaceCenterSlot + 1 : 1}`;
 
   const isCenterPinned = Boolean(getPinnedCenterName());
+  const allowedCenterNames = getAllowedCenterNames();
   if (centerSelect) {
+    syncCenterSelectOptions();
     centerSelect.value = workspaceCenterName;
     centerSelect.disabled = isCenterPinned;
   }
@@ -13943,7 +14063,9 @@ function renderApp() {
     workspaceCenter.dataset.center = document.body.dataset.center;
     workspaceCenter.title = isCenterPinned
       ? `Вы работаете только в этом медцентре: ${workspaceCenterName}`
-      : `Текущая работа: ${workspaceCenterName}`;
+      : allowedCenterNames.length
+        ? `Текущая работа: ${workspaceCenterName}. Вам доступны: ${allowedCenterNames.join(", ")}`
+        : `Текущая работа: ${workspaceCenterName}`;
   }
 
   // Раньше здесь снимался выбор клиента из чужого медцентра. База клиентов
@@ -14017,6 +14139,21 @@ window.addEventListener("resize", () => {
 // Переводит программу в другой медцентр: сбрасывает всё, что относилось к
 // прежнему, и заново грузит данные нового. Зовётся при выборе в переключателе и
 // при входе закреплённого сотрудника.
+// В переключателе остаются только центры сотрудника; у админа, гостя и того, чьих
+// центров интерфейс не знает, — все. Порядок всегда как в WORKSPACE_CENTER_NAMES.
+function syncCenterSelectOptions() {
+  if (!centerSelect) return;
+  const allowed = getAllowedCenterNames();
+  const names = allowed.length
+    ? WORKSPACE_CENTER_NAMES.filter((name) => allowed.includes(name))
+    : WORKSPACE_CENTER_NAMES;
+  const shown = Array.from(centerSelect.options, (option) => option.value);
+  if (shown.length === names.length && shown.every((name, index) => name === names[index])) return;
+  centerSelect.innerHTML = names
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join("");
+}
+
 function switchWorkspaceCenter(nextCenter, { announce = true } = {}) {
   appState.centerFilter = nextCenter;
   appState.dashboardPage = 1;
@@ -14055,9 +14192,10 @@ function switchWorkspaceCenter(nextCenter, { announce = true } = {}) {
 
 if (centerSelect) {
   centerSelect.addEventListener("change", (event) => {
-    // Закреплённому сотруднику выбор недоступен; обработчик на случай, если
-    // поле включили руками, возвращает показанное значение на место.
-    if (getPinnedCenterName()) {
+    // Чужой центр сотруднику недоступен; обработчик на случай, если поле включили
+    // руками или подсунули лишний вариант, возвращает показанное значение на место.
+    const allowedCenterNames = getAllowedCenterNames();
+    if (allowedCenterNames.length && !allowedCenterNames.includes(event.target.value)) {
       renderApp();
       return;
     }

@@ -9,6 +9,7 @@ from app.core.security import generate_session_epoch, verify_password
 from app.db.session import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.auth import LoginRequest, LoginResponse, LogoutAllResponse
+from app.schemas.user_admin import StaffCenterRead
 from app.services.audit import write_audit_log
 
 router = APIRouter()
@@ -94,6 +95,7 @@ def login(payload: LoginRequest) -> LoginResponse:
             center_id=user.pinned_center_id,
             center_name=user.pinned_center_name,
             all_centers=user.sees_all_centers,
+            centers=[StaffCenterRead.model_validate(center) for center in user.work_centers],
         )
 
 

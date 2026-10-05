@@ -1,6 +1,8 @@
 import json
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.user_admin import StaffCenterRead
 
 
 class LoginRequest(BaseModel):
@@ -26,10 +28,13 @@ class LoginResponse(BaseModel):
     user_name: str
     role_code: str
     role_name: str
-    # Закреплённый медцентр сотрудника. У админа его нет: он видит все центры.
+    # Основной медцентр сотрудника, с него он начинает работу. У админа его нет:
+    # он видит все центры.
     center_id: int | None = None
     center_name: str | None = None
     all_centers: bool = False
+    # Все центры, где сотрудник может работать, основной первым; у админа пусто.
+    centers: list[StaffCenterRead] = Field(default_factory=list)
 
 
 class LogoutAllResponse(BaseModel):
