@@ -10,7 +10,11 @@ from app.models.blank_form import (
 )
 from app.models import *  # noqa: F401,F403
 from app.services.seed import seed_reference_data
-from app.services.template_catalog import retire_outdated_template_overrides
+from app.models.center import Center
+from app.services.template_catalog import (
+    retire_outdated_template_overrides,
+    split_shared_template_overrides,
+)
 from sqlalchemy import inspect, select, text
 
 
@@ -489,7 +493,12 @@ def init_db() -> None:
     ensure_document_template_blank_columns()
     seed_blank_types()
     seed_sport_conclusion_phrases()
-    # До синхронизации каталога: она заново вычислит путь к файлу бланка.
-    retire_outdated_template_overrides()
     with SessionLocal() as db:
         seed_reference_data(db)
+    # Центры к этому моменту заведены. Общие клиентские версии бланков, лежавшие
+    # в корне хранилища, раскладываем по папкам центров, и только потом снимаем
+    # устаревшие копии в этих папках.
+    with SessionLocal() as db:
+        center_ids = db.execute(select(Center.id)).scalars().all()
+    split_shared_template_overrides(center_ids)
+    retire_outdated_template_overrides()

@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 import re
+import shutil
 import zipfile
 
 import xlrd
@@ -123,24 +125,110 @@ def get_templates_root() -> Path:
     return Path(__file__).resolve().parents[3] / "assets" / "templates" / "Templates"
 
 
+# Клиентские версии бланков у каждого медцентра свои: в хранилище для центра
+# заведена папка center-<id>, и правка в одном центре другой не затрагивает.
+# Встроенные шаблоны общие: центр без своей копии печатает встроенный.
+CENTER_OVERRIDE_FOLDER_PATTERN = re.compile(r"center-(\d+)")
+# Сюда при старте уезжают общие клиентские версии, лежавшие в корне хранилища
+# до разделения по центрам; приложение их больше не читает.
+SHARED_OVERRIDES_BACKUP_FOLDER = "_shared-before-split"
+
+logger = logging.getLogger(__name__)
+
+
 def get_template_overrides_root() -> Path:
     return Path(settings.document_template_overrides_dir).resolve()
 
 
-def get_template_override_path(file_name: str) -> Path:
+def center_override_folder_name(center_id: int) -> str:
+    center_number = int(center_id)
+    if center_number <= 0:
+        raise ValueError("Недопустимый медцентр")
+    return f"center-{center_number}"
+
+
+def get_center_overrides_root(center_id: int) -> Path:
+    return get_template_overrides_root() / center_override_folder_name(center_id)
+
+
+def get_template_override_path(file_name: str, center_id: int) -> Path:
     safe_name = Path(file_name).name
     if safe_name != file_name:
         raise ValueError("Недопустимое имя файла шаблона")
-    return get_template_overrides_root() / safe_name
+    return get_center_overrides_root(center_id) / safe_name
 
 
-def template_has_override(file_name: str) -> bool:
-    return get_template_override_path(file_name).is_file()
+def template_has_override(file_name: str, center_id: int | None) -> bool:
+    """True, если у этого медцентра есть своя версия бланка."""
+    if center_id is None:
+        return False
+    try:
+        return get_template_override_path(file_name, center_id).is_file()
+    except ValueError:
+        return False
 
 
-def resolve_catalog_template_path(file_name: str) -> Path:
-    override_path = get_template_override_path(file_name)
-    return override_path if override_path.is_file() else get_templates_root() / file_name
+def center_ids_with_override_folders() -> list[int]:
+    root = get_template_overrides_root()
+    if not root.is_dir():
+        return []
+    center_ids = []
+    for entry in root.iterdir():
+        match = CENTER_OVERRIDE_FOLDER_PATTERN.fullmatch(entry.name)
+        if match is not None and entry.is_dir():
+            center_ids.append(int(match.group(1)))
+    return sorted(center_ids)
+
+
+def split_shared_template_overrides(center_ids) -> list[str]:
+    """Разложить общие клиентские версии по папкам медцентров.
+
+    До разделения все центры печатали одни и те же файлы из корня хранилища.
+    Чтобы ничья правка не пропала, каждая такая версия копируется в папку
+    каждого центра (уже лежащий там файл не трогаем), а оригинал уходит в
+    ``SHARED_OVERRIDES_BACKUP_FOLDER``. Файл, который не удалось скопировать,
+    остаётся на месте до следующего старта. Возвращает имена разложенных файлов.
+    """
+    target_ids = sorted({int(center_id) for center_id in center_ids})
+    root = get_template_overrides_root()
+    if not target_ids or not root.is_dir():
+        return []
+
+    shared_files = [entry for entry in sorted(root.iterdir()) if entry.is_file()]
+    if not shared_files:
+        return []
+
+    backup_root = root / SHARED_OVERRIDES_BACKUP_FOLDER
+    split_names: list[str] = []
+    for source in shared_files:
+        try:
+            if source.suffix.lower() in SUPPORTED_TEMPLATE_EXTENSIONS:
+                for center_id in target_ids:
+                    target = get_template_override_path(source.name, center_id)
+                    if target.exists():
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    partial = target.with_name(f"{target.name}.splitting")
+                    shutil.copy2(source, partial)
+                    partial.replace(target)
+            backup_root.mkdir(parents=True, exist_ok=True)
+            backup = backup_root / source.name
+            if backup.exists():
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                backup = backup_root / f"{source.name}.{stamp}"
+            source.replace(backup)
+            split_names.append(source.name)
+        except OSError:
+            logger.exception("Не удалось разложить общий шаблон %s по медцентрам", source.name)
+    return split_names
+
+
+def _is_inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def _repair_mojibake(value: str) -> str:
@@ -150,21 +238,27 @@ def _repair_mojibake(value: str) -> str:
         return value
 
 
-def resolve_template_file(template) -> Path | None:
+def resolve_template_file(template, center_id: int | None = None) -> Path | None:
     """Файл, который и отдаёт страница «Шаблоны», и заполняет печать.
 
-    Клиентская версия из хранилища перекрывает встроенную. Путь из базы —
-    лишь запасной: его запоминает синхронизация каталога, и он может отстать
-    от хранилища. Печать и скачивание берут файл только отсюда, чтобы в услуге
-    не оказалось другого бланка, чем тот, что заказчик правил.
+    Клиентская версия медцентра из его папки перекрывает встроенную; без
+    ``center_id`` берётся встроенная. Путь из базы — лишь запасной: его
+    запоминает синхронизация каталога, и он может отстать от хранилища. Путь
+    внутри хранилища правок (так лежала общая версия до разделения по
+    центрам) не берём: чужая копия не должна попасть в печать. Печать и
+    скачивание берут файл только отсюда, чтобы в услуге не оказалось другого
+    бланка, чем тот, что заказчик правил.
     """
     candidates: list[Path] = []
-    try:
-        candidates.append(get_template_override_path(template.file_name))
-    except ValueError:
-        pass
+    if center_id is not None:
+        try:
+            candidates.append(get_template_override_path(template.file_name, center_id))
+        except ValueError:
+            pass
     if template.file_path:
-        candidates.append(Path(template.file_path))
+        cached_path = Path(template.file_path)
+        if not _is_inside(cached_path, get_template_overrides_root()):
+            candidates.append(cached_path)
 
     root = get_templates_root()
     names = [template.file_name]
@@ -246,22 +340,23 @@ def _retirable_override_file_names() -> tuple[str, ...]:
 
 def retire_outdated_template_overrides() -> None:
     """Отложить клиентские версии бланков, в которых нет новых меток полей."""
-    for file_name in _retirable_override_file_names():
-        try:
-            override_path = get_template_override_path(file_name)
-        except ValueError:
-            continue
-        if not override_path.is_file() or not (get_templates_root() / file_name).is_file():
-            continue
-        try:
-            if not _override_is_outdated(file_name, override_path):
+    for center_id in center_ids_with_override_folders():
+        for file_name in _retirable_override_file_names():
+            try:
+                override_path = get_template_override_path(file_name, center_id)
+            except ValueError:
                 continue
-            # Файл не удаляем: заказчик правил его сам, и по имени с суффиксом
-            # приложение его уже не подхватит, а вернуть версию можно вручную.
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-            override_path.rename(override_path.with_name(f"{override_path.name}.retired-{stamp}"))
-        except (OSError, KeyError, ValueError, zipfile.BadZipFile, UnicodeDecodeError):
-            continue
+            if not override_path.is_file() or not (get_templates_root() / file_name).is_file():
+                continue
+            try:
+                if not _override_is_outdated(file_name, override_path):
+                    continue
+                # Файл не удаляем: заказчик правил его сам, и по имени с суффиксом
+                # приложение его уже не подхватит, а вернуть версию можно вручную.
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                override_path.rename(override_path.with_name(f"{override_path.name}.retired-{stamp}"))
+            except (OSError, KeyError, ValueError, zipfile.BadZipFile, UnicodeDecodeError):
+                continue
 
 
 def template_supports_layout_editing(file_name: str) -> bool:
@@ -311,7 +406,9 @@ def load_template_catalog() -> list[dict[str, str]]:
                 "code": f"{slugify_template_name(path.stem)}-{index}",
                 "name": TEMPLATE_DISPLAY_NAMES.get(path.name, path.stem),
                 "file_name": path.name,
-                "file_path": str(resolve_catalog_template_path(path.name)),
+                # Путь в базе всегда встроенный: клиентские версии у центров свои,
+                # их ищет resolve_template_file по центру.
+                "file_path": str(path),
                 "description": description,
                 "template_type": path.suffix.lower().lstrip("."),
                 "preferred_xlsx_available": path.suffix.lower() == ".xls" and path.stem in xlsx_stems,

@@ -5,7 +5,7 @@ import shutil
 from threading import Lock
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.routes.auth import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
+from app.models.center import Center
 from app.models.document_template import DocumentTemplate
 from app.models.generated_document import GeneratedDocument
 from app.models.user import User
@@ -120,11 +121,46 @@ def require_template_file_access(current_user: User = Depends(get_current_user))
     return current_user
 
 
-def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
+def _template_center_id(
+    db: Session,
+    current_user: User,
+    requested_center_id: int | None,
+    *,
+    required: bool,
+) -> int | None:
+    """Медцентр, чьи файлы шаблонов открывает или правит пользователь.
+
+    Админ выбирает любой центр. Остальные работают только в своих центрах
+    (основной и дополнительные); центр не назван — берётся основной. Для правки
+    центр обязателен: общего набора файлов больше нет.
+    """
+    allowed_center_ids = (
+        None if current_user.sees_all_centers else {center.id for center in current_user.work_centers}
+    )
+    if allowed_center_ids is not None and requested_center_id is not None and allowed_center_ids:
+        if requested_center_id not in allowed_center_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Шаблоны другого медцентра доступны только администратору.",
+            )
+    center_id = requested_center_id if requested_center_id is not None else current_user.pinned_center_id
+    if center_id is None:
+        if required:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Не указан медцентр: у каждого центра свои файлы шаблонов. Обновите страницу и выберите центр.",
+            )
+        return None
+    if db.get(Center, center_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Медцентр не найден")
+    return center_id
+
+
+def _template_response(template: DocumentTemplate, center_id: int | None = None) -> DocumentTemplateRead:
     return DocumentTemplateRead.model_validate(template).model_copy(
         update={
             "supports_layout_editing": template_supports_layout_editing(template.file_name),
-            "has_override": template_has_override(template.file_name),
+            "has_override": template_has_override(template.file_name, center_id),
             # Вкладка, открытая до деплоя, читает старое поле из кэша — отдаём оба.
             "in_service_list": template_is_in_service_list(template.file_name),
             "listed_on_templates_page": template_is_listed_on_templates_page(template.file_name),
@@ -132,42 +168,52 @@ def _template_response(template: DocumentTemplate) -> DocumentTemplateRead:
     )
 
 
-def _ordered_template_responses(db: Session) -> list[DocumentTemplateRead]:
-    """List active templates in the order of the customer's service list."""
+def _ordered_template_responses(db: Session, center_id: int | None = None) -> list[DocumentTemplateRead]:
+    """List active templates in the order of the customer's service list.
+
+    ``has_override`` отвечает на вопрос «есть ли своя версия у этого медцентра».
+    """
     templates = db.execute(select(DocumentTemplate).where(DocumentTemplate.is_active.is_(True))).scalars().all()
     ordered = sorted(
         templates,
         key=lambda item: (template_display_position(item.file_name), (item.name or "").lower()),
     )
-    return [_template_response(item) for item in ordered]
+    return [_template_response(item, center_id) for item in ordered]
 
 
 @router.get("/templates", response_model=list[DocumentTemplateRead])
-def list_document_templates(db: Session = Depends(get_db)) -> list[DocumentTemplateRead]:
-    return _ordered_template_responses(db)
+def list_document_templates(
+    center_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+) -> list[DocumentTemplateRead]:
+    return _ordered_template_responses(db, center_id)
 
 
 @router.post("/templates/refresh", response_model=list[DocumentTemplateRead])
 def refresh_document_templates(
-    _: User = Depends(require_template_file_access),
+    center_id: int | None = Query(None),
+    current_user: User = Depends(require_template_file_access),
     db: Session = Depends(get_db),
 ) -> list[DocumentTemplateRead]:
+    center_id = _template_center_id(db, current_user, center_id, required=False)
     sync_document_template_catalog(db)
     db.commit()
-    return _ordered_template_responses(db)
+    return _ordered_template_responses(db, center_id)
 
 
 @router.get("/templates/{template_id}/file")
 def open_document_template(
     template_id: int,
-    _: User = Depends(require_template_file_access),
+    center_id: int | None = Query(None),
+    current_user: User = Depends(require_template_file_access),
     db: Session = Depends(get_db),
 ) -> FileResponse:
     template = db.get(DocumentTemplate, template_id)
     if template is None or not template.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    file_path = resolve_template_file(template)
+    center_id = _template_center_id(db, current_user, center_id, required=False)
+    file_path = resolve_template_file(template, center_id)
     if file_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл шаблона не найден")
 
@@ -184,14 +230,16 @@ def open_document_template(
 def replace_document_template(
     template_id: int,
     file: UploadFile = File(...),
-    _: User = Depends(require_template_file_access),
+    center_id: int | None = Query(None),
+    current_user: User = Depends(require_template_file_access),
     db: Session = Depends(get_db),
 ) -> DocumentTemplateRead:
     template = db.get(DocumentTemplate, template_id)
     if template is None or not template.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    current_path = resolve_template_file(template) or Path(template.file_path).resolve()
+    center_id = _template_center_id(db, current_user, center_id, required=True)
+    current_path = resolve_template_file(template, center_id) or Path(template.file_path).resolve()
     source_suffix = Path(file.filename or "").suffix.lower()
     target_suffix = current_path.suffix.lower()
     editable_spec = NEW_XLS_TEMPLATE_BY_FILE.get(template.file_name.casefold())
@@ -209,7 +257,7 @@ def replace_document_template(
             detail=f"Тип файла должен остаться {target_suffix}. Создайте новый шаблон отдельным файлом, если нужен другой тип.",
         )
 
-    target_path = get_template_override_path(template.file_name)
+    target_path = get_template_override_path(template.file_name, center_id)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target_path.with_name(f"{target_path.name}.uploading")
     try:
@@ -233,27 +281,29 @@ def replace_document_template(
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
 
-    template.file_path = str(target_path)
-    template.file_name = target_path.name
+    # Строку каталога не трогаем: она общая для всех центров, а загруженный файл
+    # принадлежит только этому центру и лежит в его папке.
     template.template_type = target_suffix.lstrip(".")
     template.output_format = target_suffix.lstrip(".")
     template.is_active = True
     db.commit()
     db.refresh(template)
-    return _template_response(template)
+    return _template_response(template, center_id)
 
 
 @router.post("/templates/{template_id}/reset", response_model=DocumentTemplateRead)
 def reset_document_template(
     template_id: int,
-    _: User = Depends(require_template_file_access),
+    center_id: int | None = Query(None),
+    current_user: User = Depends(require_template_file_access),
     db: Session = Depends(get_db),
 ) -> DocumentTemplateRead:
     template = db.get(DocumentTemplate, template_id)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Шаблон не найден")
 
-    override_path = get_template_override_path(template.file_name)
+    center_id = _template_center_id(db, current_user, center_id, required=True)
+    override_path = get_template_override_path(template.file_name, center_id)
     bundled_path = (get_templates_root() / template.file_name).resolve()
     if not bundled_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Встроенный шаблон не найден")
@@ -270,7 +320,7 @@ def reset_document_template(
     template.output_format = template.template_type
     db.commit()
     db.refresh(template)
-    return _template_response(template)
+    return _template_response(template, center_id)
 
 
 @router.post("/generate", response_model=DocumentGenerateResponse)

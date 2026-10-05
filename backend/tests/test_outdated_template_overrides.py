@@ -54,12 +54,15 @@ class OutdatedTemplateOverrideTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
-        self.overrides_root = Path(self.temporary_directory.name)
+        self.storage_root = Path(self.temporary_directory.name)
+        # Клиентские версии лежат в папке медцентра, у каждого центра своя.
+        self.overrides_root = self.storage_root / "center-1"
+        self.overrides_root.mkdir()
         self.override_path = self.overrides_root / TEMPLATE_FILE_NAME
         patcher = mock.patch.object(
             template_catalog,
-            "get_template_override_path",
-            lambda file_name: self.overrides_root / file_name,
+            "get_template_overrides_root",
+            lambda: self.storage_root,
         )
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -160,12 +163,15 @@ class OutdatedGtoTemplateOverrideTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
-        self.overrides_root = Path(self.temporary_directory.name)
+        self.storage_root = Path(self.temporary_directory.name)
+        # Клиентские версии лежат в папке медцентра, у каждого центра своя.
+        self.overrides_root = self.storage_root / "center-1"
+        self.overrides_root.mkdir()
         self.override_path = self.overrides_root / GTO_FILE_NAME
         patcher = mock.patch.object(
             template_catalog,
-            "get_template_override_path",
-            lambda file_name: self.overrides_root / file_name,
+            "get_template_overrides_root",
+            lambda: self.storage_root,
         )
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -222,11 +228,14 @@ class OutdatedXlsTemplateOverrideTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
-        self.overrides_root = Path(self.temporary_directory.name)
+        self.storage_root = Path(self.temporary_directory.name)
+        # Клиентские версии лежат в папке медцентра, у каждого центра своя.
+        self.overrides_root = self.storage_root / "center-1"
+        self.overrides_root.mkdir()
         patcher = mock.patch.object(
             template_catalog,
-            "get_template_override_path",
-            lambda file_name: self.overrides_root / file_name,
+            "get_template_overrides_root",
+            lambda: self.storage_root,
         )
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -282,7 +291,7 @@ class OutdatedXlsTemplateOverrideTests(unittest.TestCase):
         template_catalog.retire_outdated_template_overrides()
 
         self.assertEqual(
-            template_catalog.resolve_template_file(template),
+            template_catalog.resolve_template_file(template, 1),
             (TEMPLATES_DIR / TRACTOR_FRONT_FILE_NAME).resolve(),
         )
 

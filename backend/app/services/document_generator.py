@@ -6398,9 +6398,11 @@ def generate_document(
         if encounter is None or encounter.deleted_at is not None:
             raise ValueError("Обращение не найдено")
 
-    # Тот же файл, что отдаёт страница «Шаблоны»: клиентская версия, если она
-    # есть, даже когда путь в базе ещё указывает на встроенный шаблон.
-    template_path = resolve_template_file(template) or Path(template.file_path)
+    # Тот же файл, что отдаёт страница «Шаблоны» этому медцентру: его клиентская
+    # версия, если она есть, иначе встроенный шаблон. Центр берём у обращения:
+    # у клиента центра нет, он общий. Без обращения печатается встроенный шаблон.
+    template_center_id = encounter.center_id if encounter is not None else None
+    template_path = resolve_template_file(template, template_center_id) or Path(template.file_path)
     output_dir = Path(settings.generated_documents_dir)
     if template.template_type == "xml":
         output_dir = output_dir / "xml" / _xml_export_date_folder()

@@ -1864,7 +1864,7 @@ async function openChairmanTemplateFile(examId = null) {
     return false;
   }
   try {
-    return await openAuthorizedFileUrl(buildTemplateFileUrl(info.templateId));
+    return await openAuthorizedFileUrl(buildTemplateFileUrl(info.templateId, await resolveWorkspaceCenterId()));
   } catch (error) {
     showToast(humanizeApiError(error, "Не удалось открыть шаблон"));
     return false;
@@ -3417,9 +3417,16 @@ async function loadServicesFromBackend() {
   }
 }
 
+// Файлы шаблонов у каждого медцентра свои, поэтому список просим для рабочего
+// центра: от него зависит, есть ли у шаблона «клиентская версия».
 async function loadDocumentTemplatesFromBackend() {
+  const centerName = getWorkspaceCenterName();
   try {
-    const templates = await apiRequest("/documents/templates");
+    const centerId = await resolveWorkspaceCenterId().catch(() => null);
+    const templates = await apiRequest(`/documents/templates${buildQuery({ center_id: centerId })}`);
+    // Пока шёл запрос, центр могли переключить: список нового центра грузит
+    // своя загрузка, а этот ответ уже чужой.
+    if (getWorkspaceCenterName() !== centerName) return;
     data.documentTemplates = Array.isArray(templates) ? templates : [];
     data.documentTemplatesLoaded = true;
   } catch (error) {
@@ -3430,7 +3437,10 @@ async function loadDocumentTemplatesFromBackend() {
 }
 
 async function refreshDocumentTemplatesFromBackend() {
-  const templates = await apiRequest("/documents/templates/refresh", { method: "POST" });
+  const centerId = await resolveWorkspaceCenterId();
+  const templates = await apiRequest(`/documents/templates/refresh${buildQuery({ center_id: centerId })}`, {
+    method: "POST",
+  });
   data.documentTemplates = Array.isArray(templates) ? templates : [];
   data.documentTemplatesLoaded = true;
   data.templateOperationStatus = "Список шаблонов перечитан из папки файлов.";
@@ -3440,21 +3450,29 @@ async function refreshDocumentTemplatesFromBackend() {
 async function replaceDocumentTemplateFile(templateId, file) {
   const formData = new FormData();
   formData.append("file", file);
-  const template = await apiRequest(`/documents/templates/${encodeURIComponent(templateId)}/replace`, {
-    method: "POST",
-    body: formData,
-  });
+  const centerId = await resolveWorkspaceCenterId();
+  const template = await apiRequest(
+    `/documents/templates/${encodeURIComponent(templateId)}/replace${buildQuery({ center_id: centerId })}`,
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
   data.documentTemplates = (data.documentTemplates || []).map((item) => (String(item.id) === String(template.id) ? template : item));
-  data.templateOperationStatus = `Шаблон "${template.name || template.file_name}" обновлен.`;
+  data.templateOperationStatus = `Шаблон "${template.name || template.file_name}" обновлен для медцентра «${getWorkspaceCenterName()}».`;
   renderApp();
 }
 
 async function resetDocumentTemplateFile(templateId) {
-  const template = await apiRequest(`/documents/templates/${encodeURIComponent(templateId)}/reset`, {
-    method: "POST",
-  });
+  const centerId = await resolveWorkspaceCenterId();
+  const template = await apiRequest(
+    `/documents/templates/${encodeURIComponent(templateId)}/reset${buildQuery({ center_id: centerId })}`,
+    {
+      method: "POST",
+    },
+  );
   data.documentTemplates = (data.documentTemplates || []).map((item) => (String(item.id) === String(template.id) ? template : item));
-  data.templateOperationStatus = `Для шаблона "${template.name || template.file_name}" восстановлена встроенная версия.`;
+  data.templateOperationStatus = `Для шаблона "${template.name || template.file_name}" в медцентре «${getWorkspaceCenterName()}» восстановлена встроенная версия.`;
   renderApp();
 }
 
@@ -3623,8 +3641,8 @@ async function requestGeneratedDocumentPrintTicket(documentItem) {
   };
 }
 
-function buildTemplateFileUrl(templateId) {
-  return `${API_BASE_URL}/documents/templates/${encodeURIComponent(templateId)}/file`;
+function buildTemplateFileUrl(templateId, centerId = null) {
+  return `${API_BASE_URL}/documents/templates/${encodeURIComponent(templateId)}/file${buildQuery({ center_id: centerId })}`;
 }
 
 function isContractDocument(documentItem) {
@@ -8181,11 +8199,15 @@ function renderTemplatesPage() {
     (template) => template.listed_on_templates_page !== false,
   );
   const canManageTemplates = ["admin", "chairman"].includes(appState.auth.roleCode);
+  const templateCenterName = getWorkspaceCenterName();
+  const templateCenterNote = getPinnedCenterName()
+    ? "У каждого медцентра свои файлы шаблонов: загруженный здесь файл печатается только в этом центре."
+    : "У каждого медцентра свои файлы шаблонов: загруженный здесь файл печатается только в выбранном центре. Чтобы править шаблоны другого центра, переключите медцентр вверху.";
 
   return `
     <section class="card">
       <div class="template-page-head">
-        <p class="muted">${canManageTemplates ? "Скачивайте актуальный файл или заменяйте его новым файлом того же типа." : "Файлы доступны для скачивания. Изменять их могут председатель и администратор."} У шаблонов с отметкой «Свободный макет» разрешено переносить поля и блоки, вставлять строки и столбцы, менять оформление, изображения и область печати. Метки полей вида «[ФИО]» переносите вместе с ячейкой: удалять, переименовывать и набирать их заново нельзя. В узких клетках (например, в квадратиках полиса) метка обрезается — кликните по ячейке, чтобы прочитать её целиком в строке формул.</p>
+        <p class="muted"><strong>Шаблоны медцентра «${escapeHtml(templateCenterName)}».</strong> ${templateCenterNote} ${canManageTemplates ? "Скачивайте актуальный файл или заменяйте его новым файлом того же типа." : "Файлы доступны для скачивания. Изменять их могут председатель и администратор."} У шаблонов с отметкой «Свободный макет» разрешено переносить поля и блоки, вставлять строки и столбцы, менять оформление, изображения и область печати. Метки полей вида «[ФИО]» переносите вместе с ячейкой: удалять, переименовывать и набирать их заново нельзя. В узких клетках (например, в квадратиках полиса) метка обрезается — кликните по ячейке, чтобы прочитать её целиком в строке формул.</p>
         ${canManageTemplates ? '<button class="primary-button" type="button" data-refresh-document-templates>Обновить список</button>' : ""}
       </div>
       ${data.templateOperationStatus ? `<div class="template-status">${escapeHtml(data.templateOperationStatus)}</div>` : ""}
@@ -13402,7 +13424,7 @@ function bindContentEvents() {
       try {
         const template = (data.documentTemplates || []).find((item) => String(item.id) === String(templateId));
         const fileName = template?.file_name || template?.name || `template-${templateId}`;
-        await downloadAuthorizedFileUrl(buildTemplateFileUrl(templateId), fileName);
+        await downloadAuthorizedFileUrl(buildTemplateFileUrl(templateId, await resolveWorkspaceCenterId()), fileName);
         showToast(`Шаблон скачивается: ${fileName}`);
       } catch (error) {
         showToast(humanizeApiError(error, "Не удалось скачать шаблон"));
@@ -14178,6 +14200,12 @@ function switchWorkspaceCenter(nextCenter, { announce = true } = {}) {
   persistDemoState();
   renderApp();
   void loadServicesFromBackend();
+  // Файлы шаблонов у нового центра свои: «клиентская версия» на странице
+  // «Шаблоны» должна быть его, а не прежнего центра.
+  data.templateOperationStatus = "";
+  void loadDocumentTemplatesFromBackend().then(() => {
+    if (appState.page === "templates") renderApp();
+  });
   if (appState.page === "cash" && !data.cashLoading) {
     loadCashReport();
   }

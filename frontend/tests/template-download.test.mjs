@@ -22,7 +22,8 @@ test("template cards download the original file without a popup", () => {
 
   assert.match(templatePage, /data-download-document-template/);
   assert.match(templatePage, />Скачать<\/button>/);
-  assert.match(handlers, /downloadAuthorizedFileUrl\(buildTemplateFileUrl\(templateId\), fileName\)/);
+  // Файл берётся у рабочего медцентра: у каждого центра свои версии шаблонов.
+  assert.match(handlers, /downloadAuthorizedFileUrl\(\s*buildTemplateFileUrl\(templateId, await resolveWorkspaceCenterId\(\)\),\s*fileName\)/);
   assert.match(handlers, /template\?\.file_name/);
   assert.doesNotMatch(handlers, /openAuthorizedFileUrl/);
   assert.doesNotMatch(handlers, /всплывающие окна/);

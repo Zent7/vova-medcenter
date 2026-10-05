@@ -81,3 +81,5 @@ For the local Windows production-like setup:
 
 The runtime documents path must point to `GENERATED_DOCUMENTS_DIR` instead of repo-only templates. The default local value is `storage/generated`.
 Client-edited templates must be kept outside the application image in `DOCUMENT_TEMPLATE_OVERRIDES_DIR` (default `storage/template-overrides`) and included in backups.
+
+Every medical center keeps its own client-edited templates in its own folder, `DOCUMENT_TEMPLATE_OVERRIDES_DIR/center-<id>/`, where `<id>` is `centers.id` (the seed creates `center-a`, `center-b`, `center-c` as ids 1, 2, 3). A file in one folder never affects another center, and a center without the file prints the bundled template. On the first start after this layout was introduced the app copies the former shared files from the root of the directory into every center's folder and moves the originals to `_shared-before-split/` (kept as a backup, never read). Back up the whole directory, including the center folders.

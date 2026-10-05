@@ -243,10 +243,29 @@ class PrintUsesTheDownloadedFileTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.engine.dispose()
 
-    def print_side(self, file_name: str, print_variant: str, patient_number: int) -> tuple[Path, Path]:
-        """Печать стороны справки, когда каталог ещё помнит встроенный файл."""
+    def add_center(self, code: str) -> int:
         with Session(self.engine) as db:
-            center = Center(code=f"center-{print_variant}", name="Медцентр")
+            center = Center(code=code, name=f"Медцентр {code}")
+            db.add(center)
+            db.commit()
+            return center.id
+
+    def place_customer_copy(self, center_id: int, file_name: str) -> Path:
+        """Копия бланка в папке медцентра, как после загрузки на странице «Шаблоны»."""
+        customer_copy = self.overrides_dir / f"center-{center_id}" / file_name
+        customer_copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(TEMPLATES_DIR / file_name, customer_copy)
+        return customer_copy
+
+    def print_side(
+        self,
+        center_id: int,
+        file_name: str,
+        print_variant: str,
+        patient_number: int,
+    ) -> tuple[Path, Path]:
+        """Печать стороны справки в центре, когда каталог ещё помнит встроенный файл."""
+        with Session(self.engine) as db:
             client = Client(
                 patient_number=patient_number,
                 last_name="Проверкин",
@@ -256,16 +275,16 @@ class PrintUsesTheDownloadedFileTests(unittest.TestCase):
                 sex="M",
                 admission_category="B",
             )
-            db.add_all([center, client])
+            db.add(client)
             db.flush()
             encounter = Encounter(
-                center_id=center.id,
+                center_id=center_id,
                 client_id=client.id,
                 encounter_date=date(2026, 9, 21),
                 payment_type="cash",
             )
             template = DocumentTemplate(
-                code=f"{print_variant}-test",
+                code=f"{print_variant}-test-{patient_number}",
                 name=file_name,
                 file_name=file_name,
                 file_path=str(TEMPLATES_DIR / file_name),
@@ -276,7 +295,7 @@ class PrintUsesTheDownloadedFileTests(unittest.TestCase):
             db.add_all([encounter, template])
             db.commit()
 
-            downloaded_path = resolve_template_file(template)
+            downloaded_path = resolve_template_file(template, center_id)
             result = generate_document(
                 db,
                 template_id=template.id,
@@ -288,20 +307,36 @@ class PrintUsesTheDownloadedFileTests(unittest.TestCase):
         return downloaded_path, Path(result.output_file_path)
 
     def test_print_takes_the_customer_copy_even_when_the_catalog_path_is_stale(self):
+        center_id = self.add_center("print-center")
         for patient_number, (file_name, print_variant) in enumerate(
             ((DRIVER_FRONT_FILE_NAME, "driver_front"), ("трактор об ст.xls", "tractor_back")),
             start=1,
         ):
             with self.subTest(file_name=file_name):
-                customer_copy = self.overrides_dir / file_name
-                shutil.copy2(TEMPLATES_DIR / file_name, customer_copy)
+                customer_copy = self.place_customer_copy(center_id, file_name)
                 patch_customer_copy(customer_copy, top_margin_inches=1.0)
                 self.assertNotAlmostEqual(top_margin(TEMPLATES_DIR / file_name), 1.0)
 
-                downloaded_path, printed_path = self.print_side(file_name, print_variant, patient_number)
+                downloaded_path, printed_path = self.print_side(center_id, file_name, print_variant, patient_number)
 
                 self.assertEqual(downloaded_path, customer_copy.resolve())
                 self.assertAlmostEqual(top_margin(printed_path), 1.0)
+
+    def test_print_takes_only_the_copy_of_the_encounters_center(self):
+        first_center_id = self.add_center("first")
+        second_center_id = self.add_center("second")
+        customer_copy = self.place_customer_copy(first_center_id, DRIVER_FRONT_FILE_NAME)
+        patch_customer_copy(customer_copy, top_margin_inches=1.0)
+        bundled_margin = top_margin(TEMPLATES_DIR / DRIVER_FRONT_FILE_NAME)
+        self.assertNotAlmostEqual(bundled_margin, 1.0)
+
+        first_downloaded, first_printed = self.print_side(first_center_id, DRIVER_FRONT_FILE_NAME, "driver_front", 1)
+        second_downloaded, second_printed = self.print_side(second_center_id, DRIVER_FRONT_FILE_NAME, "driver_front", 2)
+
+        self.assertEqual(first_downloaded, customer_copy.resolve())
+        self.assertAlmostEqual(top_margin(first_printed), 1.0)
+        self.assertEqual(second_downloaded, (TEMPLATES_DIR / DRIVER_FRONT_FILE_NAME).resolve())
+        self.assertAlmostEqual(top_margin(second_printed), bundled_margin)
 
 
 if __name__ == "__main__":

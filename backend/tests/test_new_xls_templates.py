@@ -38,6 +38,7 @@ from app.services.new_xls_templates import (  # noqa: E402
 )
 from app.core.config import settings  # noqa: E402
 from app.api.v1.routes.documents import replace_document_template, reset_document_template  # noqa: E402
+from app.models.center import Center  # noqa: E402
 from app.models.document_template import DocumentTemplate  # noqa: E402
 from app.services.seed import SERVICE_CATALOG  # noqa: E402
 from app.services.template_catalog import (  # noqa: E402
@@ -51,6 +52,9 @@ from app.services.template_catalog import (  # noqa: E402
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
+# Админ без закрепления: центр для правки шаблонов он указывает сам.
+ADMIN = SimpleNamespace(pinned_center_id=None, sees_all_centers=True, work_centers=[])
+CENTER_ID = 7
 
 
 def exam(
@@ -836,17 +840,21 @@ class NewXlsTemplatesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "продублирован"):
                 validate_editable_xls_template(duplicate_path, spec)
 
-    def test_catalog_prefers_persistent_override_and_reports_capabilities(self):
+    def test_catalog_keeps_bundled_path_and_reports_capabilities(self):
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
         original_override_dir = settings.document_template_overrides_dir
         with tempfile.TemporaryDirectory() as temporary_dir:
             try:
                 settings.document_template_overrides_dir = temporary_dir
-                override_path = Path(temporary_dir) / spec.file_name
+                override_path = Path(temporary_dir) / "center-5" / spec.file_name
+                override_path.parent.mkdir()
                 override_path.write_bytes((TEMPLATES_DIR / spec.file_name).read_bytes())
                 catalog_item = next(item for item in load_template_catalog() if item["file_name"] == spec.file_name)
-                self.assertEqual(Path(catalog_item["file_path"]), override_path)
-                self.assertTrue(template_has_override(spec.file_name))
+                # Путь в каталоге всегда встроенный: версии у центров свои.
+                self.assertEqual(Path(catalog_item["file_path"]), TEMPLATES_DIR / spec.file_name)
+                self.assertTrue(template_has_override(spec.file_name, 5))
+                self.assertFalse(template_has_override(spec.file_name, 6))
+                self.assertFalse(template_has_override(spec.file_name, None))
                 self.assertTrue(template_supports_layout_editing(spec.file_name))
                 for legacy_spec in LEGACY_XLS_TEMPLATE_SPECS:
                     self.assertTrue(template_supports_layout_editing(legacy_spec.file_name))
@@ -872,6 +880,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
 
         class FakeDb:
             def get(self, model, object_id):
+                if model is Center and object_id == CENTER_ID:
+                    return SimpleNamespace(id=CENTER_ID)
                 return template if model is DocumentTemplate and object_id == template.id else None
 
             def commit(self):
@@ -892,9 +902,9 @@ class NewXlsTemplatesTests(unittest.TestCase):
 
                 invalid_upload = UploadFile(filename=spec.file_name, file=BytesIO(invalid_path.read_bytes()))
                 with self.assertRaises(HTTPException) as raised:
-                    replace_document_template(template.id, invalid_upload, None, FakeDb())
+                    replace_document_template(template.id, invalid_upload, CENTER_ID, ADMIN, FakeDb())
                 self.assertEqual(raised.exception.status_code, 400)
-                override_path = Path(temporary_dir) / spec.file_name
+                override_path = Path(temporary_dir) / f"center-{CENTER_ID}" / spec.file_name
                 self.assertFalse(override_path.exists())
                 self.assertEqual(template.file_path, str(TEMPLATES_DIR / spec.file_name))
 
@@ -902,12 +912,12 @@ class NewXlsTemplatesTests(unittest.TestCase):
                     filename=spec.file_name,
                     file=BytesIO((TEMPLATES_DIR / spec.file_name).read_bytes()),
                 )
-                response = replace_document_template(template.id, valid_upload, None, FakeDb())
+                response = replace_document_template(template.id, valid_upload, CENTER_ID, ADMIN, FakeDb())
                 self.assertTrue(override_path.is_file())
                 self.assertTrue(response.supports_layout_editing)
                 self.assertTrue(response.has_override)
 
-                reset_response = reset_document_template(template.id, None, FakeDb())
+                reset_response = reset_document_template(template.id, CENTER_ID, ADMIN, FakeDb())
                 self.assertFalse(override_path.exists())
                 self.assertFalse(reset_response.has_override)
                 self.assertEqual(Path(template.file_path), TEMPLATES_DIR / spec.file_name)
@@ -932,6 +942,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
 
         class FakeDb:
             def get(self, model, object_id):
+                if model is Center and object_id == CENTER_ID:
+                    return SimpleNamespace(id=CENTER_ID)
                 return template if model is DocumentTemplate and object_id == template.id else None
 
             def commit(self):
@@ -956,9 +968,9 @@ class NewXlsTemplatesTests(unittest.TestCase):
 
                 invalid_upload = UploadFile(filename=spec.file_name, file=BytesIO(invalid_path.read_bytes()))
                 with self.assertRaises(HTTPException) as raised:
-                    replace_document_template(template.id, invalid_upload, None, FakeDb())
+                    replace_document_template(template.id, invalid_upload, CENTER_ID, ADMIN, FakeDb())
                 self.assertEqual(raised.exception.status_code, 400)
-                self.assertFalse((Path(temporary_dir) / spec.file_name).exists())
+                self.assertFalse((Path(temporary_dir) / f"center-{CENTER_ID}" / spec.file_name).exists())
                 self.assertEqual(template.file_path, str(TEMPLATES_DIR / spec.file_name))
             finally:
                 settings.document_template_overrides_dir = original_override_dir
