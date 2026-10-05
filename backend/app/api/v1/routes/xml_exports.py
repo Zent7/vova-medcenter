@@ -22,7 +22,22 @@ from app.services.xml_exports import (
     list_xml_export_days,
 )
 
-router = APIRouter()
+XML_EXPORT_ROLE_CODES = ("admin", "chairman")
+
+
+def require_xml_export_access(current_user: User = Depends(get_current_user)) -> User:
+    role_code = current_user.role.code if current_user.role is not None else ""
+    if role_code not in XML_EXPORT_ROLE_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="XML-выгрузки доступны только председателю или админу",
+        )
+    return current_user
+
+
+# Раздел «XML» открывают председатель и админ; врачу и оператору он не нужен. Проверка
+# висит на всём роутере, чтобы новый маршрут выгрузок не остался открытым.
+router = APIRouter(dependencies=[Depends(require_xml_export_access)])
 
 
 @router.get("/days", response_model=list[XmlExportDayRead])

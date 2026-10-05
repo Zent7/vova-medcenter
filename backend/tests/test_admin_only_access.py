@@ -3,6 +3,8 @@
 Председатель заходит в программу постоянно, но ни добавлять пользователей, ни видеть
 отчеты и кассу он не должен. Тесты проверяют и саму проверку роли, и то, что ею
 закрыты все маршруты трех разделов: без этого новый маршрут остался бы открытым.
+
+XML-выгрузки открыты админу и председателю, врачу и оператору — нет.
 """
 
 from pathlib import Path
@@ -22,6 +24,7 @@ from app.api.v1.routes import auth as auth_routes  # noqa: E402
 from app.api.v1.routes import payments as payments_routes  # noqa: E402
 from app.api.v1.routes import reports as reports_routes  # noqa: E402
 from app.api.v1.routes import staff as staff_routes  # noqa: E402
+from app.api.v1.routes import xml_exports as xml_exports_routes  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models.center import Center  # noqa: E402
@@ -85,6 +88,25 @@ class AdminOnlyAccessTests(unittest.TestCase):
                     _dependency_calls(route.dependant),
                     f"{module.__name__}: {sorted(route.methods)} {route.path} открыт не только админу",
                 )
+
+    def test_xml_exports_are_closed_to_doctor_and_operator(self):
+        with self.Session() as db:
+            for login in ("admin", "chairman"):
+                user = self._user(db, login)
+                self.assertEqual(xml_exports_routes.require_xml_export_access(current_user=user).login, login)
+            for login in ("doctor", "operator"):
+                with self.assertRaises(HTTPException) as raised:
+                    xml_exports_routes.require_xml_export_access(current_user=self._user(db, login))
+                self.assertEqual(raised.exception.status_code, 403, login)
+
+        routes = [route for route in xml_exports_routes.router.routes if isinstance(route, APIRoute)]
+        self.assertTrue(routes)
+        for route in routes:
+            self.assertIn(
+                xml_exports_routes.require_xml_export_access,
+                _dependency_calls(route.dependant),
+                f"{sorted(route.methods)} {route.path} открыт не только председателю и админу",
+            )
 
     def test_admin_creates_and_deletes_staff_but_not_chairman_or_self(self):
         with self.Session() as db:

@@ -434,6 +434,15 @@ function canAccessCashWorkspace() {
   return appState.auth.roleCode === "admin";
 }
 
+// «Бланки», «Шаблоны» и «XML» — служебные разделы: врач и оператор их не открывают.
+// Файлы шаблонов и XML-выгрузки сервер закрывает по той же паре ролей; список бланков
+// нужен печати справок, поэтому его API остаётся открытым, а закрыт только раздел.
+const SERVICE_WORKSPACE_PAGES = ["blanks", "templates", "xml"];
+
+function canAccessServiceWorkspace() {
+  return ["admin", "chairman"].includes(appState.auth.roleCode);
+}
+
 const columnKeys = [
   "encounterDate",
   "fio",
@@ -3749,10 +3758,12 @@ async function loadWorkflowData(options = {}) {
       apiRequest("/document-journals/spoiled-blanks"),
       apiRequest(`/patient-consents${clientEncounterQuery}`),
       apiRequest(`/medical-records${clientQuery}`),
-      apiRequest("/xml-exports/days").catch((error) => {
-        console.warn("Failed to load XML export days", error);
-        return [];
-      }),
+      canAccessServiceWorkspace()
+        ? apiRequest("/xml-exports/days").catch((error) => {
+            console.warn("Failed to load XML export days", error);
+            return [];
+          })
+        : Promise.resolve([]),
     ]);
 
     data.generatedDocuments = Array.isArray(generatedDocuments) ? generatedDocuments.map(mapGeneratedDocument) : [];
@@ -6061,6 +6072,7 @@ function renderNav() {
   const visibleNavItems = navItems.filter((item) => {
     if (item.id === "reports") return canAccessReportsWorkspace();
     if (item.id === "cash") return canAccessCashWorkspace();
+    if (SERVICE_WORKSPACE_PAGES.includes(item.id)) return canAccessServiceWorkspace();
     return true;
   });
 
@@ -13910,7 +13922,8 @@ function renderApp() {
   _clientPoolCache = null;
   if (
     (appState.page === "reports" && !canAccessReportsWorkspace()) ||
-    (appState.page === "cash" && !canAccessCashWorkspace())
+    (appState.page === "cash" && !canAccessCashWorkspace()) ||
+    (SERVICE_WORKSPACE_PAGES.includes(appState.page) && !canAccessServiceWorkspace())
   ) {
     appState.page = appState.auth.accessToken ? "dashboard" : "start";
   }
