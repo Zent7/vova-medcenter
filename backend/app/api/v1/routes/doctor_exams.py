@@ -136,6 +136,14 @@ def create_or_update_doctor_exam(payload: DoctorExamCreate, db: Session = Depend
         exam = DoctorExam(created_by_user_id=1, **payload.model_dump())
         db.add(exam)
         action = "create"
+    elif exam.is_completed and not payload.is_completed:
+        # Черновик из браузера (локальная карточка врача, которую интерфейс
+        # досылает при сохранении обращения и перед печатью) не должен снимать
+        # закрытие осмотра и затирать его заключение: из-за этого в «Плане
+        # осмотра» выписки и в амбулаторной карте врачи оставались без даты и
+        # заключения. Снять отметку врача можно только через PUT.
+        if payload.doctor_name:
+            exam.doctor_name = payload.doctor_name
     else:
         for key, value in payload.model_dump().items():
             setattr(exam, key, value)

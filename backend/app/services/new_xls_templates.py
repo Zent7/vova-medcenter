@@ -949,13 +949,16 @@ def validate_editable_xls_template(path: Path, spec: NewXlsTemplateSpec) -> None
 
     sheet = book.sheet_by_name(spec.sheet_name)
     locations: dict[Cell, list[Cell]] = {coordinate: [] for coordinate in spec.dynamic_cells}
+    # Маркеры считаются один раз на поле, а не на каждую клетку листа.
+    markers_by_coordinate = [
+        (coordinate, new_xls_markers(spec, coordinate)) for coordinate in spec.dynamic_cells
+    ]
     for row_index in range(sheet.nrows):
         for col_index in range(sheet.ncols):
             value = sheet.cell_value(row_index, col_index)
             if not isinstance(value, str):
                 continue
-            for coordinate in spec.dynamic_cells:
-                markers = new_xls_markers(spec, coordinate)
+            for coordinate, markers in markers_by_coordinate:
                 if any(marker in value for marker in markers):
                     locations[coordinate].append((row_index, col_index))
 
@@ -986,16 +989,18 @@ def legacy_xls_marker_locations(
     spec: LegacyXlsTemplateSpec,
 ) -> dict[str, tuple[str, int, int]]:
     locations: dict[str, list[tuple[str, int, int]]] = {field.field_id: [] for field in spec.fields}
+    # Маркеры считаются один раз на поле, а не на каждую клетку листа: раньше
+    # печать выписки профа и амбулаторной карты тратила на это 25–35 секунд.
+    markers_by_field = [(field.field_id, legacy_xls_markers(spec, field)) for field in spec.fields]
     for sheet in book.sheets():
         for row_index in range(sheet.nrows):
             for col_index in range(sheet.ncols):
                 value = sheet.cell_value(row_index, col_index)
                 if not isinstance(value, str):
                     continue
-                for field in spec.fields:
-                    markers = legacy_xls_markers(spec, field)
+                for field_id, markers in markers_by_field:
                     if any(marker in value for marker in markers):
-                        locations[field.field_id].append((sheet.name, row_index, col_index))
+                        locations[field_id].append((sheet.name, row_index, col_index))
 
     result: dict[str, tuple[str, int, int]] = {}
     for field in spec.fields:
