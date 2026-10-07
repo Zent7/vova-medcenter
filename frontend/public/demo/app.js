@@ -13356,7 +13356,12 @@ function bindContentEvents() {
     });
   });
 
-  contentRoot.querySelectorAll("[data-doctor-role-id]").forEach((button) => {
+  // Только кнопки врачей: форма карточки осмотра тоже несёт data-doctor-role-id, и
+  // клик по её кнопке «удалить врача» (или по подписи поля) всплывал до этого
+  // обработчика. Он заново грузил осмотры и открывал карточку: «удалённый» врач
+  // возвращался в браузере и снималось его исключение из обращения, а при
+  // следующем сохранении или печати сервер возвращал врача отметкой.
+  contentRoot.querySelectorAll("button[data-doctor-role-id]").forEach((button) => {
     button.addEventListener("click", async () => {
       const doctorRoleId = button.dataset.doctorRoleId;
       const selectedClient = getSelectedClient();
