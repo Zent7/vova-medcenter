@@ -881,7 +881,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
         class FakeDb:
             def get(self, model, object_id):
                 if model is Center and object_id == CENTER_ID:
-                    return SimpleNamespace(id=CENTER_ID)
+                    return SimpleNamespace(id=CENTER_ID, code="center-without-defaults")
                 return template if model is DocumentTemplate and object_id == template.id else None
 
             def commit(self):
@@ -943,7 +943,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
         class FakeDb:
             def get(self, model, object_id):
                 if model is Center and object_id == CENTER_ID:
-                    return SimpleNamespace(id=CENTER_ID)
+                    return SimpleNamespace(id=CENTER_ID, code="center-without-defaults")
                 return template if model is DocumentTemplate and object_id == template.id else None
 
             def commit(self):

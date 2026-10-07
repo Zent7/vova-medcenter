@@ -39,6 +39,7 @@ from app.services.new_xls_templates import (  # noqa: E402
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "assets" / "templates" / "Templates"
+CENTER_SETS_DIR = TEMPLATES_DIR.parent / "Centers"
 DRIVER_SIDES = (
     ("водительская лицевая.xls", "driver_front"),
     ("водительская обратн ст.xls", "driver_back"),
@@ -86,6 +87,16 @@ def fields_off_paper(book, locations: dict[str, tuple[str, int, int]]) -> list[s
         if row is not None and row.hidden:
             problems.append(f"{field_id} ({row_index}, {col_index}) в скрытой строке")
     return problems
+
+
+def template_copies(file_name: str) -> list[Path]:
+    """Встроенный бланк и его копии в начальных наборах центров."""
+    center_copies = sorted(
+        center_dir / file_name
+        for center_dir in CENTER_SETS_DIR.iterdir()
+        if center_dir.is_dir() and (center_dir / file_name).is_file()
+    )
+    return [TEMPLATES_DIR / file_name, *center_copies]
 
 
 def right_part_field(field_id: str) -> str | None:
@@ -152,47 +163,51 @@ class BundledTemplatesPrintEveryFieldTests(unittest.TestCase):
             for spec in NEW_XLS_TEMPLATE_SPECS
         ]
         for file_name, locate in templates:
-            with self.subTest(file_name=file_name):
-                book = xlrd.open_workbook(str(TEMPLATES_DIR / file_name), formatting_info=True)
-                locations = locate(book)
-                self.assertTrue(locations)
-                self.assertEqual(fields_off_paper(book, locations), [])
+            # У копий ВУ из наборов центров область печати уже по полю «год выдачи»
+            # справа; печать расширяет её сама, и это проверяет тест ниже.
+            copies = [TEMPLATES_DIR / file_name] if file_name in dict(DRIVER_SIDES) else template_copies(file_name)
+            for path in copies:
+                with self.subTest(file_name=file_name, copy=path.parent.name):
+                    book = xlrd.open_workbook(str(path), formatting_info=True)
+                    locations = locate(book)
+                    self.assertTrue(locations)
+                    self.assertEqual(fields_off_paper(book, locations), [])
 
 
 class DriverBlankPrintsBothPartsTests(unittest.TestCase):
     def test_both_parts_of_each_side_are_filled_alike_and_printed(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             for file_name, print_variant in DRIVER_SIDES:
-                with self.subTest(file_name=file_name):
-                    template_path = TEMPLATES_DIR / file_name
-                    output_path = Path(temporary_dir) / f"printed-{print_variant}.xls"
-                    print_driver_side(template_path, output_path, print_variant)
+                for template_path in template_copies(file_name):
+                    with self.subTest(file_name=file_name, copy=template_path.parent.name):
+                        output_path = Path(temporary_dir) / f"printed-{print_variant}.xls"
+                        print_driver_side(template_path, output_path, print_variant)
 
-                    spec = LEGACY_XLS_TEMPLATE_BY_FILE[file_name.casefold()]
-                    template_book = xlrd.open_workbook(str(template_path), formatting_info=True)
-                    locations = legacy_xls_marker_locations(template_book, spec)
-                    printed_book = xlrd.open_workbook(str(output_path), formatting_info=True)
+                        spec = LEGACY_XLS_TEMPLATE_BY_FILE[file_name.casefold()]
+                        template_book = xlrd.open_workbook(str(template_path), formatting_info=True)
+                        locations = legacy_xls_marker_locations(template_book, spec)
+                        printed_book = xlrd.open_workbook(str(output_path), formatting_info=True)
 
-                    self.assertEqual(fields_off_paper(printed_book, locations), [])
-                    self.assertFalse(
-                        [col for col, column in printed_book.sheet_by_index(0).colinfo_map.items() if column.hidden]
-                    )
+                        self.assertEqual(fields_off_paper(printed_book, locations), [])
+                        self.assertFalse(
+                            [col for col, column in printed_book.sheet_by_index(0).colinfo_map.items() if column.hidden]
+                        )
 
-                    def printed(field_id: str) -> str:
-                        sheet_name, row_index, col_index = locations[field_id]
-                        sheet = printed_book.sheet_by_name(sheet_name)
-                        return strip_new_xls_placeholder_padding(sheet.cell_value(row_index, col_index))
+                        def printed(field_id: str) -> str:
+                            sheet_name, row_index, col_index = locations[field_id]
+                            sheet = printed_book.sheet_by_name(sheet_name)
+                            return strip_new_xls_placeholder_padding(sheet.cell_value(row_index, col_index))
 
-                    pairs = [
-                        (field.field_id, right_part_field(field.field_id))
-                        for field in spec.fields
-                        if right_part_field(field.field_id)
-                    ]
-                    # Каждое поле бланка стоит в паре: в левой части и в правой.
-                    self.assertEqual(len(pairs) * 2, len(spec.fields))
-                    for left_field, right_field in pairs:
-                        self.assertEqual(printed(right_field), printed(left_field), right_field)
-                    self.assertTrue([left_field for left_field, _ in pairs if printed(left_field)])
+                        pairs = [
+                            (field.field_id, right_part_field(field.field_id))
+                            for field in spec.fields
+                            if right_part_field(field.field_id)
+                        ]
+                        # Каждое поле бланка стоит в паре: в левой части и в правой.
+                        self.assertEqual(len(pairs) * 2, len(spec.fields))
+                        for left_field, right_field in pairs:
+                            self.assertEqual(printed(right_field), printed(left_field), right_field)
+                        self.assertTrue([left_field for left_field, _ in pairs if printed(left_field)])
 
     def test_front_prints_like_the_customer_program(self):
         # Программа заказчика печатала лицевую областью A1:AZ44 при масштабе 97 %.

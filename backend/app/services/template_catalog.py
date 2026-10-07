@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import hashlib
+import json
 import logging
 from pathlib import Path
 import re
@@ -221,6 +223,122 @@ def split_shared_template_overrides(center_ids) -> list[str]:
         except OSError:
             logger.exception("Не удалось разложить общий шаблон %s по медцентрам", source.name)
     return split_names
+
+
+# Бланки, которые заказчик уже переоформил под конкретный центр (реквизиты в
+# шапках, договор), лежат в репозитории: Centers/<код центра>/<файл>. Это
+# начальная клиентская версия центра. При старте она копируется в папку центра
+# center-<id>, и центр печатает её, а не общий встроенный бланк.
+CENTER_DEFAULTS_FOLDER = "Centers"
+# Что из набора уже разложено в папку центра (имя файла -> хэш разложенной
+# копии, null — у центра уже была своя). Без этого «Вернуть исходный» или
+# удалённый вручную файл оживал бы при следующем старте.
+CENTER_DEFAULTS_MARKER = ".seeded-defaults.json"
+
+
+def get_center_defaults_root(center_code: str) -> Path:
+    return get_templates_root().parent / CENTER_DEFAULTS_FOLDER / center_code
+
+
+def center_default_template_path(center_code: str, file_name: str) -> Path | None:
+    """Файл из начального набора центра или None, если для него набора нет."""
+    if Path(center_code).name != center_code or Path(file_name).name != file_name:
+        return None
+    path = get_center_defaults_root(center_code) / file_name
+    return path if path.is_file() else None
+
+
+def _file_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _copy_into_place(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(f"{target.name}.seeding")
+    shutil.copy2(source, partial)
+    partial.replace(target)
+
+
+def _read_seeded_defaults(center_dir: Path) -> dict[str, str | None]:
+    try:
+        data = json.loads((center_dir / CENTER_DEFAULTS_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_seeded_defaults(center_dir: Path, seeded: dict[str, str | None]) -> None:
+    center_dir.mkdir(parents=True, exist_ok=True)
+    marker = center_dir / CENTER_DEFAULTS_MARKER
+    partial = marker.with_name(f"{marker.name}.writing")
+    partial.write_text(json.dumps(seeded, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    partial.replace(marker)
+
+
+def seed_center_template_defaults(centers) -> list[str]:
+    """Разложить начальные наборы бланков по папкам центров.
+
+    ``centers`` — пары (id, код). Файл из ``Centers/<код>`` копируется в папку
+    центра один раз: если у центра уже есть своя копия, она остаётся нетронутой,
+    а удалённый после этого файл не возвращается. Копия, которую заказчик не
+    правил, подтягивает новую версию набора, когда набор в репозитории
+    поменялся. Возвращает записи «id/файл» разложенных или обновлённых файлов.
+    """
+    placed: list[str] = []
+    for center_id, center_code in centers:
+        if Path(center_code).name != center_code:
+            continue
+        defaults_root = get_center_defaults_root(center_code)
+        if not defaults_root.is_dir():
+            continue
+        center_dir = get_center_overrides_root(center_id)
+        seeded = _read_seeded_defaults(center_dir)
+        changed = False
+        for source in sorted(defaults_root.iterdir()):
+            if not source.is_file() or source.suffix.lower() not in SUPPORTED_TEMPLATE_EXTENSIONS:
+                continue
+            try:
+                target = get_template_override_path(source.name, center_id)
+                source_digest = _file_digest(source)
+                if source.name not in seeded:
+                    if target.exists():
+                        seeded[source.name] = None
+                    else:
+                        _copy_into_place(source, target)
+                        seeded[source.name] = source_digest
+                        placed.append(f"{center_id}/{source.name}")
+                    changed = True
+                elif (
+                    seeded[source.name] not in (None, source_digest)
+                    and target.is_file()
+                    and _file_digest(target) == seeded[source.name]
+                ):
+                    _copy_into_place(source, target)
+                    seeded[source.name] = source_digest
+                    placed.append(f"{center_id}/{source.name}")
+                    changed = True
+            except (OSError, ValueError):
+                logger.exception("Не удалось разложить бланк %s центру %s", source.name, center_code)
+        if changed:
+            try:
+                _write_seeded_defaults(center_dir, seeded)
+            except OSError:
+                logger.exception("Не удалось записать, что набор бланков центра %s разложен", center_code)
+    return placed
+
+
+def restore_center_template_default(center_id: int, center_code: str, file_name: str) -> bool:
+    """Вернуть центру его начальную версию бланка. False — набора для файла нет."""
+    default_path = center_default_template_path(center_code, file_name)
+    if default_path is None:
+        return False
+    target = get_template_override_path(file_name, center_id)
+    _copy_into_place(default_path, target)
+    center_dir = get_center_overrides_root(center_id)
+    seeded = _read_seeded_defaults(center_dir)
+    seeded[file_name] = _file_digest(default_path)
+    _write_seeded_defaults(center_dir, seeded)
+    return True
 
 
 def _is_inside(path: Path, root: Path) -> bool:

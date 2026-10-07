@@ -39,6 +39,7 @@ from app.services.template_catalog import (
     get_template_override_path,
     get_templates_root,
     resolve_template_file,
+    restore_center_template_default,
     sync_document_template_catalog,
     template_display_position,
     template_has_override,
@@ -308,7 +309,11 @@ def reset_document_template(
     if not bundled_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Встроенный шаблон не найден")
     try:
-        override_path.unlink(missing_ok=True)
+        # У центра с начальным набором «исходный» — его набор, а не общий
+        # встроенный бланк с чужими реквизитами.
+        center = db.get(Center, center_id)
+        if center is None or not restore_center_template_default(center_id, center.code, template.file_name):
+            override_path.unlink(missing_ok=True)
     except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

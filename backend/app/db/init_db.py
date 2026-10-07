@@ -13,6 +13,7 @@ from app.services.seed import seed_reference_data
 from app.models.center import Center
 from app.services.template_catalog import (
     retire_outdated_template_overrides,
+    seed_center_template_defaults,
     split_shared_template_overrides,
 )
 from sqlalchemy import inspect, select, text
@@ -499,6 +500,9 @@ def init_db() -> None:
     # в корне хранилища, раскладываем по папкам центров, и только потом снимаем
     # устаревшие копии в этих папках.
     with SessionLocal() as db:
-        center_ids = db.execute(select(Center.id)).scalars().all()
-    split_shared_template_overrides(center_ids)
+        centers = db.execute(select(Center.id, Center.code)).all()
+    split_shared_template_overrides([center_id for center_id, _ in centers])
+    # Начальные наборы бланков центров раскладываем до проверки на устаревшие
+    # метки: разложенная копия проходит ту же проверку, что и загруженная.
+    seed_center_template_defaults([(center_id, code) for center_id, code in centers])
     retire_outdated_template_overrides()
