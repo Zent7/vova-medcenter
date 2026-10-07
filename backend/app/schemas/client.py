@@ -52,16 +52,19 @@ class ClientBase(BaseModel):
 
 
 class ClientCreate(ClientBase):
-    pass
+    # Центры, куда заводится клиент. Не назван — основной центр сотрудника.
+    center_ids: list[int] | None = None
 
 
 class ClientUpdate(ClientBase):
-    pass
+    # Полный новый список центров клиента; не передан — центры не меняются.
+    center_ids: list[int] | None = None
 
 
 class ClientRead(ClientBase):
     id: int
     patient_number: int
+    center_ids: list[int] = Field(default_factory=list)
     created_at: datetime | None = None
     latest_encounter_created_at: datetime | None = None
     services: list[str] = Field(default_factory=list)

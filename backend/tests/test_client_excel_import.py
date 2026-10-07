@@ -240,6 +240,7 @@ class ClientExcelImportTests(unittest.TestCase):
             birth_date=date(1990, 5, 20),
             snils="999-888-777 66",
         )
+        existing.centers = [self.db.get(Center, 1)]
         self.db.add(existing)
         self.db.commit()
 
@@ -290,6 +291,7 @@ class ClientExcelImportTests(unittest.TestCase):
             admission_category="Медкомиссия",
             reference_number="МК-001",
         )
+        existing.centers = [self.db.get(Center, 1)]
         self.db.add(existing)
         self.db.commit()
 

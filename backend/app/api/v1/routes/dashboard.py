@@ -7,8 +7,9 @@ from sqlalchemy import and_, case, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.routes.clients import client_search_conditions
+from app.services.client_centers import client_in_centers_condition
 from app.db.session import get_db
-from app.models.client import Client
+from app.models.client import Client, client_centers
 from app.models.center import Center
 from app.models.doctor_exam import DoctorExam
 from app.models.encounter import Encounter
@@ -65,6 +66,7 @@ def get_dashboard_encounter_rows(
     encounter_date: Annotated[date | None, Query()] = None,
     encounter_date_from: Annotated[date | None, Query()] = None,
     encounter_date_to: Annotated[date | None, Query()] = None,
+    center_ids: Annotated[list[int] | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
     db: Session = Depends(get_db),
@@ -75,17 +77,25 @@ def get_dashboard_encounter_rows(
     row when no encounter-date filter is active.  Services are loaded for the
     row's exact encounter, so an older multi-service encounter remains one
     row and never inherits services from a newer encounter.
+
+    ``center_ids`` limits the journal to the client bases of those centers: only
+    their clients, and of those clients only the encounters made in those
+    centers. A client whose encounters are all elsewhere stays as an empty row.
     """
 
     active_encounter_join = and_(
         Encounter.client_id == Client.id,
         Encounter.deleted_at.is_(None),
     )
+    if center_ids:
+        active_encounter_join = and_(active_encounter_join, Encounter.center_id.in_(center_ids))
     query = (
         select(Client, Encounter)
         .outerjoin(Encounter, active_encounter_join)
         .where(Client.deleted_at.is_(None))
     )
+    if center_ids:
+        query = query.where(client_in_centers_condition(center_ids))
 
     search_value = (search or "").strip()
     if search_value:
@@ -115,6 +125,15 @@ def get_dashboard_encounter_rows(
         if center_ids
         else {}
     )
+    client_centers_by_client: dict[int, list[int]] = defaultdict(list)
+    journal_client_ids = list({client.id for client, _ in journal_rows})
+    if journal_client_ids:
+        for row_client_id, row_center_id in db.execute(
+            select(client_centers.c.client_id, client_centers.c.center_id)
+            .where(client_centers.c.client_id.in_(journal_client_ids))
+            .order_by(client_centers.c.center_id.asc())
+        ).all():
+            client_centers_by_client[row_client_id].append(row_center_id)
     services_by_encounter: dict[int, list[str]] = defaultdict(list)
     if encounter_ids:
         service_rows = db.execute(
@@ -157,6 +176,7 @@ def get_dashboard_encounter_rows(
                 work_place=client.work_place,
                 organization=client.organization,
                 real_date_text=client.real_date_text,
+                client_center_ids=client_centers_by_client.get(client.id, []),
                 encounter_id=encounter.id if encounter is not None else None,
                 encounter_date=encounter.encounter_date if encounter is not None else None,
                 encounter_created_at=encounter_created_at,

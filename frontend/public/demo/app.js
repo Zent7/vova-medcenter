@@ -2482,6 +2482,11 @@ function joinDocument(client) {
   return [client?.document_type, number].filter(Boolean).join(" ").trim();
 }
 
+function normalizeClientCenterIds(value) {
+  if (!Array.isArray(value)) return undefined;
+  return value.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+}
+
 function mapApiClient(client) {
   const services = Array.isArray(client.services) ? client.services : [];
   const admissionServices = getClientAdmissionServiceNames(client);
@@ -2502,6 +2507,9 @@ function mapApiClient(client) {
     gender: client.sex || "",
     phone: client.phone || "",
     centerId: client.center_id ?? null,
+    // Центры клиента (не центр обращения): в базах каких центров он лежит. Не
+    // известны, пока клиент пришёл без этого поля, — тогда undefined.
+    centerIds: normalizeClientCenterIds(client.client_center_ids ?? client.center_ids),
     // У строки без обращения центра нет. Раньше здесь подставлялся «Медцентр 1»,
     // и такой клиент пропадал из журнала всех остальных медцентров.
     center: client.center_name || client.center || "",
@@ -3094,6 +3102,76 @@ function getPinnedCenterName() {
   return allowed.length === 1 ? allowed[0] : "";
 }
 
+// У каждого медцентра своя клиентская база. Сотрудник с несколькими центрами
+// видит базы всех своих центров сразу, а админ, гость и тот, чьих центров
+// интерфейс не знает, — базу центра, выбранного в переключателе.
+function getClientBaseCenterNames() {
+  const allowed = getAllowedCenterNames();
+  return allowed.length ? allowed : [getWorkspaceCenterName()];
+}
+
+function getClientBaseCenterIds() {
+  const names = getClientBaseCenterNames().map(normalizeCenterLookupValue);
+  return (data.centers || [])
+    .filter((center) => names.includes(normalizeCenterLookupValue(center?.name)))
+    .map((center) => Number(center.id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+// Центры, между которыми раскладывают клиента при заведении: у сотрудника с
+// несколькими центрами его центры, у админа все. Остальным выбирать не из чего,
+// клиент заводится в рабочий центр.
+function getClientCenterChoiceNames() {
+  const { accessToken, allCenters } = appState.auth;
+  if (accessToken && allCenters) return WORKSPACE_CENTER_NAMES.slice();
+  const allowed = getAllowedCenterNames();
+  return allowed.length > 1 ? allowed : [];
+}
+
+// Центры, чей договор печатают клиенту отдельной кнопкой: договор у каждого
+// центра свой («Договор Мед-Авто», «Договор Медилэнд»). Только у сотрудника с
+// несколькими центрами; админ печатает договор рабочего центра, переключаясь.
+function getContractCenterNames() {
+  const allowed = getAllowedCenterNames();
+  return allowed.length > 1 ? allowed : [];
+}
+
+async function resolveCenterIdByName(centerName) {
+  const centers = await ensureCentersLoaded();
+  const wanted = normalizeCenterLookupValue(centerName);
+  const center = (centers || []).find((item) => normalizeCenterLookupValue(item?.name) === wanted);
+  if (!center?.id) throw new Error(`Не удалось найти медцентр «${centerName}»`);
+  return Number(center.id);
+}
+
+// Кнопки печати договора из журнала и из обращения: одна, как была, или по
+// кнопке на каждый центр сотрудника.
+function renderPrintContractButtons({ id, enabled = true, title = "" } = {}) {
+  const centerNames = getContractCenterNames();
+  const disabledAttribute = enabled ? "" : "disabled";
+  if (!centerNames.length) {
+    const titleAttribute = title ? `title="${escapeHtml(title)}"` : "";
+    return `<button class="primary-button" id="${id}" type="button" ${disabledAttribute} ${titleAttribute}>Печать договора</button>`;
+  }
+  return centerNames
+    .map((centerName) => {
+      const titleAttribute = title ? `title="${escapeHtml(`${title}: ${centerName}`)}"` : "";
+      return `<button class="primary-button" type="button" data-print-contract-center="${escapeHtml(centerName)}" ${disabledAttribute} ${titleAttribute}>Договор ${escapeHtml(centerName)}</button>`;
+    })
+    .join("");
+}
+
+function renderGenerateContractButtons() {
+  const centerNames = getContractCenterNames();
+  if (!centerNames.length) return '<button class="primary-button" data-generate-document="contract">Договор</button>';
+  return centerNames
+    .map(
+      (centerName) =>
+        `<button class="primary-button" data-generate-document="contract" data-contract-center="${escapeHtml(centerName)}">Договор ${escapeHtml(centerName)}</button>`,
+    )
+    .join("");
+}
+
 function getWorkspaceCenterName() {
   const allowed = getAllowedCenterNames();
   if (allowed.length) {
@@ -3258,6 +3336,10 @@ async function endAllDemoSessions() {
 function signOutDemoStaff({ message = "Вы вышли из программы" } = {}) {
   appState.auth = createEmptyAuth();
   clearPersistedAuth();
+  // Клиенты вышедшего сотрудника не должны мелькнуть следующему.
+  data.backendClients = [];
+  data.backendClientsLoaded = false;
+  invalidateClientPool();
   data.staffUsers = [];
   data.staffRoles = [];
   data.staffError = "";
@@ -5892,8 +5974,17 @@ function matchesEncounterDate(client) {
   return clientDate === filterDate;
 }
 
+// Строка журнала видна, если её обращение сделано в центре из базы сотрудника;
+// строка клиента без обращений видна всегда: сервер уже отобрал клиентов по центрам.
+function matchesClientBase(center) {
+  if (appState.centerFilter === "all") return true;
+  const centerName = String(center || "").trim();
+  if (!centerName) return true;
+  return getClientBaseCenterNames().includes(centerName);
+}
+
 function filteredClients() {
-  return data.backendClients.filter((client) => matchesCenter(client.center));
+  return data.backendClients.filter((client) => matchesClientBase(client.center));
 }
 
 function getDashboardClientPage() {
@@ -5965,10 +6056,14 @@ async function loadClientsFromBackend(searchValue) {
   setTimeout(renderApp, 0);
 
   try {
+    // Список центров нужен, чтобы попросить у сервера клиентов только своих центров.
+    await ensureCentersLoaded().catch(() => []);
+    if (requestId !== clientSearchRequestId) return;
     const params = new URLSearchParams({ limit: String(DASHBOARD_CLIENT_LOAD_LIMIT) });
     if (search) params.set("search", search);
     if (encounterDateFrom) params.set("encounter_date_from", encounterDateFrom);
     if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
+    getClientBaseCenterIds().forEach((centerId) => params.append("center_ids", String(centerId)));
     const url = `${API_BASE_URL}/dashboard/encounter-rows?${params.toString()}`;
     const response = await fetch(url, { signal: abortController.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -6253,6 +6348,9 @@ function buildExcelRows(clients) {
     return {
       id: client.id,
       encounterId: client.encounterId || currentVisit?.backendId || null,
+      // Сотрудник с несколькими центрами видит в таблице базы всех своих центров:
+      // подпись говорит, в каком центре сделано обращение этой строки.
+      centerLabel: getClientBaseCenterNames().length > 1 ? client.center || "" : "",
       rowId: client.dashboardRowId || (client.encounterId ? `encounter-${client.encounterId}` : `client-${client.id}`),
       patientNumber: client.patientNumber ?? client.id,
       fullName: client.fullName,
@@ -6691,15 +6789,11 @@ function renderSketchHome() {
               </label>
               <div class="sketch-toolbar__actions">
                 <button class="primary-button" id="addClientButton" type="button" title="Создать новую карточку пациента">Новый клиент</button>
-                <button
-                  class="primary-button"
-                  id="printSelectedClientContractButton"
-                  type="button"
-                  ${hasSelectedClient ? "" : "disabled"}
-                  title="${hasSelectedClient ? "Распечатать договор для выбранного клиента" : "Сначала выберите клиента в таблице"}"
-                >
-                  Печать договора
-                </button>
+                ${renderPrintContractButtons({
+                  id: "printSelectedClientContractButton",
+                  enabled: hasSelectedClient,
+                  title: hasSelectedClient ? "Распечатать договор для выбранного клиента" : "Сначала выберите клиента в таблице",
+                })}
                 <button
                   class="secondary-button dashboard-new-visit-button"
                   id="createVisitFromDashboardButton"
@@ -6774,7 +6868,7 @@ function renderSketchHome() {
                     .map(
                       (row) => `
                         <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && String(selectedClient.id) === String(row.id) && String(appState.selectedEncounterId || "") === String(row.encounterId || "") ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" data-encounter-id="${row.encounterId || ""}" data-dashboard-row-id="${escapeHtml(row.rowId)}" title="Один щелчок — выбрать обращение, двойной — изменить клиента">
-                          <span>${escapeHtml(row.encounterDate)}</span>
+                          <span>${escapeHtml(row.encounterDate)}${row.centerLabel ? `<small class="sketch-table__center">${escapeHtml(row.centerLabel)}</small>` : ""}</span>
                           <span class="sketch-table__fio">${escapeHtml(displayTableValue(row.fullName))}</span>
                           <span>${escapeHtml(row.birthDate)}</span>
                           <span>${renderCopyableValue(row.registration, "регистрацию", { className: "copyable-table-value", fallback: "—", copyMessage: "Регистрация скопирована", keyboard: false })}</span>
@@ -8138,7 +8232,7 @@ function renderOperatorVisitForm(selectedClient, activeVisit) {
       <div class="operator-visit-actions">
         <button type="button" class="ghost-button" id="recalculateVisitAmountButton">Пересчитать сумму</button>
         <button type="submit" class="primary-button">Сохранить обращение</button>
-        <button type="button" class="primary-button" id="printVisitContractButton">Печать договора</button>
+        ${renderPrintContractButtons({ id: "printVisitContractButton" })}
         <button type="button" class="ghost-button" id="openVisitDocumentsButton">Документы</button>
         <button type="button" class="ghost-button" id="closeVisitButton">Завершить</button>
       </div>
@@ -9391,7 +9485,7 @@ function renderDocumentsPageLegacy() {
           ? `
             <p class="muted">Клиент: ${escapeHtml(selectedClient.fullName)}. ${escapeHtml(getVisitTitle(activeVisit))}</p>
             <div class="document-actions">
-              <button class="primary-button" data-generate-document="contract">Договор</button>
+              ${renderGenerateContractButtons()}
               <button class="primary-button" data-generate-document="medical">Медицинская справка</button>
               <button class="ghost-button" data-generate-document="driver">Водительская справка</button>
               <button class="ghost-button" data-generate-document="xml">XML-заготовка</button>
@@ -10031,6 +10125,10 @@ async function createDocumentForVisit(type, client, visit, options = {}) {
     encounter_id: visit.backendId ? Number(visit.backendId) : null,
   };
   const xlsPrintVariant = getXlsPrintVariantForDocumentType(type);
+  if (options.templateCenterName) {
+    // Шаблон другого центра сотрудника: договор «Мед-Авто» или «Медилэнд».
+    payload.template_center_id = await resolveCenterIdByName(options.templateCenterName);
+  }
   if (options.blankFormId) {
     payload.blank_form_id = Number(options.blankFormId);
   }
@@ -10158,11 +10256,11 @@ async function openPrintFlowForVisit(client, visit) {
   });
 }
 
-async function createDemoDocument(type) {
+async function createDemoDocument(type, options = {}) {
   ensureVisitsStore();
   const client = getSelectedClient();
   const visit = client ? getCurrentVisitForClient(client.id) : null;
-  return createDocumentForVisit(type, client, visit);
+  return createDocumentForVisit(type, client, visit, options);
 }
 
 function normalizeBlankSeries(series) {
@@ -11558,7 +11656,7 @@ function renderDocumentsPage() {
           ? `
             <p class="muted">Клиент: ${escapeHtml(selectedClient.fullName)}. ${escapeHtml(getVisitTitle(activeVisit))}</p>
             <div class="document-actions">
-              <button class="primary-button" data-generate-document="contract">Договор</button>
+              ${renderGenerateContractButtons()}
               <button class="primary-button" data-generate-document="medical">Медицинская справка</button>
               <button class="ghost-button" data-generate-document="driver">Водительская справка</button>
               <button class="ghost-button" data-generate-document="xml">XML-файл</button>
@@ -11589,7 +11687,10 @@ async function openDemoDocument(typeOrId, options = {}) {
   let documentItem = existingDocument;
 
   try {
-    documentItem = documentItem || await createDemoDocument(typeOrId);
+    documentItem = documentItem || await createDemoDocument(
+      typeOrId,
+      options.templateCenterName ? { templateCenterName: options.templateCenterName } : {},
+    );
   } catch (error) {
     showToast(error.message || "Не удалось сформировать документ");
     return;
@@ -12513,7 +12614,7 @@ async function prepareContractPrintContext() {
   return { client, visit };
 }
 
-async function printContractForCurrentVisit({ rerender = true } = {}) {
+async function printContractForCurrentVisit({ rerender = true, centerName = "" } = {}) {
   const targetWindow = openDocumentTargetWindow("Договор формируется. Не закрывайте это окно.");
   try {
     const { client, visit } = await prepareContractPrintContext();
@@ -12523,8 +12624,11 @@ async function printContractForCurrentVisit({ rerender = true } = {}) {
       return;
     }
 
-    const documentItem = await printDocumentForVisit("contract", client, visit, { targetWindow });
-    showToast(`Договор открыт: ${documentItem?.title || "документ"}`);
+    const documentItem = await printDocumentForVisit("contract", client, visit, {
+      targetWindow,
+      ...(centerName ? { templateCenterName: centerName } : {}),
+    });
+    showToast(`Договор открыт: ${documentItem?.title || "документ"}${centerName ? ` (${centerName})` : ""}`);
     if (rerender) renderApp();
   } catch (error) {
     showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть договор"));
@@ -12728,6 +12832,17 @@ function bindContentEvents() {
       }
     });
   }
+
+  contentRoot.querySelectorAll("[data-print-contract-center]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await printContractForCurrentVisit({ centerName: button.dataset.printContractCenter });
+      } finally {
+        if (button.isConnected) button.disabled = false;
+      }
+    });
+  });
 
   const editSelectedClientButton = document.getElementById("editSelectedClientButton");
   if (editSelectedClientButton) {
@@ -13123,7 +13238,11 @@ function bindContentEvents() {
         openDriverPrintFlow();
         return;
       }
-      openDemoDocument(documentType, { forceGenerate: true });
+      const contractCenterName = button.dataset.contractCenter || "";
+      openDemoDocument(documentType, {
+        forceGenerate: true,
+        ...(contractCenterName ? { templateCenterName: contractCenterName } : {}),
+      });
     });
   });
 
@@ -14205,6 +14324,8 @@ function switchWorkspaceCenter(nextCenter, { announce = true } = {}) {
   persistDemoState();
   renderApp();
   void loadServicesFromBackend();
+  // У нового центра своя клиентская база.
+  void loadClientsFromBackend(appState.clientSearch);
   // Файлы шаблонов у нового центра свои: «клиентская версия» на странице
   // «Шаблоны» должна быть его, а не прежнего центра.
   data.templateOperationStatus = "";
@@ -14261,6 +14382,8 @@ document.getElementById("performLogin")?.addEventListener("click", async () => {
     markAuthActivity();
     loginModal?.classList.add("hidden");
     showToast(`Вход выполнен: ${appState.auth.userName || login}`);
+    // Клиентская база зависит от центров сотрудника.
+    void loadClientsFromBackend(appState.clientSearch);
     if (canManageEmployeeWorkspace()) {
       appState.page = "employee";
       persistDemoState();

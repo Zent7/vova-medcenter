@@ -1540,6 +1540,44 @@ body[data-page="dashboard"] .sketch-toolbar .ghost-button {
   grid-column: span 2;
 }
 
+.sketch-table__center {
+  display: block;
+  color: #5f748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.client-center-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 7px 12px;
+  border: 1px solid rgba(12, 125, 123, 0.22);
+  border-radius: 10px;
+  background: rgba(12, 125, 123, 0.06);
+  color: #17304a;
+  font-size: 14px;
+}
+
+.client-center-picker__title {
+  font-weight: 700;
+}
+
+.client-center-picker__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.client-center-picker__item input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 .client-create-actions {
   display: flex;
   justify-content: flex-end;

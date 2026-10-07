@@ -61,6 +61,8 @@ class DashboardEncounterRow(BaseModel):
     work_place: str | None = None
     organization: str | None = None
     real_date_text: str | None = None
+    # Центры клиента (не центр обращения): кому ещё виден этот клиент.
+    client_center_ids: list[int] = Field(default_factory=list)
 
     encounter_id: int | None = None
     encounter_date: date | None = None

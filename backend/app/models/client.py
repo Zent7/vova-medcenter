@@ -1,10 +1,20 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Column, Date, DateTime, ForeignKey, Index, Integer, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.mixins import TimestampMixin
+
+# Медцентры клиента. У каждого центра своя клиентская база: сотрудник видит
+# клиентов только тех центров, где работает. Клиент, заведённый сразу в два
+# центра, лежит в обоих и виден сотрудникам обоих.
+client_centers = Table(
+    "client_centers",
+    Base.metadata,
+    Column("client_id", ForeignKey("clients.id", ondelete="CASCADE"), primary_key=True),
+    Column("center_id", ForeignKey("centers.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class Client(TimestampMixin, Base):
@@ -62,6 +72,11 @@ class Client(TimestampMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_by: Mapped["User | None"] = relationship("User")
+    centers: Mapped[list["Center"]] = relationship("Center", secondary=client_centers, order_by="Center.id")
+
+    @property
+    def center_ids(self) -> list[int]:
+        return [center.id for center in self.centers]
 
 
 Index("ix_clients_full_name_birth", Client.last_name, Client.first_name, Client.middle_name, Client.birth_date)

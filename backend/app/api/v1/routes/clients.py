@@ -4,7 +4,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import String, and_, case, cast, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.v1.routes.auth import get_optional_current_user
 from app.db.session import get_db
@@ -16,6 +16,7 @@ from app.models.service import Service
 from app.models.user import User
 from app.schemas.client import ClientCreate, ClientRead, ClientSearchRead, ClientUpdate, DeletedClientRead
 from app.services.audit import write_audit_log
+from app.services.client_centers import client_in_centers_condition, resolve_center_ids, set_client_centers
 from app.services.duplicates import build_duplicate_check_keys
 from app.services.notifications import build_deletion_email_body, send_deletion_notification
 from app.services.system_user import get_system_user_id
@@ -107,12 +108,17 @@ def find_duplicate(
     db: Session,
     payload: ClientCreate | ClientUpdate,
     exclude_client_id: int | None = None,
+    center_ids: list[int] | None = None,
 ) -> Client | None:
+    """Клиент с тем же ФИО. У каждого центра своя база, поэтому дублем считается
+    только клиент из тех же центров: тёзка из чужого центра заводиться не мешает."""
     conditions = duplicate_conditions_for(payload)
     if not conditions:
         return None
 
     query = select(Client).where(Client.deleted_at.is_(None), or_(*conditions))
+    if center_ids:
+        query = query.where(client_in_centers_condition(center_ids))
     if exclude_client_id is not None:
         query = query.where(Client.id != exclude_client_id)
     return db.execute(query).scalars().first()
@@ -332,8 +338,11 @@ def apply_client_filters_and_order(
     encounter_date: date | None,
     encounter_date_from: date | None = None,
     encounter_date_to: date | None = None,
+    center_ids: list[int] | None = None,
 ):
     query = query.where(Client.deleted_at.is_(None))
+    if center_ids:
+        query = query.where(client_in_centers_condition(center_ids))
     if value:
         query = query.where(or_(*client_search_conditions(value)))
 
@@ -392,6 +401,7 @@ def search_clients(
     encounter_date: date | None = Query(default=None),
     encounter_date_from: date | None = Query(default=None),
     encounter_date_to: date | None = Query(default=None),
+    center_ids: list[int] | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -403,6 +413,7 @@ def search_clients(
         encounter_date,
         encounter_date_from,
         encounter_date_to,
+        center_ids,
     ).offset(offset).limit(limit)
     rows = db.execute(query).mappings().all()
     client_ids = [row["id"] for row in rows]
@@ -423,17 +434,19 @@ def list_clients(
     encounter_date: date | None = Query(default=None),
     encounter_date_from: date | None = Query(default=None),
     encounter_date_to: date | None = Query(default=None),
+    center_ids: list[int] | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[ClientRead]:
     value = search.strip() if search else ""
     query = apply_client_filters_and_order(
-        select(Client),
+        select(Client).options(selectinload(Client.centers)),
         value,
         encounter_date,
         encounter_date_from,
         encounter_date_to,
+        center_ids,
     ).offset(offset).limit(limit)
     clients = db.execute(query).scalars().all()
     return serialize_clients(db, clients)
@@ -442,10 +455,13 @@ def list_clients(
 @router.get("/deleted", response_model=list[DeletedClientRead])
 def list_deleted_clients(
     search: str | None = Query(default=None),
+    center_ids: list[int] | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[DeletedClientRead]:
     query = select(Client).where(Client.deleted_at.is_not(None))
+    if center_ids:
+        query = query.where(client_in_centers_condition(center_ids))
     value = search.strip() if search else ""
     if value:
         pattern = f"%{value}%"
@@ -484,10 +500,15 @@ def get_client(client_id: int, db: Session = Depends(get_db)) -> ClientRead:
 
 
 @router.post("", response_model=ClientRead)
-def create_client(payload: ClientCreate, db: Session = Depends(get_db)) -> ClientRead:
+def create_client(
+    payload: ClientCreate,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+) -> ClientRead:
     normalized_data = normalize_payload(payload)
+    center_ids = resolve_center_ids(db, normalized_data.pop("center_ids", None), current_user)
     normalized_payload = ClientCreate(**normalized_data)
-    possible_duplicate = find_duplicate(db, normalized_payload)
+    possible_duplicate = find_duplicate(db, normalized_payload, center_ids=center_ids)
     if possible_duplicate is not None:
         raise duplicate_error(normalized_payload, possible_duplicate)
 
@@ -495,6 +516,7 @@ def create_client(payload: ClientCreate, db: Session = Depends(get_db)) -> Clien
     normalized_data["card_number"] = normalized_data.get("card_number") or f"{next_patient_number:07d}"
     created_by_user_id = get_system_user_id(db)
     client = Client(**normalized_data, patient_number=next_patient_number, created_by_user_id=created_by_user_id)
+    set_client_centers(db, client, center_ids)
     db.add(client)
     db.flush()
     db.add(
@@ -531,9 +553,18 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Клиент не найден")
 
     normalized_data = normalize_payload(payload)
-    current_data = {key: getattr(client, key) for key in ClientUpdate.model_fields}
+    requested_center_ids = normalized_data.pop("center_ids", None)
+    if requested_center_ids is not None and not requested_center_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="У клиента должен остаться хотя бы один медцентр",
+        )
+    center_ids = (
+        resolve_center_ids(db, requested_center_ids) if requested_center_ids is not None else client.center_ids
+    )
+    current_data = {key: getattr(client, key) for key in ClientUpdate.model_fields if key != "center_ids"}
     normalized_payload = ClientUpdate(**{**current_data, **normalized_data})
-    possible_duplicate = find_duplicate(db, normalized_payload, exclude_client_id=client_id)
+    possible_duplicate = find_duplicate(db, normalized_payload, exclude_client_id=client_id, center_ids=center_ids)
     if possible_duplicate is not None:
         raise duplicate_error(normalized_payload, possible_duplicate)
 
@@ -544,6 +575,8 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
         setattr(client, key, value)
     if legacy_payload:
         client.legacy_payload_json = {**(client.legacy_payload_json or {}), **legacy_payload}
+    if requested_center_ids is not None:
+        set_client_centers(db, client, center_ids)
 
     updated_by_user_id = get_system_user_id(db)
     db.commit()

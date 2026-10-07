@@ -1,6 +1,8 @@
 ﻿let clientModalSelectedServices = new Set();
 let clientModalServiceDetails = {};
 let clientModalSubmitAction = "save";
+// Центр, чей договор печатать после сохранения («ОК + договор Мед-Авто»); пусто — договор рабочего центра.
+let clientModalContractCenterName = "";
 let clientModalSexKey = "";
 
 const CLIENT_DRIVER_DEFAULT_CATEGORIES = ["B"];
@@ -1271,6 +1273,41 @@ function bindClientServiceGroupButtons() {
   });
 }
 
+// Кнопка «ОК + договор»: одна, как была, или по кнопке на каждый центр сотрудника
+// с несколькими центрами: договор у каждого центра свой.
+function renderClientContractSubmitButtons(encounterMode = false) {
+  const label = encounterMode ? "Сохранить + договор" : "ОК + договор";
+  const centerNames = getContractCenterNames();
+  if (!centerNames.length) {
+    return `<button type="submit" class="ghost-button" name="clientSubmitAction" value="contract">${label}</button>`;
+  }
+  return centerNames
+    .map(
+      (centerName) =>
+        `<button type="submit" class="ghost-button" name="clientSubmitAction" value="contract" data-contract-center="${escapeHtml(centerName)}">${label} ${escapeHtml(centerName)}</button>`,
+    )
+    .join("");
+}
+
+// Переключатель «Клиент в центрах»: у каждого центра своя клиентская база, а
+// сотрудник с несколькими центрами может завести клиента сразу в обе.
+function renderClientCenterPicker(centerNames, checkedNames) {
+  return `
+    <div class="client-center-picker" id="clientCenterPicker">
+      <span class="client-center-picker__title">Клиент в центрах:</span>
+      ${centerNames
+        .map(
+          (centerName) => `
+        <label class="client-center-picker__item">
+          <input type="checkbox" name="clientCenter" value="${escapeHtml(centerName)}" ${checkedNames.includes(centerName) ? "checked" : ""} />
+          <span>${escapeHtml(centerName)}</span>
+        </label>`,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function openClientModal(clientId = null, options = {}) {
   const encounterMode = options && typeof options === "object" ? options.encounterMode === true : false;
   const providedClient = options && typeof options === "object" ? options.client || null : null;
@@ -1315,6 +1352,7 @@ function openClientModal(clientId = null, options = {}) {
   // показания, которые уже были выбраны для этого обращения.
   const initialDriverDetail = getStoredClientDriverDetail(initialSelectedServices);
   clientModalSubmitAction = "save";
+  clientModalContractCenterName = "";
   const modalTitle = encounterMode
     ? "Новое обращение"
     : (editingClient ? "Изменить клиента" : "Новый клиент");
@@ -1365,6 +1403,21 @@ function openClientModal(clientId = null, options = {}) {
     rawClientDocument.organization ||
     rawClientDocument.legacy_payload_json?.organization ||
     "";
+  // Центры клиента. Если у открытого клиента они не известны, их не показываем и не
+  // меняем: сохранение не должно переложить его в другую базу наугад.
+  const centerChoiceNames = encounterMode ? [] : getClientCenterChoiceNames();
+  const knownClientCenterIds = editingClient ? editingClient.centerIds : undefined;
+  const showCenterChoice = centerChoiceNames.length > 1 && (!editingClient || Array.isArray(knownClientCenterIds));
+  const getCenterIdByName = (centerName) =>
+    Number(
+      (data.centers || []).find(
+        (center) => normalizeCenterLookupValue(center?.name) === normalizeCenterLookupValue(centerName),
+      )?.id || 0,
+    );
+  const initialClientCenterNames = !editingClient
+    ? [getWorkspaceCenterName()]
+    : centerChoiceNames.filter((centerName) => (knownClientCenterIds || []).includes(getCenterIdByName(centerName)));
+  const centerPickerHtml = showCenterChoice ? renderClientCenterPicker(centerChoiceNames, initialClientCenterNames) : "";
 
   openActionModal(
     modalTitle,
@@ -1378,7 +1431,8 @@ function openClientModal(clientId = null, options = {}) {
               <strong>${heroTitle}</strong>
             </div>
             <span class="client-create-section__badge">${heroBadge}</span>
-          </div>
+          </div>
+        ${centerPickerHtml}
         <div class="client-create-grid client-create-grid--names">
           <label class="field">
             <span>Фамилия</span>
@@ -1572,7 +1626,7 @@ function openClientModal(clientId = null, options = {}) {
 
         <div class="client-create-actions">
           <button type="button" class="ghost-button" id="cancelClientCreate">Отмена</button>
-          <button type="submit" class="ghost-button" name="clientSubmitAction" value="contract">${encounterMode ? "Сохранить + договор" : "ОК + договор"}</button>
+          ${renderClientContractSubmitButtons(encounterMode)}
           <button type="submit" class="primary-button">${primarySubmitLabel}</button>
         </div>
         </div>
@@ -1582,7 +1636,7 @@ function openClientModal(clientId = null, options = {}) {
 
   const form = document.getElementById("clientCreateForm");
   const cancel = document.getElementById("cancelClientCreate");
-  const contractSubmitButton = form?.querySelector('[name="clientSubmitAction"][value="contract"]');
+  const contractSubmitButtons = form?.querySelectorAll('[name="clientSubmitAction"][value="contract"]') || [];
   const defaultSubmitButton = form?.querySelector('.primary-button[type="submit"], .primary-button:not([type])');
 
   if (form) {
@@ -1663,12 +1717,16 @@ function openClientModal(clientId = null, options = {}) {
     actionModal.classList.add("hidden");
   });
 
-  contractSubmitButton?.addEventListener("click", () => {
-    clientModalSubmitAction = "contract";
+  contractSubmitButtons.forEach((contractSubmitButton) => {
+    contractSubmitButton.addEventListener("click", () => {
+      clientModalSubmitAction = "contract";
+      clientModalContractCenterName = contractSubmitButton.dataset.contractCenter || "";
+    });
   });
 
   defaultSubmitButton?.addEventListener("click", () => {
     clientModalSubmitAction = "save";
+    clientModalContractCenterName = "";
   });
 
   form?.addEventListener("submit", async (event) => {
@@ -1691,6 +1749,13 @@ function openClientModal(clientId = null, options = {}) {
       const input = form.elements.namedItem(invalidDateField.name);
       input?.focus?.();
       showToast(`Проверьте ${invalidDateField.label}: нужна существующая дата в формате ДД.ММ.ГГГГ`);
+      return;
+    }
+    const selectedCenterNames = showCenterChoice
+      ? Array.from(form.querySelectorAll('input[name="clientCenter"]:checked'), (input) => input.value)
+      : [];
+    if (showCenterChoice && !selectedCenterNames.length) {
+      showToast("Отметьте хотя бы один медцентр клиента");
       return;
     }
     const encounterDateText = String(
@@ -1795,9 +1860,25 @@ function openClientModal(clientId = null, options = {}) {
       if (!encounterMode) {
         const backendId = editingClient?.backendId || (editingClient?.rawApiClient ? editingClient.id : null);
         if (!window.apiRequest) throw new Error("Backend API недоступен");
+        // Новый клиент попадает в выбранные центры (без выбора — в рабочий). У
+        // существующего центры меняются, только если их отметили иначе, и только
+        // среди тех, что сотрудник вправе менять: остальные остаются как были.
+        let centerIdsPayload = {};
+        if (!backendId) {
+          const newClientCenterNames = showCenterChoice ? selectedCenterNames : [getWorkspaceCenterName()];
+          centerIdsPayload = { center_ids: await Promise.all(newClientCenterNames.map(resolveCenterIdByName)) };
+        } else if (showCenterChoice) {
+          const selectedIds = await Promise.all(selectedCenterNames.map(resolveCenterIdByName));
+          const manageableIds = await Promise.all(centerChoiceNames.map(resolveCenterIdByName));
+          const untouchedIds = knownClientCenterIds.filter((centerId) => !manageableIds.includes(centerId));
+          const nextCenterIds = [...new Set([...untouchedIds, ...selectedIds])].sort((a, b) => a - b);
+          const currentCenterIds = [...knownClientCenterIds].sort((a, b) => a - b);
+          if (nextCenterIds.join(",") !== currentCenterIds.join(",")) centerIdsPayload = { center_ids: nextCenterIds };
+        }
         const savedClient = await window.apiRequest?.(backendId ? `/clients/${backendId}` : "/clients", {
-        method: backendId ? "PUT" : "POST",
-        body: JSON.stringify({
+        method: backendId ? "PUT" : "POST",
+        body: JSON.stringify({
+          ...centerIdsPayload,
           last_name: String(formData.get("lastName") || "").trim() || "Без фамилии",
           first_name: String(formData.get("firstName") || "").trim() || "Без имени",
           middle_name: String(formData.get("middleName") || "").trim() || null,
@@ -1995,7 +2076,11 @@ function openClientModal(clientId = null, options = {}) {
       renderApp();
       // Договор один на все услуги дня: backend сам соберёт их со всех строк журнала.
       // Клиента договор берёт из выделения, поэтому Главную очищаем только после него.
-      await window.openDemoDocument?.("contract", { autoOpenFile: true });
+      const contractCenterName = event.submitter?.dataset?.contractCenter || clientModalContractCenterName;
+      await window.openDemoDocument?.("contract", {
+        autoOpenFile: true,
+        ...(contractCenterName ? { templateCenterName: contractCenterName } : {}),
+      });
       window.resetDashboardClientSelection?.();
       return;
     }

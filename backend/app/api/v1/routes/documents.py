@@ -339,6 +339,7 @@ def generate_document_file(payload: DocumentGenerateRequest, db: Session = Depen
             encounter_id=payload.encounter_id,
             blank_form_id=payload.blank_form_id,
             print_variant=payload.print_variant,
+            template_center_id=payload.template_center_id,
         )
         db.commit()
         return result
@@ -364,6 +365,7 @@ def print_document_file(payload: DocumentGenerateRequest, db: Session = Depends(
             encounter_id=payload.encounter_id,
             blank_form_id=payload.blank_form_id,
             print_variant=payload.print_variant,
+            template_center_id=payload.template_center_id,
         )
         db.commit()
         return DocumentPrintResponse(

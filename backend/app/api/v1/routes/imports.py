@@ -26,6 +26,7 @@ from app.models.service import Service
 from app.models.user import User
 from app.api.v1.routes.encounters import sync_primary_payment
 from app.services.audit import write_audit_log
+from app.services.client_centers import client_in_centers_condition, ensure_client_in_center
 from app.services.medical_autofill import autofill_completed_doctors_for_service
 from app.services.system_user import get_system_user_id
 from app.schemas.imports import (
@@ -656,7 +657,12 @@ def dedupe_legacy_clients(clients: list[dict[str, Any]]) -> list[dict[str, Any]]
     return list(by_patient_number.values())
 
 
-def find_first_client(db: Session, *conditions: Any, include_deleted: bool = False) -> Client | None:
+def find_first_client(
+    db: Session,
+    *conditions: Any,
+    include_deleted: bool = False,
+    center_id: int | None = None,
+) -> Client | None:
     """Первый подходящий клиент по возрастанию id.
 
     Именно first(), а не scalar_one_or_none(): в базе встречаются дубликаты
@@ -666,17 +672,27 @@ def find_first_client(db: Session, *conditions: Any, include_deleted: bool = Fal
     Удалённые карточки пропускаем — иначе импорт молча писал бы данные в
     невидимую строку. Исключение только для № пациента: он уникален по всей
     таблице, включая удалённых, и новую карточку с тем же номером не завести.
+
+    С ``center_id`` ищем только среди клиентов этого центра: у каждого центра своя
+    база, и загрузка одного центра не должна перезаписывать карточки другого.
     """
 
     query = select(Client).where(*conditions)
+    if center_id is not None:
+        query = query.where(client_in_centers_condition([center_id]))
     if not include_deleted:
         query = query.where(Client.deleted_at.is_(None))
     return db.execute(query.order_by(Client.id.asc()).limit(1)).scalars().first()
 
 
-def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[Client | None, str | None]:
+def find_existing_client_for_import(
+    db: Session,
+    row: dict[str, Any],
+    center_id: int | None = None,
+) -> tuple[Client | None, str | None]:
     patient_number = row.get("patient_number")
     if patient_number:
+        # № пациента уникален по всей базе, поэтому ищем его без центра.
         client = find_first_client(db, Client.patient_number == patient_number, include_deleted=True)
         if client is not None:
             return client, "по № пациента"
@@ -684,7 +700,7 @@ def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[C
     snils = normalize_text(row.get("snils"))
     birth_date = row.get("birth_date")
     if snils and birth_date:
-        client = find_first_client(db, Client.snils == snils, Client.birth_date == birth_date)
+        client = find_first_client(db, Client.snils == snils, Client.birth_date == birth_date, center_id=center_id)
         if client is not None:
             return client, "по СНИЛС и дате рождения"
 
@@ -695,6 +711,7 @@ def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[C
             db,
             Client.document_series == document_series,
             Client.document_number == document_number,
+            center_id=center_id,
         )
         if client is not None:
             return client, "по документу"
@@ -709,6 +726,7 @@ def find_existing_client_for_import(db: Session, row: dict[str, Any]) -> tuple[C
             func.lower(Client.first_name) == first_name.lower(),
             func.lower(func.coalesce(Client.middle_name, "")) == (middle_name or "").lower(),
             Client.birth_date == birth_date,
+            center_id=center_id,
         )
         if client is not None:
             return client, "по ФИО и дате рождения"
@@ -866,6 +884,8 @@ def import_demo_legacy(db: Session = Depends(get_db)) -> dict[str, int | str]:
         center_name = normalize_text(item.get("center"))
         center = center_by_name.get(center_name.lower()) if center_name else None
         center = center or default_center
+        if center is not None:
+            ensure_client_in_center(db, client, center.id)
         if legacy_source_id is not None and encounter_date is not None and center is not None:
             db.flush()
             encounter = existing_encounters_by_legacy.get(legacy_source_id)
@@ -923,7 +943,8 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
     )
 
     service_rows = sum(1 for service in resolved_services.values() if service is not None)
-    if service_rows and get_import_center(db, get_system_user_id(db), payload.center_id) is None:
+    preview_center = get_import_center(db, get_system_user_id(db), payload.center_id)
+    if service_rows and preview_center is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Для импорта услуг не найден активный медцентр",
@@ -936,7 +957,9 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
     update_client_ids: set[int] = set()
 
     for index, row in enumerate(rows):
-        existing_client, match_reason = find_existing_client_for_import(db, row)
+        existing_client, match_reason = find_existing_client_for_import(
+            db, row, preview_center.id if preview_center is not None else None
+        )
         status_label = "update" if existing_client is not None else "create"
         if existing_client is not None:
             update_client_ids.add(existing_client.id)
@@ -1006,7 +1029,9 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
 
     try:
         for row in rows:
-            existing_client, _ = find_existing_client_for_import(db, row)
+            existing_client, _ = find_existing_client_for_import(
+                db, row, import_center.id if import_center is not None else None
+            )
             patient_number = row.get("patient_number")
             if existing_client is not None:
                 patient_number = existing_client.patient_number
@@ -1029,6 +1054,9 @@ def commit_client_excel_import(payload: ClientImportExcelRequest, db: Session = 
                         continue
                     setattr(client, key, value)
             db.flush()
+            if import_center is not None:
+                # Загруженный клиент попадает в базу центра, из которого грузят файл.
+                ensure_client_in_center(db, client, import_center.id)
             if existing_client is None:
                 created_client_ids.add(client.id)
             elif client.id not in created_client_ids:

@@ -8,6 +8,10 @@ class DocumentGenerateRequest(BaseModel):
     encounter_id: int | None = None
     blank_form_id: int | None = None
     print_variant: str | None = None
+    # Чьим шаблоном печатать: у каждого центра свои клиентские версии шаблонов.
+    # Не указан — центр обращения. Нужен, когда одному клиенту печатают договор
+    # каждого из его центров («Договор Мед-Авто», «Договор Медилэнд»).
+    template_center_id: int | None = None
 
 
 class DocumentGenerateResponse(BaseModel):

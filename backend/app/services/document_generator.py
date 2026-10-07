@@ -6373,6 +6373,7 @@ def generate_document(
     encounter_id: int | None,
     blank_form_id: int | None = None,
     print_variant: str | None = None,
+    template_center_id: int | None = None,
 ) -> DocumentGenerateResponse:
     print_variant_value = str(print_variant or "").strip().lower()
     side_print_variants = {"driver_front", "driver_back", "tractor_front", "tractor_back"}
@@ -6399,9 +6400,11 @@ def generate_document(
             raise ValueError("Обращение не найдено")
 
     # Тот же файл, что отдаёт страница «Шаблоны» этому медцентру: его клиентская
-    # версия, если она есть, иначе встроенный шаблон. Центр берём у обращения:
-    # у клиента центра нет, он общий. Без обращения печатается встроенный шаблон.
-    template_center_id = encounter.center_id if encounter is not None else None
+    # версия, если она есть, иначе встроенный шаблон. Центр берём у обращения,
+    # если запрос не назвал другой: клиент может лежать в нескольких центрах, и
+    # ему печатают договор каждого. Без центра печатается встроенный шаблон.
+    if template_center_id is None and encounter is not None:
+        template_center_id = encounter.center_id
     template_path = resolve_template_file(template, template_center_id) or Path(template.file_path)
     output_dir = Path(settings.generated_documents_dir)
     if template.template_type == "xml":

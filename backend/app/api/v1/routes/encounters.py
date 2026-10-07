@@ -24,6 +24,7 @@ from app.schemas.encounter import (
 from app.schemas.encounter_service import EncounterServiceRead
 from app.schemas.payment import PaymentRead
 from app.services.audit import write_audit_log
+from app.services.client_centers import ensure_client_in_center
 from app.services.medical_autofill import autofill_completed_doctors_for_service
 from app.services.notifications import build_deletion_email_body, send_deletion_notification
 from app.services.system_user import get_system_user_id
@@ -115,6 +116,8 @@ def create_encounters_by_services(
     center = db.get(Center, payload.center_id)
     if center is None or not center.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Медцентр не найден")
+    # Обращение в центре делает клиента клиентом этого центра.
+    ensure_client_in_center(db, client, center.id)
 
     requested_service_ids = list(dict.fromkeys(item.service_id for item in payload.services))
     services = db.execute(select(Service).where(Service.id.in_(requested_service_ids))).scalars().all()
@@ -219,6 +222,8 @@ def create_encounter(payload: EncounterCreate, db: Session = Depends(get_db)) ->
     created_by_user_id = get_system_user_id(db)
     encounter = Encounter(**payload.model_dump(), created_by_user_id=created_by_user_id, status="draft")
     client.encounter_date_text = payload.encounter_date.isoformat()
+    # Обращение в центре делает клиента клиентом этого центра.
+    ensure_client_in_center(db, client, payload.center_id)
     db.add(encounter)
     db.flush()
     sync_primary_payment(db, encounter)
