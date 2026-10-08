@@ -259,6 +259,27 @@ def _copy_into_place(source: Path, target: Path) -> None:
     partial.replace(target)
 
 
+def _is_untouched_split_copy(target: Path) -> bool:
+    """True, если файл центра — нетронутая копия общей версии, разложенной при разделении.
+
+    Оригиналы общих версий лежат в ``SHARED_OVERRIDES_BACKUP_FOLDER`` (рядом
+    могут быть и копии со штампом времени). Совпадение байт с оригиналом значит,
+    что центр свою правку не загружал: бланк ему достался от другого центра.
+    """
+    backup_root = get_template_overrides_root() / SHARED_OVERRIDES_BACKUP_FOLDER
+    if not backup_root.is_dir():
+        return False
+    try:
+        digest = _file_digest(target)
+        for backup in backup_root.iterdir():
+            if backup.is_file() and (backup.name == target.name or backup.name.startswith(f"{target.name}.")):
+                if _file_digest(backup) == digest:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def _read_seeded_defaults(center_dir: Path) -> dict[str, str | None]:
     try:
         data = json.loads((center_dir / CENTER_DEFAULTS_MARKER).read_text(encoding="utf-8"))
@@ -282,7 +303,10 @@ def seed_center_template_defaults(centers) -> list[str]:
     центра один раз: если у центра уже есть своя копия, она остаётся нетронутой,
     а удалённый после этого файл не возвращается. Копия, которую заказчик не
     правил, подтягивает новую версию набора, когда набор в репозитории
-    поменялся. Возвращает записи «id/файл» разложенных или обновлённых файлов.
+    поменялся. Исключение — копия, разошедшаяся по центрам при разделении общих
+    версий (``split_shared_template_overrides``) и с тех пор не менявшаяся: это
+    чужой бланк, а не правка центра, набор её заменяет. Возвращает записи
+    «id/файл» разложенных или обновлённых файлов.
     """
     placed: list[str] = []
     for center_id, center_code in centers:
@@ -301,7 +325,7 @@ def seed_center_template_defaults(centers) -> list[str]:
                 target = get_template_override_path(source.name, center_id)
                 source_digest = _file_digest(source)
                 if source.name not in seeded:
-                    if target.exists():
+                    if target.exists() and not _is_untouched_split_copy(target):
                         seeded[source.name] = None
                     else:
                         _copy_into_place(source, target)

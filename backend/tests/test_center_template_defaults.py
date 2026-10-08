@@ -110,6 +110,59 @@ class SeedCenterTemplateDefaultsTests(SeededStorageTestCase):
 
         self.assertFalse(own_copy.exists())
 
+    def backup_shared_copy(self, content: bytes, name: str = DOCX_FILE_NAME) -> None:
+        backup_dir = self.storage_root / template_catalog.SHARED_OVERRIDES_BACKUP_FOLDER
+        backup_dir.mkdir(exist_ok=True)
+        (backup_dir / name).write_bytes(content)
+
+    def test_a_copy_left_over_from_the_split_is_replaced_by_the_set(self):
+        # При разделении общих версий центр получил чужую копию; своей правки у него нет.
+        self.write_default(DOCX_FILE_NAME, b"set")
+        self.backup_shared_copy(b"shared copy")
+        own_copy = get_template_override_path(DOCX_FILE_NAME, 7)
+        own_copy.parent.mkdir(parents=True)
+        own_copy.write_bytes(b"shared copy")
+
+        placed = seed_center_template_defaults([(7, CENTER_CODE)])
+
+        self.assertEqual(placed, [f"7/{DOCX_FILE_NAME}"])
+        self.assertEqual(own_copy.read_bytes(), b"set")
+        # Дальше это обычная разложенная копия: правка центра её больше не заменяет.
+        own_copy.write_bytes(b"customer edit")
+        self.assertEqual(seed_center_template_defaults([(7, CENTER_CODE)]), [])
+        self.assertEqual(own_copy.read_bytes(), b"customer edit")
+
+    def test_a_copy_left_over_from_the_split_is_found_among_stamped_backups(self):
+        self.write_default(DOCX_FILE_NAME, b"set")
+        self.backup_shared_copy(b"shared copy", f"{DOCX_FILE_NAME}.20261005190000")
+        own_copy = get_template_override_path(DOCX_FILE_NAME, 7)
+        own_copy.parent.mkdir(parents=True)
+        own_copy.write_bytes(b"shared copy")
+
+        seed_center_template_defaults([(7, CENTER_CODE)])
+
+        self.assertEqual(own_copy.read_bytes(), b"set")
+
+    def test_a_copy_the_center_changed_after_the_split_stays(self):
+        self.write_default(DOCX_FILE_NAME, b"set")
+        self.backup_shared_copy(b"shared copy")
+        own_copy = get_template_override_path(DOCX_FILE_NAME, 7)
+        own_copy.parent.mkdir(parents=True)
+        own_copy.write_bytes(b"uploaded by the center")
+
+        self.assertEqual(seed_center_template_defaults([(7, CENTER_CODE)]), [])
+        self.assertEqual(own_copy.read_bytes(), b"uploaded by the center")
+
+    def test_a_split_copy_of_another_file_is_not_mistaken_for_this_one(self):
+        self.write_default(DOCX_FILE_NAME, b"set")
+        self.backup_shared_copy(b"shared copy", OTHER_FILE_NAME)
+        own_copy = get_template_override_path(DOCX_FILE_NAME, 7)
+        own_copy.parent.mkdir(parents=True)
+        own_copy.write_bytes(b"shared copy")
+
+        self.assertEqual(seed_center_template_defaults([(7, CENTER_CODE)]), [])
+        self.assertEqual(own_copy.read_bytes(), b"shared copy")
+
     def test_a_removed_file_does_not_come_back_on_restart(self):
         self.write_default(DOCX_FILE_NAME, b"set")
         seed_center_template_defaults([(7, CENTER_CODE)])
