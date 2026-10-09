@@ -20,6 +20,7 @@ import zipfile
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+import xlrd
 
 
 os.environ.setdefault("ALLOW_SQLITE", "true")
@@ -388,10 +389,37 @@ def docx_text(path: Path) -> str:
     return "\n".join(parts)
 
 
+def workbook_text(path: Path) -> str:
+    book = xlrd.open_workbook(str(path))
+    return "\n".join(
+        str(cell.value)
+        for sheet in book.sheets()
+        for row in range(sheet.nrows)
+        for cell in sheet.row(row)
+        if cell.ctype == xlrd.XL_CELL_TEXT
+    )
+
+
+def prof_29n_ogrn_boxes(path: Path) -> str:
+    """Код ОГРН, вписанный по цифре в клетки под шапкой «ПРОФОСМОТР 29Н»."""
+    sheet = xlrd.open_workbook(str(path)).sheet_by_index(0)
+    return "".join(str(int(sheet.cell_value(15, column))) for column in range(4, 17))
+
+
+# Реквизиты Мед-Авто (ОГРН, ИНН, ОКПО, лицензия, адрес) и «ЦМЭ» из встроенных бланков.
+MED_AVTO_REQUISITES = re.compile(
+    r"мед-?\s?авто|заневск|1097847096830|7806408905|60973915|00563298|00563311|цме|центр медицинской",
+    re.IGNORECASE,
+)
+
+
 class FirstHealthResortSetTests(unittest.TestCase):
     """Набор ПЕРВОЙ ЗДРАВНИЦЫ (center-c) не должен нести реквизиты других центров."""
 
-    OTHER_CENTERS = re.compile(r"мед-?\s?авто|медил[эе]нд|заневск|мурино", re.IGNORECASE)
+    # «Мед-» перед названием — остаток «Мед-Авто», 00563298 — номер лицензии Мед-Авто.
+    OTHER_CENTERS = re.compile(
+        r"мед-?\s?авто|медил[эе]нд|заневск|мурино|мед-\s*первая|00563298", re.IGNORECASE
+    )
 
     def test_word_forms_carry_this_center_and_not_the_others(self):
         word_files = sorted((DEFAULTS_DIR / "center-c").glob("*.docx"))
@@ -401,6 +429,67 @@ class FirstHealthResortSetTests(unittest.TestCase):
                 text = docx_text(path)
                 self.assertIn("ПЕРВАЯ ЗДРАВНИЦА", text)
                 self.assertIsNone(self.OTHER_CENTERS.search(text))
+
+    def test_the_contract_names_the_license_of_this_center(self):
+        text = docx_text(DEFAULTS_DIR / "center-c" / "Договор_шаблон_2.docx")
+
+        self.assertIn("10.06.2024 Л041-01148-78/01240023", text)
+
+    def test_the_prof_29n_code_boxes_hold_the_ogrn_of_this_center(self):
+        path = DEFAULTS_DIR / "center-c" / "ПРОФОСМОТР 29Н.xls"
+
+        self.assertEqual(prof_29n_ogrn_boxes(path), "1027739019142")
+
+
+class SecondCenterSetTests(unittest.TestCase):
+    """Набор Медилэнда (center-b): правки, которые теряются при замене файла заказчиком."""
+
+    CENTER_DIR = DEFAULTS_DIR / "center-b"
+
+    def test_nothing_carries_the_requisites_of_med_avto(self):
+        for path in sorted(self.CENTER_DIR.iterdir()):
+            if path.suffix.lower() == ".docx":
+                text = docx_text(path)
+            elif path.suffix.lower() == ".xls":
+                text = workbook_text(path)
+            else:
+                continue
+            with self.subTest(path=path.name):
+                self.assertIsNone(MED_AVTO_REQUISITES.search(text))
+
+    def test_the_contract_names_the_license_of_this_center(self):
+        text = docx_text(self.CENTER_DIR / "Договор_шаблон_2.docx")
+
+        self.assertIn("21.02.2022 Л041-01149-47/00382083", text)
+        self.assertIn("комитетом по здравоохранению Ленинградской области", text)
+
+    def test_the_contract_has_no_typo_in_the_workplace_line(self):
+        text = docx_text(self.CENTER_DIR / "Договор_шаблон_2.docx")
+
+        self.assertIn("Место работы: [qdfMain.WorkPlace]", text)
+        self.assertNotIn("работоты", text)
+
+    def test_the_pool_certificate_prints_the_issuing_doctor(self):
+        # Имя файла в каталоге начинается с латинской «C», поэтому ищем по хвосту.
+        (path,) = self.CENTER_DIR.glob("?правкаБассейн_шаблон.docx")
+
+        self.assertIn("[PoolIssuerDoctor]", docx_text(path))
+
+    def test_the_prof_29n_header_and_code_boxes_hold_this_center(self):
+        path = self.CENTER_DIR / "ПРОФОСМОТР 29Н.xls"
+        text = workbook_text(path)
+
+        self.assertIn("Медилэнд", text)
+        self.assertIn("4706042715", text)
+        self.assertEqual(prof_29n_ogrn_boxes(path), "1214700015727")
+
+    def test_the_state_service_conclusion_carries_this_center(self):
+        # Заказчик не прислал свой ГС: набор берёт разметку ГС Здравницы с реквизитами Медилэнда.
+        text = workbook_text(self.CENTER_DIR / "ГС НОВЫЙ ФОРМАТ.xls")
+
+        self.assertIn("Медилэнд", text)
+        self.assertIn("55112772", text)
+        self.assertIsNone(re.search(r"здравниц", text, re.IGNORECASE))
 
 
 if __name__ == "__main__":
