@@ -65,12 +65,9 @@ test("тракторная справка не печатается на вод�
 });
 
 // XML в МИАЦ уходит только по водительской справке: у 071у своя нумерация
-// бланков, и выгрузка на тракторный бланк отвечала ошибкой.
-test("после тракторной справки водительский XML не собирается", () => {
-  const xmlCalls = printVariantSource.match(/ensureXmlAfterDriverCertificate\(/g) || [];
-  const guardedCalls = printVariantSource.match(/if \(!tractorVariant\) \{\s*await ensureXmlAfterDriverCertificate\(/g) || [];
-  assert.equal(xmlCalls.length, guardedCalls.length);
-  assert.ok(guardedCalls.length >= 1, "Не найден вызов выгрузки XML после печати");
-  assert.match(printVariantSource, /handleStandardPrintResult\(result, printedDocument, \{ skipXmlExport: tractorVariant \}\)/);
-  assert.match(appSource, /skipXmlExport = false/);
+// бланков. Браузер после печати XML не собирает: выгрузку делают кнопкой за день,
+// а тракторный бланк в неё не попадает (проверяется в test_xml_exports на бэкенде).
+test("после печати тракторной справки браузер не собирает XML", () => {
+  assert.doesNotMatch(printVariantSource, /ensureXmlAfterDriverCertificate/);
+  assert.doesNotMatch(appSource, /skipXmlExport/);
 });

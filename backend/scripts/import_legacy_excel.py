@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.db.init_db import init_db
 from app.db.session import SessionLocal
+from app.models.center import Center
 from app.models.client import Client
 from app.models.user import User
 
@@ -170,6 +171,9 @@ def upsert_clients(db: Session, rows: list[dict[str, Any]]) -> tuple[int, int]:
     created = 0
     updated = 0
     default_user_id = get_default_user_id(db)
+    # Клиент без центра не виден ни одному сотруднику: такие попадают в первый центр,
+    # как клиенты без обращений при миграции 0024. Клиент с центрами не переносится.
+    default_center = db.execute(select(Center).order_by(Center.id)).scalars().first()
 
     for payload in rows:
         legacy_source_id = payload.get("legacy_source_id")
@@ -188,6 +192,9 @@ def upsert_clients(db: Session, rows: list[dict[str, Any]]) -> tuple[int, int]:
             for key, value in payload.items():
                 setattr(client, key, value)
             updated += 1
+
+        if default_center is not None and not client.center_ids:
+            client.centers.append(default_center)
 
     db.commit()
     return created, updated

@@ -21,6 +21,7 @@ from app.services.document_generator import generate_document  # noqa: E402
 from app.models.blank_form import (  # noqa: E402
     BLANK_STATUS_ISSUED,
     BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
+    BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE,
     BlankBatch,
     BlankForm,
 )
@@ -305,6 +306,28 @@ class XmlDayBuildTests(XmlExportsTests):
         files = sorted((self.storage_dir / "xml" / "2026-09-22").iterdir())
         self.assertEqual(len(files), 1)
         self.assertIn("0000001", files[0].read_text(encoding="utf-8"))
+
+    def test_tractor_certificate_is_not_sent_to_miac(self):
+        # У 071у своя нумерация бланков: в XML МИАЦ за день попадает только водительская.
+        issued_at = datetime(2026, 9, 22, 9, tzinfo=timezone.utc)
+        with self.session() as db:
+            self.add_driver_xml_template(db)
+            self.build_day_fixture(db, issued_at=issued_at)
+            _, tractor_blank = self.build_day_fixture(db, issued_at=issued_at, patient_number=2, last_name="Петров")
+            tractor_blank.blank_type = BLANK_TYPE_TRACTOR_MEDICAL_CERTIFICATE
+            db.commit()
+
+            result = build_xml_day(db, "2026-09-22")
+            db.commit()
+
+            self.assertEqual(result.generated_count, 1)
+            day = next(item for item in list_xml_export_days(db) if item.date == "2026-09-22")
+            self.assertEqual(day.blank_count, 1)
+
+        files = sorted((self.storage_dir / "xml" / "2026-09-22").iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertIn("0000001", files[0].read_text(encoding="utf-8"))
+        self.assertNotIn("0000002", files[0].read_text(encoding="utf-8"))
 
     def test_rebuild_replaces_file_with_corrected_client_data(self):
         issued_at = datetime(2026, 9, 22, 9, tzinfo=timezone.utc)
