@@ -3193,6 +3193,20 @@ async function resolveWorkspaceCenterId() {
   return resolveCenterIdForVisit({ center: centerName }, { center: centerName });
 }
 
+// Центр обращения клиента. Обращение добавляет клиента в свой центр, поэтому клиент, который
+// лежит не в рабочем центре, получает обращение в одном из своих центров: иначе клиент,
+// отмеченный только в Медилэнд, уходил бы в Мед-Авто с первой услугой. Рабочий центр берём,
+// если клиент лежит и в нём.
+async function resolveClientVisitCenterId(client) {
+  const centers = await ensureCentersLoaded();
+  const workspaceCenterId = await resolveWorkspaceCenterId();
+  const clientCenterIds = (normalizeClientCenterIds(client?.centerIds) || []).filter((id) =>
+    centers.some((center) => Number(center?.id) === id),
+  );
+  if (!clientCenterIds.length || clientCenterIds.includes(workspaceCenterId)) return workspaceCenterId;
+  return clientCenterIds[0];
+}
+
 function renderPrintCenterContext(centerName) {
   return `<div class="driver-print-classic__center"><span>Работа в медцентре:</span><strong>${escapeHtml(centerName || getWorkspaceCenterName())}</strong></div>`;
 }
@@ -3227,6 +3241,12 @@ async function resolveCenterIdForVisit(visit, client) {
   const explicitCenterId = Number(visit?.centerId || 0);
   if (explicitCenterId && centers.some((center) => Number(center?.id) === explicitCenterId)) {
     return explicitCenterId;
+  }
+
+  // Клиент лежит в известных центрах: обращение идёт в его центр, а не в рабочий центр,
+  // записанный в названии нового обращения.
+  if (Array.isArray(client?.centerIds) && client.centerIds.length) {
+    return resolveClientVisitCenterId(client);
   }
 
   const candidateNames = [
@@ -4555,8 +4575,8 @@ function createVisitForClient(clientId, options = {}) {
     serviceIds: Array.isArray(options.serviceIds) ? options.serviceIds.map((id) => String(id)) : [],
     serviceDetails: options.serviceDetails || {},
     clientSex: options.clientSex || getClientSexKey(client) || "",
-    // Новое обращение всегда принадлежит медцентру, в котором сейчас работает
-    // оператор, а не центру прошлого обращения клиента.
+    // Рабочий центр оператора. Если клиент лежит в других центрах, при сохранении обращение
+    // уходит в его центр (см. resolveClientVisitCenterId), а не в рабочий.
     centerId: null,
     center: getWorkspaceCenterName(),
     paymentType: options.paymentType || "Наличные",
@@ -4584,7 +4604,7 @@ async function createVisitsForClientByServices(client, serviceDrafts = [], optio
 
   // Услугу, добавленную в карточку прошлого дня, заводим в тот же день и центр,
   // иначе она выпадет из карточки и из договора этого дня.
-  const centerId = options.centerId || await resolveWorkspaceCenterId();
+  const centerId = options.centerId || await resolveClientVisitCenterId(client);
   const encounterDate = options.encounterDate || getLocalDateInputValue();
   const savedItems = await apiRequest("/encounters/by-services", {
     method: "POST",
@@ -4620,6 +4640,9 @@ async function createVisitsForClientByServices(client, serviceDrafts = [], optio
     });
     if (!visit) return null;
     visit.backendId = savedItem?.encounter?.id || null;
+    // Центр запоминаем тот, что сохранил сервер: по нему идут бланки и шаблоны печати.
+    visit.centerId = savedItem?.encounter?.center_id ?? null;
+    visit.center = getCenterNameForContext(visit.centerId, null, client);
     visit.status = savedItem?.encounter?.status || "draft";
     visit.__backendServicesSaved = true;
     return visit;
@@ -4713,6 +4736,8 @@ async function syncVisitToBackend(visit, client, options = {}) {
         body: JSON.stringify(payload),
       });
       visit.backendId = encounter.id;
+      visit.centerId = encounter.center_id ?? visit.centerId;
+      visit.center = getCenterNameForContext(visit.centerId, visit, client);
       visit.status = encounter.status || visit.status || "draft";
       visit.suppressedDoctorRoleIds = normalizeDoctorRoleIds(encounter.suppressed_doctor_role_ids);
 
