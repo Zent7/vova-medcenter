@@ -1406,7 +1406,12 @@ function openClientModal(clientId = null, options = {}) {
   // Центры клиента. Если у открытого клиента они не известны, их не показываем и не
   // меняем: сохранение не должно переложить его в другую базу наугад.
   const centerChoiceNames = encounterMode ? [] : getClientCenterChoiceNames();
-  const knownClientCenterIds = editingClient ? editingClient.centerIds : undefined;
+  // Центры берём из последнего списка с сервера: карточка в кэше могла устареть, если
+  // их поменял другой сотрудник или сам сотрудник в этой же вкладке.
+  const listedClient = editingClient
+    ? (data.backendClients || []).find((client) => String(client.backendId || client.id) === String(editingClient.backendId || editingClient.id))
+    : null;
+  const knownClientCenterIds = editingClient ? (listedClient?.centerIds ?? editingClient.centerIds) : undefined;
   const showCenterChoice = centerChoiceNames.length > 1 && (!editingClient || Array.isArray(knownClientCenterIds));
   const getCenterIdByName = (centerName) =>
     Number(
@@ -1870,9 +1875,13 @@ function openClientModal(clientId = null, options = {}) {
         } else if (showCenterChoice) {
           const selectedIds = await Promise.all(selectedCenterNames.map(resolveCenterIdByName));
           const manageableIds = await Promise.all(centerChoiceNames.map(resolveCenterIdByName));
-          const untouchedIds = knownClientCenterIds.filter((centerId) => !manageableIds.includes(centerId));
+          // Центры берём с сервера: карточка могла устареть, и тогда центр, которым
+          // сотрудник не управляет, пропал бы при сохранении.
+          const serverClient = await window.apiRequest?.(`/clients/${backendId}`);
+          const knownIds = Array.isArray(serverClient?.center_ids) ? serverClient.center_ids : knownClientCenterIds;
+          const untouchedIds = knownIds.filter((centerId) => !manageableIds.includes(centerId));
           const nextCenterIds = [...new Set([...untouchedIds, ...selectedIds])].sort((a, b) => a - b);
-          const currentCenterIds = [...knownClientCenterIds].sort((a, b) => a - b);
+          const currentCenterIds = [...knownIds].sort((a, b) => a - b);
           if (nextCenterIds.join(",") !== currentCenterIds.join(",")) centerIdsPayload = { center_ids: nextCenterIds };
         }
         const savedClient = await window.apiRequest?.(backendId ? `/clients/${backendId}` : "/clients", {
@@ -1917,6 +1926,7 @@ function openClientModal(clientId = null, options = {}) {
           if (savedMapped) {
             Object.assign(savedMapped, {
             ...targetClient,
+            centerIds: savedMapped.centerIds,
             id: savedClient.id,
             backendId: savedClient.id,
             patientNumber: savedClient.patient_number,

@@ -22,6 +22,7 @@ from app.models.service import DoctorRole, Service, ServiceCategory, ServiceDoct
 from app.models.template_phrase import TemplatePhrase
 from app.models.user import Role, User
 from app.models.visit_type import VisitType, VisitTypeService
+from app.services.client_centers import ensure_client_in_center
 from app.services.doctor_directory import set_center_doctor_name
 from app.services.template_catalog import sync_document_template_catalog, template_visit_type_code
 
@@ -520,6 +521,9 @@ def seed_reference_data(db: Session) -> None:
     ]
     db.add_all(clients)
     db.flush()
+    # Клиент без своего центра не виден ни одному сотруднику: демо-клиенты идут в первый центр.
+    for client in clients:
+        ensure_client_in_center(db, client, centers[0].id)
 
     encounter = Encounter(
         center_id=centers[0].id,

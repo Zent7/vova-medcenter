@@ -187,7 +187,14 @@ test("форма клиента отправляет центры и печат�
 test("центры существующего клиента не перезаписываются наугад", () => {
   assert.match(modalSource, /!editingClient \|\| Array\.isArray\(knownClientCenterIds\)/);
   // Центры, которыми сотрудник управлять не вправе, остаются у клиента.
-  assert.match(modalSource, /untouchedIds = knownClientCenterIds\.filter/);
+  assert.match(modalSource, /untouchedIds = knownIds\.filter/);
+  // Центры для сохранения берутся с сервера, а не из карточки, которая могла устареть.
+  assert.match(modalSource, /apiRequest\?\.\(`\/clients\/\$\{backendId\}`\)/);
+  assert.match(modalSource, /knownIds = Array\.isArray\(serverClient\?\.center_ids\)/);
+  // После сохранения свежие центры не затираются старыми из формы.
+  assert.match(modalSource, /\.\.\.targetClient,\n\s+centerIds: savedMapped\.centerIds,/);
+  // Карточка берёт центры из последнего списка с сервера, а не из кэша.
+  assert.match(modalSource, /listedClient\?\.centerIds \?\? editingClient\.centerIds/);
 });
 
 test("кнопки «ОК + договор» по центрам и переключатель центров клиента", () => {

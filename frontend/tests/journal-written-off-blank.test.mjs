@@ -87,6 +87,7 @@ function createJournalContext({ generatedDocuments = [] } = {}) {
       return path.startsWith("/generated-documents") ? serverDocuments.list : [];
     },
     buildQuery: () => "",
+    canAccessServiceWorkspace: () => true,
     buildGeneratedDocumentUrl: (fileName) => fileName,
     getSelectedBackendClientId: () => null,
     getSelectedBackendEncounterId: () => null,
