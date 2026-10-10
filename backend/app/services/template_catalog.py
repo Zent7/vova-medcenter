@@ -280,6 +280,19 @@ def _is_untouched_split_copy(target: Path) -> bool:
     return False
 
 
+def _set_may_replace(target: Path, seeded_digest: str | None) -> bool:
+    """Можно ли набору заменить файл центра, который уже разложен или отмечен как «своя копия».
+
+    Разложенную набором копию заменяем, если центр её не менял (хэш совпадает).
+    Отметка ``None`` стоит, если при первой раскладке у центра уже была копия.
+    Такой файл заменяем только если это нетронутая копия общей версии: иначе
+    набор никогда не дойдёт до центра, у которого копия Мед-Авто уже в маркере.
+    """
+    if seeded_digest is None:
+        return _is_untouched_split_copy(target)
+    return _file_digest(target) == seeded_digest
+
+
 def _read_seeded_defaults(center_dir: Path) -> dict[str, str | None]:
     try:
         data = json.loads((center_dir / CENTER_DEFAULTS_MARKER).read_text(encoding="utf-8"))
@@ -333,9 +346,9 @@ def seed_center_template_defaults(centers) -> list[str]:
                         placed.append(f"{center_id}/{source.name}")
                     changed = True
                 elif (
-                    seeded[source.name] not in (None, source_digest)
+                    seeded[source.name] != source_digest
                     and target.is_file()
-                    and _file_digest(target) == seeded[source.name]
+                    and _set_may_replace(target, seeded[source.name])
                 ):
                     _copy_into_place(source, target)
                     seeded[source.name] = source_digest

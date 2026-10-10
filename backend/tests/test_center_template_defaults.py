@@ -133,6 +133,34 @@ class SeedCenterTemplateDefaultsTests(SeededStorageTestCase):
         self.assertEqual(seed_center_template_defaults([(7, CENTER_CODE)]), [])
         self.assertEqual(own_copy.read_bytes(), b"customer edit")
 
+    def test_a_split_copy_already_marked_as_the_centers_own_is_replaced_by_the_set(self):
+        # Раньше набор клал копию Мед-Авто, и отметка «у центра своя» (null) осталась в маркере.
+        # Без этой отметки исправление раскладки до центра не доходило бы.
+        self.write_default(DOCX_FILE_NAME, b"set")
+        self.backup_shared_copy(b"shared copy")
+        own_copy = get_template_override_path(DOCX_FILE_NAME, 7)
+        own_copy.parent.mkdir(parents=True)
+        own_copy.write_bytes(b"shared copy")
+        marker = self.center_dir(7) / CENTER_DEFAULTS_MARKER
+        marker.write_text('{"%s": null}' % DOCX_FILE_NAME, encoding="utf-8")
+
+        placed = seed_center_template_defaults([(7, CENTER_CODE)])
+
+        self.assertEqual(placed, [f"7/{DOCX_FILE_NAME}"])
+        self.assertEqual(own_copy.read_bytes(), b"set")
+
+    def test_a_customer_edit_marked_as_the_centers_own_stays(self):
+        self.write_default(DOCX_FILE_NAME, b"set")
+        self.backup_shared_copy(b"shared copy")
+        own_copy = get_template_override_path(DOCX_FILE_NAME, 7)
+        own_copy.parent.mkdir(parents=True)
+        own_copy.write_bytes(b"customer edit")
+        marker = self.center_dir(7) / CENTER_DEFAULTS_MARKER
+        marker.write_text('{"%s": null}' % DOCX_FILE_NAME, encoding="utf-8")
+
+        self.assertEqual(seed_center_template_defaults([(7, CENTER_CODE)]), [])
+        self.assertEqual(own_copy.read_bytes(), b"customer edit")
+
     def test_a_copy_left_over_from_the_split_is_found_among_stamped_backups(self):
         self.write_default(DOCX_FILE_NAME, b"set")
         self.backup_shared_copy(b"shared copy", f"{DOCX_FILE_NAME}.20261005190000")
