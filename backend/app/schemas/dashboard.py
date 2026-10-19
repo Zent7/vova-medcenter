@@ -61,6 +61,8 @@ class DashboardEncounterRow(BaseModel):
     work_place: str | None = None
     organization: str | None = None
     real_date_text: str | None = None
+    # Агент хранится только в legacy_payload_json: таблица берёт его оттуда.
+    legacy_payload_json: dict | None = None
     # Центры клиента (не центр обращения): кому ещё виден этот клиент.
     client_center_ids: list[int] = Field(default_factory=list)
 

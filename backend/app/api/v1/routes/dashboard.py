@@ -176,6 +176,7 @@ def get_dashboard_encounter_rows(
                 work_place=client.work_place,
                 organization=client.organization,
                 real_date_text=client.real_date_text,
+                legacy_payload_json=client.legacy_payload_json,
                 client_center_ids=client_centers_by_client.get(client.id, []),
                 encounter_id=encounter.id if encounter is not None else None,
                 encounter_date=encounter.encounter_date if encounter is not None else None,
