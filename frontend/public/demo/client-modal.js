@@ -1102,6 +1102,23 @@ function isSameClientServiceDetail(stored = {}, next = {}) {
 // Карточка показывает все услуги дня разом, но у каждой услуги остаётся своё
 // обращение: своя строка журнала, свои врачи и свой бланк. Поэтому изменения
 // раскладываем по этим обращениям, а не сливаем все услуги в одно текущее.
+// Комментарий окна обращения уходит в визит. Тот же текст пишем и в примечание
+// карточки: таблица показывает примечание. Пустое поле примечание не стирает.
+async function saveClientNoteFromVisitComment(client, comment) {
+  const note = String(comment || "").trim();
+  const backendId = client?.backendId || client?.id;
+  if (!note || !backendId) return;
+  try {
+    await window.apiRequest?.(`/clients/${backendId}/notes`, {
+      method: "PUT",
+      body: JSON.stringify({ notes: note }),
+    });
+  } catch (error) {
+    console.warn("Failed to save the client note", error);
+    showToast("Обращение сохранено, но примечание карточки не обновилось");
+  }
+}
+
 async function saveClientServiceGroup(client, serviceGroup, { selectedServiceValues, serviceDetails, clientSex, baseComment }) {
   const selectedServices = getClientServiceItemsByNames(selectedServiceValues);
   const serviceById = new Map(selectedServices.map((service) => [getClientServiceDetailKey(service), service]));
@@ -1995,6 +2012,8 @@ function openClientModal(clientId = null, options = {}) {
         showToast("Backend не сохранил все выбранные услуги");
         return;
       }
+      // До обновления таблицы, иначе она покажет старое примечание.
+      if (encounterMode) await saveClientNoteFromVisitComment(targetClient, formData.get("comment"));
       currentVisit = createdVisits[0] || null;
       await window.loadDashboardDoctorStatuses?.(
         createdVisits.map((visit) => ({ ...targetClient, encounterId: visit.backendId })),

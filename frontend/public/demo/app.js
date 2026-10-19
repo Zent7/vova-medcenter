@@ -2523,7 +2523,9 @@ function mapApiClient(client) {
     documentIssuedDate: formatApiDate(client.document_issued_date),
     snils: client.snils || "",
     email: client.email || "",
-    note: encounterId !== null ? client.comment || "" : client.notes || "",
+    // Примечание карточки клиента важнее комментария визита: иначе таблица показывала
+    // чужой текст, когда у клиента уже было обращение.
+    note: client.notes || (encounterId !== null ? client.comment || "" : ""),
     lastVisit: encounterDateTime,
     services,
     registration: client.registration_text || client.address_text || "",

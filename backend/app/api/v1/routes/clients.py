@@ -14,7 +14,7 @@ from app.models.encounter_service import EncounterService
 from app.models.medical_record import MedicalRecord
 from app.models.service import Service
 from app.models.user import User
-from app.schemas.client import ClientCreate, ClientRead, ClientSearchRead, ClientUpdate, DeletedClientRead
+from app.schemas.client import ClientCreate, ClientNotesUpdate, ClientRead, ClientSearchRead, ClientUpdate, DeletedClientRead
 from app.services.audit import write_audit_log
 from app.services.client_centers import client_in_centers_condition, resolve_center_ids, set_client_centers
 from app.services.duplicates import build_duplicate_check_keys
@@ -588,6 +588,30 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
         action="update",
         user_id=updated_by_user_id,
         payload_json={"full_name": f"{client.last_name} {client.first_name}"},
+    )
+    db.commit()
+    return ClientRead.model_validate(client)
+
+
+@router.put("/{client_id}/notes", response_model=ClientRead)
+def update_client_notes(client_id: int, payload: ClientNotesUpdate, db: Session = Depends(get_db)) -> ClientRead:
+    # Комментарий окна обращения пишется и в визит, и в примечание карточки. Полная
+    # правка карточки для этого не годится: PUT /clients/{id} требует все обязательные поля.
+    client = db.get(Client, client_id)
+    if client is None or client.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Клиент не найден")
+
+    client.notes = normalize_optional(payload.notes)
+    updated_by_user_id = get_system_user_id(db)
+    db.commit()
+    db.refresh(client)
+    write_audit_log(
+        db,
+        entity_type="client",
+        entity_id=client.id,
+        action="update",
+        user_id=updated_by_user_id,
+        payload_json={"full_name": f"{client.last_name} {client.first_name}", "fields": ["notes"]},
     )
     db.commit()
     return ClientRead.model_validate(client)

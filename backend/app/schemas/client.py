@@ -61,6 +61,11 @@ class ClientUpdate(ClientBase):
     center_ids: list[int] | None = None
 
 
+class ClientNotesUpdate(BaseModel):
+    # Только примечание карточки: окно обращения пишет туда свой комментарий.
+    notes: str | None = None
+
+
 class ClientRead(ClientBase):
     id: int
     patient_number: int
