@@ -142,8 +142,18 @@ def create_or_update_doctor_exam(payload: DoctorExamCreate, db: Session = Depend
         # закрытие осмотра и затирать его заключение: из-за этого в «Плане
         # осмотра» выписки и в амбулаторной карте врачи оставались без даты и
         # заключения. Снять отметку врача можно только через PUT.
+        # Но текст, который врач внёс в закрытый осмотр (диагноз, комментарий),
+        # сохраняем: карточка могла открыться до закрытия и прислать
+        # is_completed=false. Пустые поля черновика заключение не затирают.
         if payload.doctor_name:
             exam.doctor_name = payload.doctor_name
+        entered_fields = {
+            key: value
+            for key, value in (payload.fields_json or {}).items()
+            if value not in (None, "", [], {})
+        }
+        if entered_fields:
+            exam.fields_json = {**(exam.fields_json or {}), **entered_fields}
     else:
         for key, value in payload.model_dump().items():
             setattr(exam, key, value)

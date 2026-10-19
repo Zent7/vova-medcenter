@@ -103,6 +103,20 @@ class DoctorExamSyncKeepsCompletedTests(unittest.TestCase):
         self.assertEqual(self._exams()[0].doctor_name, "Казаков И.В.")
         self.assertEqual(len(self._exams()), 1)
 
+    def test_draft_keeps_text_entered_into_completed_exam(self):
+        # Врач открыл карточку, пока на сервере осмотр уже закрыт, и ввёл диагноз:
+        # черновик с is_completed=false не должен его потерять.
+        create_or_update_doctor_exam(
+            self._payload(fields_json={"diagnosis": "Гипертония", "comment": ""}), self.db
+        )
+
+        exam = self._exams()[0]
+        self.assertTrue(exam.is_completed)
+        self.assertEqual(
+            exam.fields_json,
+            {"conclusion": "Противопоказаний не выявлено", "diagnosis": "Гипертония"},
+        )
+
     def test_saving_the_card_still_completes_and_updates_the_exam(self):
         saved = create_or_update_doctor_exam(
             self._payload(fields_json={"conclusion": "Годен"}, is_completed=True), self.db
