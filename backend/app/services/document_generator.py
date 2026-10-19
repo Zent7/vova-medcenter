@@ -1622,6 +1622,33 @@ def _copy_xls_target_cell_style(target_sheet, target_row: int, target_col: int, 
         target_cell.xf_idx = source_xf_idx
 
 
+def _amb_text_date(value: date | datetime | None) -> str:
+    """Дата текстом для карты 25у: в её клетках без формата даты выходит серийный номер."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, datetime):
+        value = value.date()
+    if value <= date(1900, 1, 1):
+        return ""
+    return value.strftime("%d.%m.%Y")
+
+
+def _amb_street_line(context: dict[str, str], address: str) -> str:
+    """Строка «улица» карты 25у: в шаблоне нет клеток дома, корпуса и квартиры,
+    поэтому они идут за улицей, как и раньше."""
+    street = context.get("StreetCalc", "")
+    if not street:
+        return address
+    house = context.get("HouseNumberCalc", "")
+    body = context.get("HouseBodyCalc", "")
+    apartment = context.get("ApartmentNumberCalc", "")
+    return ", ".join(
+        part
+        for part in [street, house, f"корп. {body}" if body else "", f"кв. {apartment}" if apartment else ""]
+        if part
+    )
+
+
 def _xls_excel_date(value: date | datetime | str | None) -> float | str:
     if value in (None, ""):
         return ""
@@ -3730,7 +3757,7 @@ def _generate_prof_amb_xls(
     address = context.get("AddressCalc", "")
     city = context.get("CityCalc", "")
     district = context.get("DistrictCalc", "")
-    street = context.get("StreetCalc", "") or address
+    street = _amb_street_line(context, address)
     oms_series, oms_number = _split_policy(context.get("PolisOMS", ""))
     passport_series, passport_number = _split_document(context.get("DocumentSeries", ""), context.get("DocumentNumber", ""))
     visit_date = encounter.encounter_date if encounter else None
@@ -3738,10 +3765,10 @@ def _generate_prof_amb_xls(
 
     header_values: list[tuple[tuple[int, int], object]] = [
         ((15, 54), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
-        ((16, 47), _xls_excel_date(visit_date)),
+        ((16, 47), _amb_text_date(visit_date)),
         ((17, 43), context.get("ClientCalc", "")),
         ((18, 35), context.get("SexCalc", "")),
-        ((18, 48), _xls_excel_date(client.birth_date)),
+        ((18, 48), _amb_text_date(client.birth_date)),
         ((19, 54), context.get("SubjectCalc", "")),
         ((20, 35), district),
         ((20, 49), city),
@@ -3837,7 +3864,7 @@ def _generate_prof_amb_xlsx(
     address = context.get("AddressCalc", "")
     city = context.get("CityCalc", "")
     district = context.get("DistrictCalc", "")
-    street = context.get("StreetCalc", "") or address
+    street = _amb_street_line(context, address)
     oms_series, oms_number = _split_policy(context.get("PolisOMS", ""))
     passport_series, passport_number = _split_document(context.get("DocumentSeries", ""), context.get("DocumentNumber", ""))
     visit_date = encounter.encounter_date if encounter else None
@@ -3845,10 +3872,10 @@ def _generate_prof_amb_xlsx(
 
     header_values: list[tuple[tuple[int, int], object]] = [
         ((15, 54), _first_non_empty(context.get("BlankNumber"), context.get("ReferenceNumber"))),
-        ((16, 47), _xls_excel_date(visit_date)),
+        ((16, 47), _amb_text_date(visit_date)),
         ((17, 43), context.get("ClientCalc", "")),
         ((18, 35), context.get("SexCalc", "")),
-        ((18, 48), _xls_excel_date(client.birth_date)),
+        ((18, 48), _amb_text_date(client.birth_date)),
         ((19, 54), context.get("SubjectCalc", "")),
         ((20, 35), district),
         ((20, 49), city),
