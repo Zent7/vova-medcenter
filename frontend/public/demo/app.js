@@ -10883,57 +10883,6 @@ function isTractorPrintVariant(variantId) {
   return String(variantId || "").startsWith("tractor");
 }
 
-function renderDriverPrintInstructionPrompt() {
-  return `
-    <div class="driver-print-instruction">
-      <div class="driver-print-instruction__intro">
-        После завершения печати на одной стороне документа следуйте инструкциям по печати на второй стороне каждой страницы.
-      </div>
-      <div class="driver-print-instruction__steps">
-        <div class="driver-print-instruction__step">
-          <div class="driver-print-instruction__head">
-            <span class="driver-print-instruction__number">1</span>
-            <p>При появлении запроса на подачу бумаги вручную извлеките стопку распечатанных страниц из выходного лотка.</p>
-          </div>
-          <div class="printer-illustration printer-illustration--remove">
-            <div class="printer-illustration__body">
-              <div class="printer-illustration__top-paper"></div>
-              <div class="printer-illustration__slot"></div>
-              <div class="printer-illustration__tray"></div>
-              <div class="printer-illustration__paper"></div>
-            </div>
-            <div class="printer-illustration__arrow printer-illustration__arrow--out"></div>
-          </div>
-        </div>
-        <div class="driver-print-instruction__step">
-          <div class="driver-print-instruction__head">
-            <span class="driver-print-instruction__number">2</span>
-            <p>Поместите стопку распечатанных страниц в лоток 1, не меняя ее ориентацию.</p>
-          </div>
-          <div class="printer-illustration printer-illustration--load">
-            <div class="printer-illustration__body">
-              <div class="printer-illustration__top-paper"></div>
-              <div class="printer-illustration__slot"></div>
-              <div class="printer-illustration__tray"></div>
-              <div class="printer-illustration__paper"></div>
-            </div>
-            <div class="printer-illustration__arrow printer-illustration__arrow--in"></div>
-          </div>
-        </div>
-        <div class="driver-print-instruction__step">
-          <div class="driver-print-instruction__head">
-            <span class="driver-print-instruction__number">3</span>
-            <p>Нажмите клавишу "Go" или "OK".</p>
-          </div>
-        </div>
-      </div>
-      <div class="driver-print-instruction__footer">
-        <button type="button" class="driver-print-instruction__button" id="driverPrintContinue">Перейти</button>
-      </div>
-    </div>
-  `;
-}
-
 function renderDriverFrontCheckPrompt() {
   return `
     <div class="driver-front-check">
@@ -11224,24 +11173,21 @@ async function openDriverPrintFlow(options = {}) {
   };
 
   const handleFrontPrintResult = async (result) => {
-    openActionModal("Инструкции по печати на обеих сторонах", renderDriverPrintInstructionPrompt(), "modal--print-instruction");
-    document.getElementById("driverPrintContinue")?.addEventListener("click", async () => {
-      openActionModal("Результат печати:", renderDriverFrontCheckPrompt(), "modal--front-print-check");
-      document.getElementById("driverFrontCheckNo")?.addEventListener("click", async () => {
-        await handleSpoiledBlank(result.generated_document_id);
-      });
-      document.getElementById("driverFrontCheckYes")?.addEventListener("click", async () => {
-        try {
-          await markPrintedDocument(result.generated_document_id, true);
-          await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-          flowState.loading = false;
-          actionModal.classList.add("hidden");
-          renderFlow();
-          showToast("Лицевая сторона подтверждена. Для второй стороны нажмите «Печатать оборот».");
-        } catch (error) {
-          showToast(humanizeApiError(error, "Не удалось подтвердить лицевую сторону"));
-        }
-      });
+    openActionModal("Результат печати:", renderDriverFrontCheckPrompt(), "modal--front-print-check");
+    document.getElementById("driverFrontCheckNo")?.addEventListener("click", async () => {
+      await handleSpoiledBlank(result.generated_document_id);
+    });
+    document.getElementById("driverFrontCheckYes")?.addEventListener("click", async () => {
+      try {
+        await markPrintedDocument(result.generated_document_id, true);
+        await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
+        flowState.loading = false;
+        actionModal.classList.add("hidden");
+        renderFlow();
+        showToast("Лицевая сторона подтверждена. Для второй стороны нажмите «Печатать оборот».");
+      } catch (error) {
+        showToast(humanizeApiError(error, "Не удалось подтвердить лицевую сторону"));
+      }
     });
   };
 
