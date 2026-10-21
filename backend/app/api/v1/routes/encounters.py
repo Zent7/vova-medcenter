@@ -250,7 +250,20 @@ def update_encounter(encounter_id: int, payload: EncounterUpdate, db: Session = 
 
     encounter_date_before_update = encounter.encounter_date
     for key, value in payload.model_dump(exclude_unset=True).items():
+        if key == "suppressed_doctor_role_ids":
+            continue
         setattr(encounter, key, value)
+    if payload.suppressed_doctor_role_ids is not None:
+        # Сохранение обращения только добавляет снятых врачей. Список из браузера
+        # может отставать (гонка с удалением врача, устаревшая вкладка): если бы он
+        # заменял серверный, автозаполнение при следующей синхронизации вернуло бы
+        # врача. Вернуть врача в обращение можно через POST /doctor-exams.
+        suppressed = {
+            str(role_id or "").strip()
+            for role_id in [*(encounter.suppressed_doctor_role_ids or []), *payload.suppressed_doctor_role_ids]
+            if str(role_id or "").strip()
+        }
+        encounter.suppressed_doctor_role_ids = sorted(suppressed)
 
     if payload.encounter_date is not None and payload.encounter_date != encounter_date_before_update:
         client = db.get(Client, encounter.client_id)
