@@ -33,7 +33,7 @@ function emptyAuth() {
   return { accessToken: "", userName: "", roleCode: "", roleName: "", centerName: "", centerNames: [], allCenters: false };
 }
 
-function scope(auth, { centerFilter = CENTERS[0], centers = [] } = {}) {
+function scope(auth, { centerFilter = CENTERS[0], centers = [], workspaceNames = CENTERS } = {}) {
   const appFunctions = [
     "normalizeCenterLookupValue",
     "getAllowedCenterNames",
@@ -68,7 +68,7 @@ return {
   )(
     { auth: { ...emptyAuth(), ...auth }, centerFilter },
     { centers },
-    CENTERS,
+    workspaceNames,
     (value) => String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"),
   );
 }
@@ -138,6 +138,18 @@ test("у сотрудника с одним центром остаётся од
   const generateButton = single.generateButtons();
   assert.match(generateButton, /data-generate-document="contract"/);
   assert.doesNotMatch(generateButton, /data-contract-center/);
+});
+
+test("у сотрудника Медилэнда есть и договор Мед-Авто, у сотрудника Мед-Авто по-прежнему одна кнопка", () => {
+  const names = ["Мед-Авто", "Медилэнд", "ПЕРВАЯ ЗДРАВНИЦА"];
+  const medilend = { accessToken: "t", roleCode: "operator", centerName: "Медилэнд", centerNames: ["Медилэнд"] };
+  const medAvto = { accessToken: "t", roleCode: "operator", centerName: "Мед-Авто", centerNames: ["Мед-Авто"] };
+  assert.deepEqual(scope(medilend, { workspaceNames: names }).contract(), ["Медилэнд", "Мед-Авто"]);
+  assert.deepEqual(scope(medAvto, { workspaceNames: names }).contract(), []);
+
+  const generateButtons = scope(medilend, { workspaceNames: names }).generateButtons();
+  assert.match(generateButtons, /data-contract-center="Медилэнд">Договор Медилэнд</);
+  assert.match(generateButtons, /data-contract-center="Мед-Авто">Договор Мед-Авто</);
 });
 
 test("у сотрудника с двумя центрами по кнопке договора на каждый центр", () => {

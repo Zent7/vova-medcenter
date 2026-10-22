@@ -3133,9 +3133,11 @@ function getClientCenterChoiceNames() {
 // Центры, чей договор печатают клиенту отдельной кнопкой: договор у каждого
 // центра свой («Договор Мед-Авто», «Договор Медилэнд»). Только у сотрудника с
 // несколькими центрами; админ печатает договор рабочего центра, переключаясь.
+// Сотрудник Медилэнда видит и договор Мед-Авто: так попросил заказчик.
 function getContractCenterNames() {
   const allowed = getAllowedCenterNames();
-  return allowed.length > 1 ? allowed : [];
+  const names = allowed.includes("Медилэнд") ? [...new Set([...allowed, "Мед-Авто"])] : allowed;
+  return names.length > 1 ? names : [];
 }
 
 async function resolveCenterIdByName(centerName) {

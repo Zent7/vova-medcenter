@@ -503,9 +503,11 @@ class SecondCenterSetTests(unittest.TestCase):
 
         self.assertIn("[PoolIssuerDoctor]", docx_text(path))
 
-    def test_the_medilend_set_has_no_prof_29n_blank(self):
-        # Медилэнд делает профосмотры только по бланку Мед-Авто, своего заключения 29Н нет.
-        self.assertFalse((self.CENTER_DIR / "ПРОФОСМОТР 29Н.xls").exists())
+    def test_the_medilend_set_has_no_prof_or_lmk_blank(self):
+        # Медилэнд делает профосмотры и ЛМК только по бланкам Мед-Авто, своих бланков у него нет.
+        for file_name in ("ПРОФОСМОТР 29Н.xls", "ЛМК.xls", "ЛМК_справка_шаблон.docx"):
+            with self.subTest(file_name=file_name):
+                self.assertFalse((self.CENTER_DIR / file_name).exists())
 
     def test_the_medilend_ecg_blank_names_this_center(self):
         text = docx_text(self.CENTER_DIR / "ЭКГ_шаблон.docx")
@@ -539,6 +541,17 @@ class RetiredCenterSetFileTests(SeededStorageTestCase):
 
         self.assertFalse(target.exists())
         (kept,) = self.center_dir(7).glob("ПРОФОСМОТР 29Н.xls.retired-*")
+        self.assertEqual(kept.read_bytes(), b"old copy")
+
+    def test_a_lmk_copy_is_set_aside_as_well(self):
+        target = self.center_dir(7) / "ЛМК_справка_шаблон.docx"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"old copy")
+
+        seed_center_template_defaults([(7, "center-b")])
+
+        self.assertFalse(target.exists())
+        (kept,) = self.center_dir(7).glob("ЛМК_справка_шаблон.docx.retired-*")
         self.assertEqual(kept.read_bytes(), b"old copy")
 
     def test_other_centers_keep_their_copy(self):
