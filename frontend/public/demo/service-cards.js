@@ -11,28 +11,16 @@
     return (window.escapeHtml || String)(value);
   }
 
-  const AUTO_EKG_CONCLUSION_PREFIX =
+  // Стандартное заключение ЭКГ: сразу в карточке, его можно править; дата ЭКГ идёт отдельной строкой бланка.
+  const STANDARD_EKG_CONCLUSION =
+    "Синусовый водитель ритма. Нормосистолия, ритм регулярный, ЧСС = 79уд/мин, RR: 640мс - 844мс. Форма PQRST - практически нормальная. Левая ножка пучка Гиса. Нормальное положение электрической оси сердца.";
+  // Прежнее автозаключение с датой: такое значение в карточке заменяем стандартным.
+  const LEGACY_AUTO_EKG_CONCLUSION_PREFIX =
     "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей";
 
-  function extractRuDate(value) {
-    return String(value ?? "").match(/\b\d{2}\.\d{2}\.(?:\d{2}|\d{4})\b/)?.[0] || "";
-  }
-
-  function todayRuDate() {
-    return new Date().toLocaleDateString("ru-RU", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "2-digit",
-    });
-  }
-
-  function buildAutoEkgConclusion(date) {
-    const finalDate = extractRuDate(date) || todayRuDate();
-    return `${AUTO_EKG_CONCLUSION_PREFIX} от ${finalDate}`;
-  }
-
   function isAutoEkgConclusion(value) {
-    return String(value ?? "").trim().startsWith(`${AUTO_EKG_CONCLUSION_PREFIX} от `);
+    const text = String(value ?? "").trim();
+    return !text || text.startsWith(LEGACY_AUTO_EKG_CONCLUSION_PREFIX);
   }
 
   function getFirstNamedControl(elements) {
@@ -319,8 +307,8 @@
 
     const todayIso = new Date().toLocaleDateString("ru-RU");
     const examDate = val("examDate") || todayIso;
-    const ekgDate = extractRuDate(val("ekg")) || extractRuDate(examDate) || todayIso;
-    const ekgConclusion = String(val("ekgConclusion")).trim() || buildAutoEkgConclusion(ekgDate);
+    const storedEkgConclusion = String(val("ekgConclusion")).trim();
+    const ekgConclusion = isAutoEkgConclusion(storedEkgConclusion) ? STANDARD_EKG_CONCLUSION : storedEkgConclusion;
 
     return `
       <div class="sport-card-backdrop" data-sport-card>
@@ -558,26 +546,6 @@
 
       const form = card.querySelector("[data-sport-card-form]");
       if (form) {
-        const syncAutoEkgConclusion = () => {
-          const conclusionInput = getFirstNamedControl(form.elements.ekgConclusion);
-          if (!conclusionInput) return;
-          const currentValue = String(conclusionInput.value || "").trim();
-          if (currentValue && !isAutoEkgConclusion(currentValue)) return;
-          const ekgInput = getFirstNamedControl(form.elements.ekg);
-          const examDateInput = getFirstNamedControl(form.elements.examDate);
-          const ekgDate =
-            extractRuDate(ekgInput?.value) ||
-            extractRuDate(examDateInput?.value) ||
-            todayRuDate();
-          conclusionInput.value = buildAutoEkgConclusion(ekgDate);
-        };
-        const examDateInput = getFirstNamedControl(form.elements.examDate);
-        const ekgInput = getFirstNamedControl(form.elements.ekg);
-        examDateInput?.addEventListener("input", syncAutoEkgConclusion);
-        examDateInput?.addEventListener("change", syncAutoEkgConclusion);
-        ekgInput?.addEventListener("input", syncAutoEkgConclusion);
-        ekgInput?.addEventListener("change", syncAutoEkgConclusion);
-
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           event.stopPropagation();

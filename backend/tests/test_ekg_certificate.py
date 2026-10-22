@@ -28,6 +28,12 @@ ECG_TEMPLATE_PATHS = (
     ASSETS / "Centers" / "center-b" / ECG_FILE_NAME,
     ASSETS / "Centers" / "center-c" / ECG_FILE_NAME,
 )
+# Текст, который заказчик вписал в заключение всех ЭКГ; карточка подставляет его по умолчанию.
+EKG_STANDARD_CONCLUSION = (
+    "Синусовый водитель ритма. Нормосистолия, ритм регулярный, ЧСС = 79уд/мин, RR: 640мс - 844мс. "
+    "Форма PQRST - практически нормальная. Левая ножка пучка Гиса. "
+    "Нормальное положение электрической оси сердца."
+)
 
 
 def document_text(path):
@@ -102,6 +108,25 @@ class EkgCertificateTests(unittest.TestCase):
         self.assertEqual(result.generated_fields["EkgDate"], "22.10.2026")
         self.assertIn("ЭКГ от 22.10.2026 г.", text)
         self.assertNotRegex(text, r"\[[A-Za-z][^\]]*\]")
+
+    def test_empty_conclusion_prints_the_standard_one(self):
+        self.add_exam("chairman", "Председателев П.П.")
+        result = self.generate()
+        text = document_text(result.output_file_path)
+
+        self.assertIn(EKG_STANDARD_CONCLUSION, text)
+        self.assertEqual(result.generated_fields["EkgConclusion"], EKG_STANDARD_CONCLUSION)
+
+    def test_old_automatic_conclusion_with_date_prints_the_standard_one(self):
+        self.add_exam(
+            "chairman",
+            "Председателев П.П.",
+            ekgConclusion="Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей от 21.10.2026",
+        )
+        result = self.generate()
+
+        self.assertEqual(result.generated_fields["EkgConclusion"], EKG_STANDARD_CONCLUSION)
+        self.assertNotIn("от 21.10.2026", document_text(result.output_file_path))
 
 
 if __name__ == "__main__":

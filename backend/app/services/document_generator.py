@@ -5637,6 +5637,16 @@ def _chairman_certificate_date_context_overrides(
     return _chairman_exam_date_context_overrides(exams)
 
 
+# Стандартное заключение ЭКГ; то же значение по умолчанию в карточке ЭКГ (service-cards.js).
+EKG_STANDARD_CONCLUSION = (
+    "Синусовый водитель ритма. Нормосистолия, ритм регулярный, ЧСС = 79уд/мин, RR: 640мс - 844мс. "
+    "Форма PQRST - практически нормальная. Левая ножка пучка Гиса. "
+    "Нормальное положение электрической оси сердца."
+)
+# Прежнее автозаключение с датой: такое значение печатаем стандартным текстом.
+EKG_LEGACY_AUTO_CONCLUSION_PREFIX = "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей"
+
+
 def _ekg_context_overrides(
     template: DocumentTemplate,
     exams: list[DoctorExam],
@@ -5645,7 +5655,8 @@ def _ekg_context_overrides(
     """Метки ЭКГ-бланка: дата исследования, заключение и врач.
 
     Дата и заключение — из карточки ЭКГ председателя (поля «ЭКГ» и «Заключение ЭКГ»),
-    без даты ЭКГ — дата осмотра, без неё — дата обращения. Врач — терапевт обращения,
+    без даты ЭКГ — дата осмотра, без неё — дата обращения. Пустое заключение и прежнее
+    автозаключение печатаются стандартным текстом. Врач — терапевт обращения,
     без осмотра терапевта — врач карточки.
     """
     if "экг_шаблон.docx" not in _template_file_names(template):
@@ -5658,9 +5669,12 @@ def _ekg_context_overrides(
         or _parse_chairman_exam_date(_first_field_value(fields, "examDate", "exam_date"))
         or _parse_chairman_exam_date(context.get("VisitDate"))
     )
+    conclusion = " ".join(_first_field_value(fields, "ekgConclusion", "EKGConclusion", "ecgConclusion").split())
+    if not conclusion or conclusion.startswith(EKG_LEGACY_AUTO_CONCLUSION_PREFIX):
+        conclusion = EKG_STANDARD_CONCLUSION
     return {
         "EkgDate": ekg_date.strftime("%d.%m.%Y") if ekg_date else "",
-        "EkgConclusion": " ".join(_first_field_value(fields, "ekgConclusion", "EKGConclusion", "ecgConclusion").split()),
+        "EkgConclusion": conclusion,
         "EkgTherapistDoctor": _first_non_empty(
             _exam_doctor_name(exam_map.get("therapist")),
             _exam_doctor_name(chairman),
