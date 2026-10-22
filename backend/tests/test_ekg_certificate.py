@@ -7,6 +7,7 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import zipfile
 
+import xlrd
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -76,8 +77,8 @@ class EkgCertificateTests(unittest.TestCase):
         self.db.add(DoctorExam(client_id=1, encounter_id=1, doctor_role_id=role, doctor_name=name, fields_json=fields))
         self.db.commit()
 
-    def generate(self):
-        template = self.db.scalar(select(DocumentTemplate).where(DocumentTemplate.file_name == ECG_FILE_NAME))
+    def generate(self, file_name=ECG_FILE_NAME):
+        template = self.db.scalar(select(DocumentTemplate).where(DocumentTemplate.file_name == file_name))
         with patch.object(generator.settings, "generated_documents_dir", self.output.name):
             return generator.generate_document(self.db, template_id=template.id, template_code=None, client_id=1, encounter_id=1)
 
@@ -127,6 +128,35 @@ class EkgCertificateTests(unittest.TestCase):
 
         self.assertEqual(result.generated_fields["EkgConclusion"], EKG_STANDARD_CONCLUSION)
         self.assertNotIn("от 21.10.2026", document_text(result.output_file_path))
+
+    def sport_ecg_line(self, result):
+        sheet = xlrd.open_workbook(result.output_file_path, formatting_info=True).sheet_by_index(0)
+        # Строка ЭКГ в СПОРТ.xls — ячейка C23 (22, 2); внутри фиксированное поле из невидимых пробелов.
+        return sheet.cell_value(22, 2).replace("​", "")
+
+    def test_sport_sheet_ecg_line_prints_the_standard_conclusion_when_empty(self):
+        self.add_exam("chairman", "Председателев П.П.", conclusionText="Допущен к занятиям", conclusion="Годен")
+        result = self.generate("СПОРТ.xls")
+
+        self.assertEqual(self.sport_ecg_line(result), EKG_STANDARD_CONCLUSION)
+
+    def test_sport_sheet_ecg_line_prints_the_standard_conclusion_for_old_automatic_text(self):
+        self.add_exam(
+            "chairman",
+            "Председателев П.П.",
+            conclusionText="Допущен к занятиям",
+            conclusion="Годен",
+            ekgConclusion="Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей от 21.10.2026",
+        )
+        result = self.generate("СПОРТ.xls")
+
+        self.assertEqual(self.sport_ecg_line(result), EKG_STANDARD_CONCLUSION)
+
+    def test_sport_sheet_ecg_line_prints_the_conclusion_typed_in_the_card(self):
+        self.add_exam("chairman", "Председателев П.П.", conclusionText="Допущен к занятиям", conclusion="Годен", ekgConclusion="Норма")
+        result = self.generate("СПОРТ.xls")
+
+        self.assertEqual(self.sport_ecg_line(result), "Норма")
 
 
 if __name__ == "__main__":

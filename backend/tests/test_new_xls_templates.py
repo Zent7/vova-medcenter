@@ -16,6 +16,7 @@ from xlutils.copy import copy as copy_xls_workbook
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.document_generator import (  # noqa: E402
+    EKG_STANDARD_CONCLUSION,
     _apply_print_variant_to_xls_workbook,
     _generate_runtime_xls,
 )
@@ -642,6 +643,8 @@ class NewXlsTemplatesTests(unittest.TestCase):
             for cells in TRACTOR_BACK_RESTRICTION_CELLS.values()
             for cell in cells
         }
+        # Строка ЭКГ справки спорта без заключения печатает стандартный текст, как ЭКГ-бланк.
+        default_values[("СПОРТ.xls", (22, 2))] = EKG_STANDARD_CONCLUSION
         with tempfile.TemporaryDirectory() as temporary_dir:
             for spec in NEW_XLS_TEMPLATE_SPECS:
                 with self.subTest(template=spec.file_name):

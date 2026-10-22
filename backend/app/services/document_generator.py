@@ -3223,10 +3223,12 @@ def _fill_new_sport_xls_sheet(
         _exam_field(fields or {}, "sportType", "sport", "sports", "discipline"),
         _new_xls_context_value(context, "SportType"),
     )
-    ekg = _first_non_empty(
-        _exam_field(fields or {}, "ekgConclusion", "EKGConclusion", "ecgConclusion", "ekg", "EKG", "ecg"),
-        _new_xls_context_value(context, "SportEkgConclusion"),
-        _new_xls_context_value(context, "SportEkg"),
+    # Строка ЭКГ — заключение ЭКГ; пустое печатаем стандартным текстом, как в ЭКГ-бланке.
+    ekg = _ekg_print_conclusion(
+        _first_non_empty(
+            _exam_field(fields or {}, "ekgConclusion", "EKGConclusion", "ecgConclusion"),
+            _new_xls_context_value(context, "SportEkgConclusion"),
+        )
     )
     conclusion = _first_non_empty(
         _exam_field(fields or {}, "conclusionText", "sportConclusionText", "issuedConclusion", "conclusion", "result"),
@@ -5647,6 +5649,14 @@ EKG_STANDARD_CONCLUSION = (
 EKG_LEGACY_AUTO_CONCLUSION_PREFIX = "Ритм синусовый, ЧСС , нормальная электрическая позиция сердца, ЭКГ-комплексы без особенностей"
 
 
+def _ekg_print_conclusion(raw: object) -> str:
+    """Заключение ЭКГ для бланка: пустое и прежнее автозаключение печатаются стандартным текстом."""
+    conclusion = " ".join(str(raw or "").split())
+    if not conclusion or conclusion.startswith(EKG_LEGACY_AUTO_CONCLUSION_PREFIX):
+        return EKG_STANDARD_CONCLUSION
+    return conclusion
+
+
 def _ekg_context_overrides(
     template: DocumentTemplate,
     exams: list[DoctorExam],
@@ -5669,12 +5679,9 @@ def _ekg_context_overrides(
         or _parse_chairman_exam_date(_first_field_value(fields, "examDate", "exam_date"))
         or _parse_chairman_exam_date(context.get("VisitDate"))
     )
-    conclusion = " ".join(_first_field_value(fields, "ekgConclusion", "EKGConclusion", "ecgConclusion").split())
-    if not conclusion or conclusion.startswith(EKG_LEGACY_AUTO_CONCLUSION_PREFIX):
-        conclusion = EKG_STANDARD_CONCLUSION
     return {
         "EkgDate": ekg_date.strftime("%d.%m.%Y") if ekg_date else "",
-        "EkgConclusion": conclusion,
+        "EkgConclusion": _ekg_print_conclusion(_first_field_value(fields, "ekgConclusion", "EKGConclusion", "ecgConclusion")),
         "EkgTherapistDoctor": _first_non_empty(
             _exam_doctor_name(exam_map.get("therapist")),
             _exam_doctor_name(chairman),
