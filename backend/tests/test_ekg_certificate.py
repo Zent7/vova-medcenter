@@ -158,6 +158,18 @@ class EkgCertificateTests(unittest.TestCase):
 
         self.assertEqual(self.sport_ecg_line(result), "Норма")
 
+    def test_sport_sheet_ecg_line_wraps_the_standard_conclusion_without_shrinking(self):
+        self.add_exam("chairman", "Председателев П.П.", conclusionText="Допущен к занятиям", conclusion="Годен")
+        result = self.generate("СПОРТ.xls")
+        book = xlrd.open_workbook(result.output_file_path, formatting_info=True)
+        sheet = book.sheet_by_index(0)
+        alignment = book.xf_list[sheet.cell_xf_index(22, 2)].alignment
+
+        self.assertTrue(alignment.text_wrapped)
+        self.assertFalse(alignment.shrink_to_fit)
+        # Стандартный текст печатается в четыре строки шрифта 14 pt: строка 22 — 75 pt (1500 twips).
+        self.assertGreaterEqual(sheet.rowinfo_map[22].height, 1500)
+
 
 if __name__ == "__main__":
     unittest.main()
