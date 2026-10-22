@@ -503,13 +503,16 @@ class SecondCenterSetTests(unittest.TestCase):
 
         self.assertIn("[PoolIssuerDoctor]", docx_text(path))
 
-    def test_the_prof_29n_header_and_code_boxes_hold_this_center(self):
-        path = self.CENTER_DIR / "ПРОФОСМОТР 29Н.xls"
-        text = workbook_text(path)
+    def test_the_medilend_set_has_no_prof_29n_blank(self):
+        # Медилэнд делает профосмотры только по бланку Мед-Авто, своего заключения 29Н нет.
+        self.assertFalse((self.CENTER_DIR / "ПРОФОСМОТР 29Н.xls").exists())
+
+    def test_the_medilend_ecg_blank_names_this_center(self):
+        text = docx_text(self.CENTER_DIR / "ЭКГ_шаблон.docx")
 
         self.assertIn("Медилэнд", text)
-        self.assertIn("4706042715", text)
-        self.assertEqual(prof_29n_ogrn_boxes(path), "1214700015727")
+        self.assertIn("1214700015727", text)
+        self.assertIsNone(MED_AVTO_REQUISITES.search(text))
 
     def test_the_state_service_conclusion_carries_this_center(self):
         # Заказчик не прислал свой ГС: набор берёт разметку ГС Здравницы с реквизитами Медилэнда.
@@ -518,6 +521,39 @@ class SecondCenterSetTests(unittest.TestCase):
         self.assertIn("Медилэнд", text)
         self.assertIn("55112772", text)
         self.assertIsNone(re.search(r"здравниц", text, re.IGNORECASE))
+
+
+class RetiredCenterSetFileTests(SeededStorageTestCase):
+    """Бланк, которого нет в наборе медцентра, снимается с его папки, а не печатается по старой копии."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.defaults_root.parent / "center-b").mkdir()
+
+    def test_a_copy_of_a_retired_blank_is_set_aside_not_deleted(self):
+        target = self.center_dir(7) / "ПРОФОСМОТР 29Н.xls"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"old copy")
+
+        seed_center_template_defaults([(7, "center-b")])
+
+        self.assertFalse(target.exists())
+        (kept,) = self.center_dir(7).glob("ПРОФОСМОТР 29Н.xls.retired-*")
+        self.assertEqual(kept.read_bytes(), b"old copy")
+
+    def test_other_centers_keep_their_copy(self):
+        target = self.center_dir(8) / "ПРОФОСМОТР 29Н.xls"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"their copy")
+
+        seed_center_template_defaults([(8, CENTER_CODE)])
+
+        self.assertEqual(target.read_bytes(), b"their copy")
+
+    def test_nothing_happens_when_the_copy_is_absent(self):
+        seed_center_template_defaults([(7, "center-b")])
+
+        self.assertFalse(self.center_dir(7).exists())
 
 
 if __name__ == "__main__":

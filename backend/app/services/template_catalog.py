@@ -43,8 +43,6 @@ SERVICE_LIST_TEMPLATE_ORDER: tuple[tuple[str, str], ...] = (
     ("трактор об ст.xls", "071у оборотная"),
     ("водительская лицевая.xls", "ВУ (водительская) лицевая"),
     ("водительская обратн ст.xls", "ВУ (водительская) оборотная"),
-    ("086у.жен_шаблон.docx", "086у (Ж)"),
-    ("086у.муж_шаблон_2.docx", "086у (М)"),
     # Бумажная копия СЭМД-196: бланки 086у заказчика без шапки отменённой
     # формы 086/у (приказ 834н утратил силу с 01.09.2025).
     ("СЭМД-196.жен_шаблон.docx", "СЭМД-196 (Ж)"),
@@ -67,6 +65,10 @@ EXTRA_TEMPLATE_ORDER: tuple[tuple[str, str], ...] = (
     ("Водительская(новая).xml", "ВУ (водительская) — выгрузка XML"),
     ("Чод_новый.xml", "чод — выгрузка XML"),
     ("ГИМС_шаблон_для_загрузки_из_файла.xml", "гимс — выгрузка XML"),
+    # Справку 086у заменила СЭМД-196, заказчик её больше не правит: строк на
+    # странице «Шаблоны» нет, а старые справки по этим бланкам печатаются как раньше.
+    ("086у.жен_шаблон.docx", "086у (Ж)"),
+    ("086у.муж_шаблон_2.docx", "086у (М)"),
 )
 TEMPLATE_ORDER: tuple[tuple[str, str], ...] = SERVICE_LIST_TEMPLATE_ORDER + EXTRA_TEMPLATE_ORDER
 TEMPLATE_DISPLAY_NAMES = {file_name: name for file_name, name in TEMPLATE_ORDER}
@@ -234,6 +236,13 @@ CENTER_DEFAULTS_FOLDER = "Centers"
 # копии, null — у центра уже была своя). Без этого «Вернуть исходный» или
 # удалённый вручную файл оживал бы при следующем старте.
 CENTER_DEFAULTS_MARKER = ".seeded-defaults.json"
+# Бланки, которых в наборе центра больше нет. Копия, разложенная из набора раньше,
+# остаётся в папке центра, поэтому при старте её откладываем в *.retired-<время>
+# (не удаляем) и центр печатает встроенный бланк.
+RETIRED_CENTER_SET_FILES: dict[str, tuple[str, ...]] = {
+    # Медилэнд делает профосмотры только по бланку Мед-Авто.
+    "center-b": ("ПРОФОСМОТР 29Н.xls",),
+}
 
 
 def get_center_defaults_root(center_code: str) -> Path:
@@ -309,6 +318,21 @@ def _write_seeded_defaults(center_dir: Path, seeded: dict[str, str | None]) -> N
     partial.replace(marker)
 
 
+def _retire_center_copy(center_id: int, file_name: str) -> None:
+    """Отложить копию бланка, которого в наборе центра больше нет. Файл не удаляется."""
+    try:
+        target = get_template_override_path(file_name, center_id)
+    except ValueError:
+        return
+    if not target.is_file():
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    try:
+        target.rename(target.with_name(f"{target.name}.retired-{stamp}"))
+    except OSError:
+        logger.exception("Не удалось отложить бланк %s центра %s", file_name, center_id)
+
+
 def seed_center_template_defaults(centers) -> list[str]:
     """Разложить начальные наборы бланков по папкам центров.
 
@@ -325,6 +349,8 @@ def seed_center_template_defaults(centers) -> list[str]:
     for center_id, center_code in centers:
         if Path(center_code).name != center_code:
             continue
+        for retired_name in RETIRED_CENTER_SET_FILES.get(center_code, ()):
+            _retire_center_copy(center_id, retired_name)
         defaults_root = get_center_defaults_root(center_code)
         if not defaults_root.is_dir():
             continue

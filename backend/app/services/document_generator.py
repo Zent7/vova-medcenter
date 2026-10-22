@@ -5637,6 +5637,37 @@ def _chairman_certificate_date_context_overrides(
     return _chairman_exam_date_context_overrides(exams)
 
 
+def _ekg_context_overrides(
+    template: DocumentTemplate,
+    exams: list[DoctorExam],
+    context: dict[str, str],
+) -> dict[str, str]:
+    """Метки ЭКГ-бланка: дата исследования, заключение и врач.
+
+    Дата и заключение — из карточки ЭКГ председателя (поля «ЭКГ» и «Заключение ЭКГ»),
+    без даты ЭКГ — дата осмотра, без неё — дата обращения. Врач — терапевт обращения,
+    без осмотра терапевта — врач карточки.
+    """
+    if "экг_шаблон.docx" not in _template_file_names(template):
+        return {}
+    exam_map = _exam_map(exams)
+    chairman = exam_map.get("chairman")
+    fields = (chairman.fields_json or {}) if chairman is not None else {}
+    ekg_date = (
+        _parse_chairman_exam_date(_first_field_value(fields, "ekg"))
+        or _parse_chairman_exam_date(_first_field_value(fields, "examDate", "exam_date"))
+        or _parse_chairman_exam_date(context.get("VisitDate"))
+    )
+    return {
+        "EkgDate": ekg_date.strftime("%d.%m.%Y") if ekg_date else "",
+        "EkgConclusion": " ".join(_first_field_value(fields, "ekgConclusion", "EKGConclusion", "ecgConclusion").split()),
+        "EkgTherapistDoctor": _first_non_empty(
+            _exam_doctor_name(exam_map.get("therapist")),
+            _exam_doctor_name(chairman),
+        ),
+    }
+
+
 def _gto_context_overrides(
     template: DocumentTemplate,
     exams: list[DoctorExam],
@@ -6612,6 +6643,7 @@ def generate_document(
         context.update(_chairman_certificate_date_context_overrides(template, document_exams))
         context.update(_pool_doctor_context_overrides(template, document_exams, context))
         context.update(_gto_context_overrides(template, document_exams, context))
+        context.update(_ekg_context_overrides(template, document_exams, context))
         context.setdefault("CertificateNumber", "")
         sequential_number = ""
         if blank_form is not None:
