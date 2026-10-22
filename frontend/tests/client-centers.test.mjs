@@ -76,6 +76,7 @@ return {
 const SINGLE = { accessToken: "t", roleCode: "operator", centerName: CENTERS[1], centerNames: [CENTERS[1]] };
 const MULTI = { accessToken: "t", roleCode: "operator", centerName: CENTERS[0], centerNames: [CENTERS[0], CENTERS[1]] };
 const ADMIN = { accessToken: "t", roleCode: "admin", allCenters: true };
+const SINGLE_ZDRAV = { accessToken: "t", roleCode: "operator", centerName: "ПЕРВАЯ ЗДРАВНИЦА", centerNames: ["ПЕРВАЯ ЗДРАВНИЦА"] };
 
 test("база клиентов сотрудника с несколькими центрами — базы всех его центров", () => {
   assert.deepEqual(scope(MULTI, { centerFilter: CENTERS[1] }).base(), [CENTERS[0], CENTERS[1]]);
@@ -220,15 +221,28 @@ test("кнопки «ОК + договор» по центрам и перекл
 
   const submitButtons = new Function(
     "getContractCenterNames",
+    "getClientFormCenterNames",
     "escapeHtml",
     `${extractFrom(modalSource, "renderClientContractSubmitButtons")}\nreturn renderClientContractSubmitButtons;`,
   );
-  const multi = submitButtons(() => [CENTERS[0], CENTERS[1]], (value) => String(value))(false);
+  const multi = submitButtons(() => [CENTERS[0], CENTERS[1]], (names) => names, (value) => String(value))(false);
   assert.match(multi, new RegExp(`data-contract-center="${CENTERS[0]}">ОК \\+ договор ${CENTERS[0]}<`));
   assert.match(multi, new RegExp(`data-contract-center="${CENTERS[1]}">ОК \\+ договор ${CENTERS[1]}<`));
-  const plain = submitButtons(() => [], (value) => String(value))(true);
+  const plain = submitButtons(() => [], (names) => names, (value) => String(value))(true);
   assert.match(plain, />Сохранить \+ договор</);
   assert.doesNotMatch(plain, /data-contract-center/);
+});
+
+test("админу в форме клиента не предлагается Здравница, остальным центры как были", () => {
+  const formNames = (auth, names) =>
+    new Function(
+      "appState",
+      `${extractFrom(modalSource, "getClientFormCenterNames")}\nreturn getClientFormCenterNames;`,
+    )({ auth: { ...emptyAuth(), ...auth } })(names);
+  const all = ["Мед-Авто", "Медилэнд", "ПЕРВАЯ ЗДРАВНИЦА"];
+  assert.deepEqual(formNames({ accessToken: "t", roleCode: "admin", allCenters: true }, all), ["Мед-Авто", "Медилэнд"]);
+  assert.deepEqual(formNames(SINGLE_ZDRAV, ["ПЕРВАЯ ЗДРАВНИЦА"]), ["ПЕРВАЯ ЗДРАВНИЦА"]);
+  assert.deepEqual(formNames({}, all), all);
 });
 
 test("изменённые файлы подняли версию в index.html", () => {
