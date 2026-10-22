@@ -121,10 +121,10 @@ test("раскладывать клиента по центрам могут с�
   assert.deepEqual(scope({}).choice(), []);
 });
 
-test("договор каждого центра печатают отдельной кнопкой только у сотрудника с несколькими центрами", () => {
+test("договор каждого центра печатают отдельной кнопкой у сотрудника с несколькими центрами и у админа", () => {
   assert.deepEqual(scope(MULTI).contract(), [CENTERS[0], CENTERS[1]]);
   assert.deepEqual(scope(SINGLE).contract(), []);
-  assert.deepEqual(scope(ADMIN).contract(), []);
+  assert.deepEqual(scope(ADMIN).contract(), CENTERS);
   assert.deepEqual(scope({}).contract(), []);
 });
 
