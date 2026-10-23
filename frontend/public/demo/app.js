@@ -855,7 +855,7 @@ function resolveDashboardAdmissionCategory(client, visit = null) {
   if (!visit) return resolveDashboardAdmissionCategoryValue(client?.category, clientServiceNames, { client });
 
   const services = getServicesForVisit(visit);
-  const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit), clientServiceNames);
+  const serviceNames = normalizeAdmissionServiceNames(getVisitServiceNamesForDisplay(visit));
   if (hasGuardCertificateServiceName(serviceNames)) return "002 (чод)";
   const hasDriverService = services.some(isDriverService);
   if (hasDriverService) {
