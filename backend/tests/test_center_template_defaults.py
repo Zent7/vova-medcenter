@@ -463,15 +463,16 @@ class FirstHealthResortSetTests(unittest.TestCase):
 
         self.assertIn("10.06.2024 Л041-01148-78/01240023", text)
 
+    # ОГРН из бланков, которые заказчик прислал для Здравницы; тот же номер стоит и в бланках Мед-Авто.
     def test_the_prof_29n_code_boxes_hold_the_ogrn_of_this_center(self):
         path = DEFAULTS_DIR / "center-c" / "ПРОФОСМОТР 29Н.xls"
 
-        self.assertEqual(ogrn_code_boxes(path, 4), "1027739019142")
+        self.assertEqual(ogrn_code_boxes(path, 4), "1097847096830")
 
     def test_the_discharge_extract_code_boxes_hold_the_ogrn_of_this_center(self):
         path = DEFAULTS_DIR / "center-c" / "Выписка из Амб карты (профа).xls"
 
-        self.assertEqual(ogrn_code_boxes(path, 8), "1027739019142")
+        self.assertEqual(ogrn_code_boxes(path, 8), "1097847096830")
 
     def test_the_amb_card_and_the_discharge_extract_name_this_center(self):
         for file_name in ("АМБ_карты_профосмотр_шаблон.xls", "Выписка из Амб карты (профа).xls"):
