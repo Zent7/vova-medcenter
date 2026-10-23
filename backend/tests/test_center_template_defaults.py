@@ -428,10 +428,10 @@ def workbook_text(path: Path) -> str:
     )
 
 
-def prof_29n_ogrn_boxes(path: Path) -> str:
-    """Код ОГРН, вписанный по цифре в клетки под шапкой «ПРОФОСМОТР 29Н»."""
+def ogrn_code_boxes(path: Path, first_column: int) -> str:
+    """Код ОГРН, вписанный по цифре в 13 клеток строки 16, начиная с first_column."""
     sheet = xlrd.open_workbook(str(path)).sheet_by_index(0)
-    return "".join(str(int(sheet.cell_value(15, column))) for column in range(4, 17))
+    return "".join(str(int(sheet.cell_value(15, column))) for column in range(first_column, first_column + 13))
 
 
 # Реквизиты Мед-Авто (ОГРН, ИНН, ОКПО, лицензия, адрес) и «ЦМЭ» из встроенных бланков.
@@ -466,7 +466,20 @@ class FirstHealthResortSetTests(unittest.TestCase):
     def test_the_prof_29n_code_boxes_hold_the_ogrn_of_this_center(self):
         path = DEFAULTS_DIR / "center-c" / "ПРОФОСМОТР 29Н.xls"
 
-        self.assertEqual(prof_29n_ogrn_boxes(path), "1027739019142")
+        self.assertEqual(ogrn_code_boxes(path, 4), "1027739019142")
+
+    def test_the_discharge_extract_code_boxes_hold_the_ogrn_of_this_center(self):
+        path = DEFAULTS_DIR / "center-c" / "Выписка из Амб карты (профа).xls"
+
+        self.assertEqual(ogrn_code_boxes(path, 8), "1027739019142")
+
+    def test_the_amb_card_and_the_discharge_extract_name_this_center(self):
+        for file_name in ("АМБ_карты_профосмотр_шаблон.xls", "Выписка из Амб карты (профа).xls"):
+            with self.subTest(file_name=file_name):
+                text = workbook_text(DEFAULTS_DIR / "center-c" / file_name)
+
+                self.assertIn("ПЕРВАЯ ЗДРАВНИЦА", text)
+                self.assertIsNone(self.OTHER_CENTERS.search(text))
 
 
 class SecondCenterSetTests(unittest.TestCase):
