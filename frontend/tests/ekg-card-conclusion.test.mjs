@@ -36,5 +36,17 @@ test("заключение ЭКГ больше не переписывается
 });
 
 test("index.html грузит карточку ЭКГ с новым токеном кэша", () => {
-  assert.match(indexSource, /service-cards\.js\?v=20261022-ekg-standard-conclusion-v1/);
+  assert.match(indexSource, /service-cards\.js\?v=20261023-ekg-default-conclusion-v1/);
+  assert.match(indexSource, /app\.js\?v=20261023-ekg-default-conclusion-v1/);
+});
+
+test("пустое заключение карточки ЭКГ заполняется стандартным текстом, справка спорта не меняется", () => {
+  assert.match(cardSource, /const conclusionText = state\.isEkg && !storedConclusionText\.trim\(\) \? STANDARD_EKG_CONCLUSION : storedConclusionText;/);
+  assert.match(cardSource, /textarea name="conclusionText" rows="3">\$\{esc\(conclusionText\)\}/);
+  assert.match(cardSource, /doctorRoleId: "chairman", isEkg: true \}\);/);
+});
+
+test("обе дороги в карточку ЭКГ передают признак isEkg", () => {
+  const appSource = readFileSync(resolve(demoDir, "app.js"), "utf8");
+  assert.match(appSource, /doctorRoleId: "chairman",\s*isEkg: true,/);
 });

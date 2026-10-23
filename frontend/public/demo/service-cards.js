@@ -116,7 +116,7 @@
       return;
     }
     if (kind === "ekg") {
-      openSportCard({ clientId: client.id, visitId: visit?.id || null, service, doctorRoleId: "chairman" });
+      openSportCard({ clientId: client.id, visitId: visit?.id || null, service, doctorRoleId: "chairman", isEkg: true });
       return;
     }
     openServicePlaceholder(service);
@@ -150,7 +150,7 @@
     return data.sportCard;
   }
 
-  function openSportCard({ clientId, visitId, service, doctorRoleId = SPORT_CARD_ROLE_ID }) {
+  function openSportCard({ clientId, visitId, service, doctorRoleId = SPORT_CARD_ROLE_ID, isEkg = false }) {
     closeServiceCardOverlays();
     const state = ensureSportState();
     const roleId = doctorRoleId || SPORT_CARD_ROLE_ID;
@@ -165,6 +165,7 @@
     state.serviceId = service?.id || service?.backendId || null;
     state.serviceName = service?.name || "Спортивная справка";
     state.doctorRoleId = roleId;
+    state.isEkg = isEkg;
     state.phrasePicker = null;
 
     // Подгружаем справочник фраз (если ещё не загружены — загружаем).
@@ -309,6 +310,9 @@
     const examDate = val("examDate") || todayIso;
     const storedEkgConclusion = String(val("ekgConclusion")).trim();
     const ekgConclusion = isAutoEkgConclusion(storedEkgConclusion) ? STANDARD_EKG_CONCLUSION : storedEkgConclusion;
+    // В карточке ЭКГ пустое заключение по умолчанию стандартное, как у «Заключения ЭКГ».
+    const storedConclusionText = String(val("conclusionText"));
+    const conclusionText = state.isEkg && !storedConclusionText.trim() ? STANDARD_EKG_CONCLUSION : storedConclusionText;
 
     return `
       <div class="sport-card-backdrop" data-sport-card>
@@ -365,7 +369,7 @@
             <div class="sport-card-row sport-card-row--conclusion">
               <label>Заключение</label>
               <div class="sport-card-conclusion">
-                <textarea name="conclusionText" rows="3">${esc(val("conclusionText"))}</textarea>
+                <textarea name="conclusionText" rows="3">${esc(conclusionText)}</textarea>
                 <button type="button" class="sport-card-pick" data-sport-pick-phrase title="Выбор из справочника">…</button>
               </div>
             </div>

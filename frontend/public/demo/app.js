@@ -5400,6 +5400,7 @@ function openDoctorExamCard({ clientId, visitId, doctorRoleId }) {
       visitId: finalVisitId,
       service: cardService,
       doctorRoleId: "chairman",
+      isEkg: true,
     });
     return;
   }
