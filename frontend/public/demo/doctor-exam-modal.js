@@ -2520,7 +2520,9 @@
         button.disabled = true;
       });
       try {
-        const saved = await window.saveDoctorExam(examId, values);
+        // Роль передаем, чтобы сохранение нашло карточку и тогда, когда номер
+        // осмотра в открытом окне уже устарел после перезагрузки осмотров.
+        const saved = await window.saveDoctorExam(examId, values, { doctorRoleId });
         if (saved) {
           window.closeDoctorExamCard();
         }
@@ -2567,7 +2569,7 @@
         if (!template) return;
 
         const values = collectFormData(localForm, template);
-        await window.saveDoctorExam(examId, values);
+        await window.saveDoctorExam(examId, values, { doctorRoleId });
 
         const state = window.appState?.doctorExamModal;
         if (state?.isOpen) {

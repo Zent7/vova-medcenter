@@ -1218,6 +1218,21 @@ function applyPersistedDemoState() {
     saved.doctorDirectoryByCenter && typeof saved.doctorDirectoryByCenter === "object"
       ? saved.doctorDirectoryByCenter
       : {};
+  // Черновики карточек врачей возвращаем на место: до этого они жили только в
+  // памяти и пропадали при перезагрузке страницы.
+  const restoredDoctorExamDrafts = Array.isArray(saved.doctorExamDrafts)
+    ? saved.doctorExamDrafts
+        .filter((exam) => exam && typeof exam === "object" && exam.draftPending)
+        // Сохранение, которое шло до перезагрузки, уже не идет: без сброса карточка
+        // навсегда осталась бы «в отправке» и больше не уходила бы на сервер.
+        .map((exam) => ({ ...exam, __saving: false }))
+    : [];
+  data.doctorExams = [
+    ...restoredDoctorExamDrafts,
+    ...(Array.isArray(data.doctorExams) ? data.doctorExams : []).filter(
+      (exam) => !restoredDoctorExamDrafts.some((draft) => String(draft.id) === String(exam.id)),
+    ),
+  ];
   data.lastCreatedStaffUser = saved.lastCreatedStaffUser && typeof saved.lastCreatedStaffUser === "object"
     ? saved.lastCreatedStaffUser
     : null;
@@ -1366,6 +1381,11 @@ function persistDemoState() {
       clientOverrides: data.clientOverrides || {},
       doctorDirectoryByCenter: data.doctorDirectoryByCenter || {},
       visits: getPersistableVisits(),
+      // Набранные, но не сохраненные карточки врачей: без них перезагрузка страницы
+      // стирала бы то, что врач еще не отправил на сервер.
+      doctorExamDrafts: (Array.isArray(data.doctorExams) ? data.doctorExams : []).filter(
+        (exam) => exam && exam.draftPending,
+      ),
       mkb10History: data.mkb10History || [],
       activeVisitId: appState.activeVisitId,
       lastCreatedStaffUser: data.lastCreatedStaffUser || null,
@@ -4890,6 +4910,23 @@ async function loadEncountersForClient(client) {
   }
 }
 
+// Обращение осмотра: серверный номер, а у еще не отправленного осмотра — номер
+// обращения из журнала. По нему черновик сверяется с серверной версией.
+function doctorExamScopeKey(exam) {
+  const examVisit = data.visits.find((item) => String(item.id) === String(exam.visitId));
+  return String(exam.backendEncounterId || examVisit?.backendId || "");
+}
+
+// Значимые поля осмотра: пустые значения не считаются набранным текстом.
+function meaningfulDoctorExamFieldsKey(fields) {
+  return JSON.stringify(
+    Object.entries(fields || {}).filter(
+      ([, value]) =>
+        !(value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0)),
+    ),
+  );
+}
+
 async function loadDoctorExamsForClient(client, visit = null) {
   if (!client?.backendId && !client?.id) return;
   const clientId = client.backendId || client.id;
@@ -4920,13 +4957,28 @@ async function loadDoctorExamsForClient(client, visit = null) {
       };
     });
 
+    // Набранное врачом, но еще не сохраненное карточку, перезагрузка осмотров не
+    // стирает: такой черновик остается, а серверную версию того же врача в этом
+    // обращении он заменяет.
+    const pendingDrafts = data.doctorExams.filter(
+      (exam) =>
+        exam.draftPending &&
+        String(exam.clientId) === String(client.id) &&
+        (!visit || String(exam.visitId) === String(visit.id)),
+    );
+    const pendingDraftKeys = new Set(
+      pendingDrafts.map((exam) => `${doctorExamScopeKey(exam)}::${exam.doctorRoleId}`),
+    );
     data.doctorExams = [
       ...data.doctorExams.filter(
         (exam) =>
           String(exam.clientId) !== String(client.id) ||
           (visit && String(exam.visitId) !== String(visit.id)),
       ),
-      ...mapped,
+      ...pendingDrafts,
+      ...mapped.filter(
+        (exam) => !pendingDraftKeys.has(`${doctorExamScopeKey(exam)}::${exam.doctorRoleId}`),
+      ),
     ];
     syncCompletedDoctorMarksToClient(client, mapped);
   } catch (error) {
@@ -5642,9 +5694,22 @@ async function saveDoctorExam(examId, updatedFields, options = {}) {
   ensureVisitsStore();
 
   const exam = findDoctorExamForDraft(examId, options.doctorRoleId);
-  if (!exam) return false;
-  if (exam.__saving) return false;
+  if (!exam) {
+    // Карточка с устаревшим номером осмотра раньше молча не сохранялась: окно
+    // оставалось открытым, и врач не видел, что ничего не записано.
+    showToast("Карточка врача устарела. Откройте её заново и сохраните ещё раз");
+    return false;
+  }
+  if (exam.__saving) {
+    // Предыдущее сохранение еще идет: набранное не теряем, оно уйдет со следующим.
+    saveDoctorExamDraft(examId, updatedFields, options);
+    showToast("Предыдущее сохранение ещё идёт. Набранное сохранится при следующем сохранении");
+    return false;
+  }
+  // Пока карточка уходит на сервер, она остается черновиком: перезагрузка
+  // осмотров не подменит её версией с сервера до ответа.
   exam.__saving = true;
+  exam.draftPending = true;
 
   const previousFields = exam.fields || {};
   const previousUpdatedAt = exam.updatedAt;
@@ -5740,10 +5805,17 @@ function saveDoctorExamDraft(examId, updatedFields, options = {}) {
   const exam = findDoctorExamForDraft(examId, options.doctorRoleId);
   if (!exam) return false;
 
+  const previousFieldsKey = meaningfulDoctorExamFieldsKey(exam.fields);
   exam.fields = {
     ...exam.fields,
     ...updatedFields,
   };
+  if (meaningfulDoctorExamFieldsKey(exam.fields) !== previousFieldsKey) {
+    // Набранное живет в памяти браузера, пока карточку не сохранят или не
+    // распечатают документ. Отметка не дает перезагрузке осмотров стереть его.
+    exam.draftPending = true;
+    exam.draftRevision = (Number(exam.draftRevision) || 0) + 1;
+  }
   const visit = data.visits.find((item) => String(item.id) === String(exam.visitId));
   if (exam.doctorRoleId === "chairman" && visit) {
     visit.chairmanFields = { ...exam.fields };
@@ -5912,6 +5984,8 @@ async function syncDoctorExamToBackend(exam) {
   if (visit && !visit.backendId) {
     await syncVisitToBackend(visit, client);
   }
+  // Что врач набрал, пока шел запрос, уйдет уже следующим сохранением.
+  const draftRevisionSent = Number(exam.draftRevision) || 0;
   const savedExam = await apiRequest("/doctor-exams", {
     method: "POST",
     body: JSON.stringify({
@@ -5927,7 +6001,12 @@ async function syncDoctorExamToBackend(exam) {
   exam.backendEncounterId = savedExam.encounter_id || visit?.backendId || null;
   exam.updatedAt = savedExam.completed_at || savedExam.updated_at || new Date().toISOString();
   exam.doctorName = getDoctorSignatureName(exam.doctorRoleId, client, savedExam.doctor_name, visit?.center);
-  exam.fields = savedExam.fields_json || exam.fields || {};
+  // Если за время запроса врач набрал новый текст, локальные поля новее ответа
+  // сервера: их не перезаписываем, а черновик остается неотправленным.
+  if ((Number(exam.draftRevision) || 0) === draftRevisionSent) {
+    exam.fields = savedExam.fields_json || exam.fields || {};
+    exam.draftPending = false;
+  }
   exam.isCompleted = Boolean(savedExam.is_completed);
   exam.status = exam.isCompleted ? "completed" : "draft";
   if (exam.doctorRoleId === "chairman" && visit) {
