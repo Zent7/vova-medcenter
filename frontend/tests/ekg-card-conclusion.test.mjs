@@ -32,11 +32,12 @@ test("карточка ЭКГ предлагает то же заключени�
 
 test("заключение ЭКГ больше не переписывается от даты: оно редактируется в карточке", () => {
   assert.doesNotMatch(cardSource, /buildAutoEkgConclusion|syncAutoEkgConclusion/);
-  assert.match(cardSource, /isAutoEkgConclusion\(storedEkgConclusion\) \? STANDARD_EKG_CONCLUSION : storedEkgConclusion/);
+  assert.match(cardSource, /const ekgConclusion = isAutoEkgConclusion\(storedEkgConclusion\) \? "" : storedEkgConclusion;/);
+  assert.doesNotMatch(cardSource, /isAutoEkgConclusion\(storedEkgConclusion\) \? STANDARD_EKG_CONCLUSION/);
 });
 
 test("index.html грузит карточку ЭКГ с новым токеном кэша", () => {
-  assert.match(indexSource, /service-cards\.js\?v=20261023-ekg-default-conclusion-v1/);
+  assert.match(indexSource, /service-cards\.js\?v=20261023-ekg-top-empty-v1/);
   assert.match(indexSource, /app\.js\?v=20261023-ekg-default-conclusion-v1/);
 });
 

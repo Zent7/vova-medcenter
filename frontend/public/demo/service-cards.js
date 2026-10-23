@@ -309,7 +309,8 @@
     const todayIso = new Date().toLocaleDateString("ru-RU");
     const examDate = val("examDate") || todayIso;
     const storedEkgConclusion = String(val("ekgConclusion")).trim();
-    const ekgConclusion = isAutoEkgConclusion(storedEkgConclusion) ? STANDARD_EKG_CONCLUSION : storedEkgConclusion;
+    // Стандартный текст показываем только в нижнем «Заключении» карточки ЭКГ.
+    const ekgConclusion = isAutoEkgConclusion(storedEkgConclusion) ? "" : storedEkgConclusion;
     // В карточке ЭКГ пустое заключение по умолчанию стандартное, как у «Заключения ЭКГ».
     const storedConclusionText = String(val("conclusionText"));
     const conclusionText = state.isEkg && !storedConclusionText.trim() ? STANDARD_EKG_CONCLUSION : storedConclusionText;
