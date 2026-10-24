@@ -2455,7 +2455,7 @@
     window.attachDateMask?.(form);
 
     const saveDraftFromCurrentForm = () => {
-      captureDoctorExamDraftFromDom();
+      captureDoctorExamDraftFromDom({ userInput: true });
     };
 
     form.querySelectorAll("input, textarea, select").forEach((field) => {
@@ -2656,7 +2656,7 @@
   // врача. Вызывается на каждый ввод и перед перерисовкой страницы: карточка
   // всегда собирается заново из полей осмотра, поэтому несохраненный ввод
   // должен попасть туда раньше, чем страница перерисуется.
-  function captureDoctorExamDraftFromDom() {
+  function captureDoctorExamDraftFromDom({ userInput = false } = {}) {
     const form = document.querySelector("[data-doctor-exam-form]");
     if (!form) return false;
 
@@ -2665,7 +2665,7 @@
     if (!template) return false;
 
     const values = collectFormData(form, template);
-    return Boolean(window.saveDoctorExamDraft?.(form.dataset.examId, values, { doctorRoleId }));
+    return Boolean(window.saveDoctorExamDraft?.(form.dataset.examId, values, { doctorRoleId, userInput }));
   }
 
   window.captureDoctorExamDraftFromDom = captureDoctorExamDraftFromDom;

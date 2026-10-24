@@ -4920,13 +4920,19 @@ async function loadDoctorExamsForClient(client, visit = null) {
       };
     });
 
+    const isInLoadedScope = (exam) =>
+      String(exam.clientId) === String(client.id) && (!visit || String(exam.visitId) === String(visit.id));
+    // Несохранённый ввод врача — черновик, который ещё не ушёл на сервер, или правка
+    // сохранённого осмотра до «ОК» — загрузка не должна стирать: карточка, закрытая
+    // без «ОК», иначе пустела при следующем открытии из главной таблицы.
+    const unsavedExams = data.doctorExams.filter(
+      (exam) => isInLoadedScope(exam) && (!exam.backendId || exam.hasUnsavedChanges),
+    );
+    const unsavedRoleIds = new Set(unsavedExams.map((exam) => exam.doctorRoleId));
     data.doctorExams = [
-      ...data.doctorExams.filter(
-        (exam) =>
-          String(exam.clientId) !== String(client.id) ||
-          (visit && String(exam.visitId) !== String(visit.id)),
-      ),
-      ...mapped,
+      ...data.doctorExams.filter((exam) => !isInLoadedScope(exam)),
+      ...unsavedExams,
+      ...mapped.filter((exam) => !unsavedRoleIds.has(exam.doctorRoleId)),
     ];
     syncCompletedDoctorMarksToClient(client, mapped);
   } catch (error) {
@@ -5744,6 +5750,9 @@ function saveDoctorExamDraft(examId, updatedFields, options = {}) {
     ...exam.fields,
     ...updatedFields,
   };
+  // Ввод врача (а не перерисовка карточки) помечаем: до «ОК» такую правку не отдаём
+  // загрузке осмотров с сервера.
+  if (options.userInput) exam.hasUnsavedChanges = true;
   const visit = data.visits.find((item) => String(item.id) === String(exam.visitId));
   if (exam.doctorRoleId === "chairman" && visit) {
     visit.chairmanFields = { ...exam.fields };
@@ -5930,6 +5939,7 @@ async function syncDoctorExamToBackend(exam) {
   exam.fields = savedExam.fields_json || exam.fields || {};
   exam.isCompleted = Boolean(savedExam.is_completed);
   exam.status = exam.isCompleted ? "completed" : "draft";
+  exam.hasUnsavedChanges = false;
   if (exam.doctorRoleId === "chairman" && visit) {
     visit.chairmanFields = { ...exam.fields };
   }
