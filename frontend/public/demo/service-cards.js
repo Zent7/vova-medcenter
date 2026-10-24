@@ -511,9 +511,27 @@
     return result;
   }
 
+  // Бланк ЭКГ печатает верхнее «Заключение ЭКГ», а врач правит нижнее «Заключение».
+  // Если правили только нижнее, переносим его наверх. Стандартный текст наверх не пишем:
+  // пустое поле печать заполнит им же, как и раньше. Правку верхнего поля не трогаем.
+  function pickEkgConclusionForSave(form) {
+    const top = form.elements.ekgConclusion;
+    const bottom = form.elements.conclusionText;
+    if (!top || !bottom) return null;
+    const topEdited = top.value !== top.defaultValue;
+    const bottomEdited = bottom.value !== bottom.defaultValue;
+    if (topEdited || !bottomEdited) return null;
+    const text = String(bottom.value || "").trim();
+    return text === STANDARD_EKG_CONCLUSION ? "" : text;
+  }
+
   async function saveSportCard(form) {
     const state = ensureSportState();
     const data = collectSportFormData(form);
+    if (state.isEkg) {
+      const ekgConclusion = pickEkgConclusionForSave(form);
+      if (ekgConclusion !== null) data.ekgConclusion = ekgConclusion;
+    }
     if (state.examId && typeof window.saveDoctorExam === "function") {
       return window.saveDoctorExam(state.examId, data);
     }
