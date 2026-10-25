@@ -84,7 +84,7 @@ git worktree remove <dir>
 
 Preserve the original working tree and report any local changes that remain outside `main`. If the working tree is dirty, preserve the user's changes and do not overwrite them. To commit only what a task touched while unrelated changes stay staged or modified, pass explicit paths: `git add <paths>` followed by `git commit -- <paths>`.
 
-Every push to `main` triggers the `Publish application images` workflow, which rebuilds both images and opens a downstream homelab delivery. Documentation- and tooling-only changes trigger it too, so state that side effect before pushing and let the user decide whether the deployment should happen now.
+Every push to `main` triggers the `Publish application images` workflow, which rebuilds both images and pushes a digest-pinned deploy commit to the `deploy/vova-medcenter` branch of `ravilushqa/homelab`. Komodo deploys every push to that branch automatically. Documentation- and tooling-only changes trigger it too, so state that side effect before pushing and let the user decide whether the deployment should happen now.
 
 After pushing `main`:
 
@@ -100,10 +100,10 @@ If the user explicitly asks for a PR, check mergeability, conflicts, and status 
 The active workflow is `.github/workflows/publish-images.yml` (`Publish application images`). It runs for pushes to `main`, exceptional `codex/**` branches, and manual dispatches.
 
 - `publish` builds backend and frontend images, tags them with the immutable source commit SHA, and pushes them to `ghcr.io/zent7`.
-- `update-homelab` runs only after a successful `main` publication. It resolves both image digests, checks out `ravilushqa/homelab` with `HOMELAB_DEPLOY_KEY`, updates `komodo/stacks/vova-medcenter/compose.yaml`, and pushes `automation/vova-medcenter-<short-sha>`.
-- The downstream homelab automation opens and processes the delivery PR. Do not create a duplicate homelab PR when that automation succeeds.
+- `update-homelab` runs only after a successful `main` publication. It resolves both image digests, checks out `ravilushqa/homelab` at `deploy/vova-medcenter` with `HOMELAB_DEPLOY_KEY`, updates `komodo/stacks/vova-medcenter/compose.yaml`, and pushes one fast-forward commit `vova-medcenter: deploy <short-sha>` to that branch. On a rejected push it fetches, rebases, and retries up to three times; it never force-pushes.
+- The `main` branch of `ravilushqa/homelab` is off-limits: never push to it and never open PRs against it. There is no homelab PR step.
 - The required repository secret is `HOMELAB_DEPLOY_KEY`. A missing secret or failed homelab job blocks delivery even if both images were published.
-- Concurrency is scoped by Git ref and cancels stale in-progress runs, preventing an older push from overtaking a newer one.
+- Workflow-level concurrency is scoped by Git ref and cancels stale in-progress runs, preventing an older push from overtaking a newer one. `update-homelab` also uses the `homelab-deploy` group without cancellation, so homelab pushes never run in parallel.
 
 Action majors currently used and intentionally tracked: `actions/checkout@v7`, `docker/setup-buildx-action@v4`, `docker/login-action@v4`, `docker/build-push-action@v7`, and `imjasonh/setup-crane@v0.7`. Review their official releases before changing majors.
 
@@ -198,10 +198,10 @@ Default workflow for site changes:
 - Publish verified site/demo changes directly to `main` unless the user explicitly requests local-only work.
 - Make the change in this repository, usually under `frontend/public/demo/` for UI behavior and styling.
 - Verify locally with the relevant checks for the touched files.
-- Let `Publish application images` publish immutable images and hand the digest-pinned update to homelab automation.
-- Verify the application workflow and resulting homelab PR instead of reusing or hard-coding an old PR URL.
-- Do not claim the live site is updated until the downstream PR is merged and the runtime health/build revision is verified.
-- Report whether the change is local-only, in `main`, published as images, merged into homelab, or verified live.
+- Let `Publish application images` publish immutable images and push the digest-pinned deploy commit to `deploy/vova-medcenter` in `ravilushqa/homelab`.
+- Verify the application workflow run and that `deploy/vova-medcenter` gained exactly one fast-forward commit for the pushed SHA.
+- Do not claim the live site is updated until `https://vova-medcenter.ravil.space/api/v1/health` and `https://vova-medcenter.ravil.space/build.json` both report the pushed SHA as `build_revision`.
+- Report whether the change is local-only, in `main`, published as images, pushed to the homelab deploy branch, or verified live.
 
 ## Utility Scripts
 

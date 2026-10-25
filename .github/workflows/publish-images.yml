@@ -66,6 +66,9 @@ jobs:
     timeout-minutes: 15
     needs: publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: homelab-deploy
+      cancel-in-progress: false
     env:
       HOMELAB_REPO: ravilushqa/homelab
       COMPOSE_FILE: komodo/stacks/vova-medcenter/compose.yaml
@@ -103,8 +106,10 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: ${{ env.HOMELAB_REPO }}
+          ref: deploy/vova-medcenter
           ssh-key: ${{ secrets.HOMELAB_DEPLOY_KEY }}
           path: homelab
+          fetch-depth: 0
 
       - name: Update compose image references
         working-directory: homelab
@@ -157,25 +162,39 @@ jobs:
           path.write_text("".join(lines))
           PY
 
-      - name: Push homelab update branch
+      - name: Push deploy commit to homelab
         working-directory: homelab
         env:
           SHORT_SHA: ${{ github.sha }}
         run: |
           short_sha="${SHORT_SHA::7}"
-          branch="automation/vova-medcenter-${short_sha}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$branch:refs/remotes/origin/$branch" || true
-          git checkout -B "$branch"
 
           if git diff --quiet -- "$COMPOSE_FILE"; then
-            echo "Homelab is already up to date for ${{ github.sha }}"
+            echo "Homelab is already up to date for ${SHORT_SHA}"
             exit 0
-          else
-            git add "$COMPOSE_FILE"
-            git commit -m "Update vova-medcenter images to ${short_sha}"
           fi
 
-          git push --force-with-lease origin "HEAD:$branch"
-          echo "Pushed homelab branch: $branch"
+          git add "$COMPOSE_FILE"
+          git commit -m "vova-medcenter: deploy ${short_sha}"
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:deploy/vova-medcenter; then
+              echo "Pushed deploy commit ${short_sha} to deploy/vova-medcenter"
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              break
+            fi
+            echo "Push rejected (attempt ${attempt}); rebasing onto deploy/vova-medcenter"
+            git fetch origin deploy/vova-medcenter
+            if ! git rebase origin/deploy/vova-medcenter; then
+              git rebase --abort
+              echo "::error::Rebase onto deploy/vova-medcenter conflicted; ${short_sha} was not deployed"
+              exit 1
+            fi
+          done
+
+          echo "::error::Could not push ${short_sha} to deploy/vova-medcenter after 3 attempts"
+          exit 1
