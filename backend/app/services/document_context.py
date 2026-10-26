@@ -396,6 +396,8 @@ def build_document_context(
         "ЖЕНСКИЙ": "жен",
     }.get(sex, _text(client.sex))
     sex_full_label = {"муж": "мужской", "жен": "женский"}.get(sex_label.lower(), sex_label)
+    # Слово «именуем…» в договоре согласуется с полом клиента; без пола — обе формы.
+    client_named_form = {"муж": "именуемый", "жен": "именуемая"}.get(sex_label.lower(), "именуем(ый/ая)")
     normalized_sex = sex_label.casefold()
     if normalized_sex in {"f", "female", "жен", "женский"}:
         pool_admission = "Допущена"
@@ -509,6 +511,7 @@ def build_document_context(
         "Gender": sex_label,
         "GenderCalc": sex_label,
         "GenderFull": sex_full_label,
+        "ClientNamedForm": client_named_form,
         "PoolAdmission": pool_admission,
         "PoolHealthy": pool_healthy,
         "PoolValidUntil": pool_valid_until,

@@ -156,6 +156,20 @@ class ContractServiceGroupTests(unittest.TestCase):
 
         self.assertEqual(values["service_names"], ["Медицинская комиссия"])
 
+    def test_party_form_agrees_with_client_sex(self):
+        encounter = self._encounter("Профосмотр")
+        self.db.commit()
+
+        for sex, named_form in {"F": "именуемая", "M": "именуемый", None: "именуем(ый/ая)"}.items():
+            with self.subTest(sex=sex):
+                self.client.sex = sex
+                self.db.commit()
+
+                text = self._document_text(self._generate(encounter))
+
+                self.assertIn(f"{named_form} в дальнейшем «Потребитель»", text)
+                self.assertNotIn("именуем в дальнейшем «Потребитель»", text)
+
 
 if __name__ == "__main__":
     unittest.main()

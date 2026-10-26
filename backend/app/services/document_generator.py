@@ -349,6 +349,17 @@ def _cleanup_contract_xml(xml_text: str) -> str:
     return xml_text
 
 
+# В тексте шаблона слово перед «в дальнейшем «Потребитель»» без окончания: его согласуем с полом клиента.
+CONTRACT_CLIENT_NAMED_PATTERN = re.compile(r"именуем(?= в дальнейшем «Потребитель»)")
+
+
+def _fill_contract_client_named_form(xml_text: str, context: dict[str, str]) -> str:
+    named_form = context.get("ClientNamedForm")
+    if not named_form:
+        return xml_text
+    return CONTRACT_CLIENT_NAMED_PATTERN.sub(named_form, xml_text)
+
+
 def _prof_29n_static_doctor_replacements(context: dict[str, str]) -> list[str]:
     return [
         _first_non_empty(context.get("Prof29ChairmanDoctor"), context.get("Doctor")),
@@ -802,6 +813,7 @@ def _generate_docx(
                     xml_text = _replace_certificate_086_static_doctor_names(xml_text, context)
                     if cleanup_xml:
                         xml_text = _cleanup_contract_xml(xml_text)
+                        xml_text = _fill_contract_client_named_form(xml_text, context)
                     needs_tree_pass = (
                         "[" in xml_text
                         or _has_context_bookmarks(xml_text, context)
