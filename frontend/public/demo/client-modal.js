@@ -815,7 +815,7 @@ function refreshClientDriverPanel() {
 }
 
 function bindClientDriverCategoryCheckboxes() {
-  actionModalContent.querySelectorAll('input[name="clientDriverCategory"], input[name="clientTractorCategory"]').forEach((checkbox) => {
+  actionModalContent.querySelectorAll('input[name="clientDriverCategory"], input[name="clientTractorCategory"], input[name="clientDriverLicenseRevoked"]').forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       refreshClientDriverPanel();
       refreshClientPaymentPanel({ driverCategoriesChanged: true });
@@ -833,9 +833,19 @@ function getClientServiceDetailKey(service) {
   return String(getServiceToken(service) || service?.name || "");
 }
 
+// Лишение прав — отдельная плата 1500 ₽ к цене водительской комиссии.
+const LICENSE_REVOCATION_FEE = 1500;
+
+function getLicenseRevocationFee() {
+  return actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked
+    ? LICENSE_REVOCATION_FEE
+    : 0;
+}
+
 function getDefaultServiceUnitPrice(service) {
   if (service && isDriverService(service)) {
-    return getDriverCategoryPrice(normalizeDriverCategories(getClientDriverCategoriesFromForm()));
+    const categoryPrice = getDriverCategoryPrice(normalizeDriverCategories(getClientDriverCategoriesFromForm()));
+    return categoryPrice + getLicenseRevocationFee();
   }
   return Number(service?.price || 0);
 }
@@ -1614,7 +1624,7 @@ function openClientModal(clientId = null, options = {}) {
             <input name="agent" value="${escapeHtml(editingClient?.agent || "")}" list="clientAgentSuggestions" />
           </label>
           <label class="field">
-            <span>Профессия</span>
+            <span>Должность</span>
             <input name="profession" value="${escapeHtml(initialProfession)}" list="clientProfessionSuggestions" />
           </label>
           <label class="field">

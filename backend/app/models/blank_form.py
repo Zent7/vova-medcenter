@@ -116,9 +116,28 @@ class BlankForm(TimestampMixin, Base):
     cancelled_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     cancelled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Пачка партии, которую оператор взял себе; NULL — партия не разбита на пачки.
+    batch_part_id: Mapped[int | None] = mapped_column(
+        ForeignKey("blank_batch_parts.id"), nullable=True, index=True
+    )
+
     __table_args__ = (
         UniqueConstraint(
             "center_id", "blank_type", "full_number", name="uq_blank_forms_center_type_number"
         ),
         Index("ix_blank_forms_pick", "blank_type", "center_id", "status", "number_value"),
     )
+
+
+class BlankBatchPart(TimestampMixin, Base):
+    """Пачка внутри партии: непрерывный диапазон номеров, который берёт один оператор."""
+
+    __tablename__ = "blank_batch_parts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("blank_batches.id"), index=True)
+    part_no: Mapped[int] = mapped_column(Integer)
+    number_from: Mapped[int] = mapped_column(Integer)
+    number_to: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (UniqueConstraint("batch_id", "part_no", name="uq_blank_batch_parts_batch_no"),)

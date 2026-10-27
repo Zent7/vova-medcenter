@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.v1.routes.auth import get_optional_current_user
 from app.db.session import get_db
+from app.models.blank_form import BlankForm
 from app.models.client import Client
 from app.models.encounter import Encounter
 from app.models.encounter_service import EncounterService
@@ -310,17 +311,32 @@ def client_search_text_expr():
     expression = func.coalesce(cast(Client.patient_number, String), "")
     for field in CLIENT_SEARCH_FIELDS:
         expression = expression.concat(" ").concat(func.coalesce(field, ""))
+    # Агент живёт только в импортированном JSON клиента, в отдельной колонке его нет.
+    expression = expression.concat(" ").concat(func.coalesce(Client.legacy_payload_json["agent"].as_string(), ""))
     return func.lower(expression.concat(" ").concat(func.replace(full_name, " ", "")))
+
+
+def client_blank_number_matches(token: str):
+    """Есть ли у клиента выданный бланк (справка, ВУ) с таким номером."""
+
+    return (
+        select(BlankForm.id)
+        .where(BlankForm.client_id == Client.id, BlankForm.full_number.ilike(f"%{token}%"))
+        .exists()
+    )
 
 
 def client_search_conditions(value: str):
     # Keep the caller's casing here. PostgreSQL ILIKE remains case-insensitive,
     # while SQLite's lower() does not fold Cyrillic during local diagnostics.
+    # Каждое слово запроса ищется по всем полям клиента, включая номера выданных бланков.
     tokens = [token for token in value.split() if token]
     conditions = []
     if tokens:
         search_text = client_search_text_expr()
-        conditions.append(and_(*[search_text.ilike(f"%{token}%") for token in tokens]))
+        conditions.append(
+            and_(*[or_(search_text.ilike(f"%{token}%"), client_blank_number_matches(token)) for token in tokens])
+        )
 
     if value.isdigit() and len(value) <= 9:
         conditions.insert(0, Client.patient_number == int(value))

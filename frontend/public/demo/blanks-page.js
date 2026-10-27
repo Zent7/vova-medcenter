@@ -323,6 +323,7 @@
                       <th>Выдано</th>
                       <th>Испорч.</th>
                       <th>Аннул.</th>
+                      <th>Пачки</th>
                       <th>Комментарий</th>
                     </tr>
                   </thead>
@@ -340,6 +341,7 @@
                             <td>${Number(item.issued_count || 0)}</td>
                             <td>${Number(item.spoiled_count || 0)}</td>
                             <td>${Number(item.cancelled_count || 0)}</td>
+                            <td>${renderBatchPartsCell(item)}</td>
                             <td>${esc(item.comment || "—")}</td>
                           </tr>
                         `,
@@ -353,6 +355,23 @@
         }
       </article>
     `;
+  }
+
+  // Пачки партии: каждый оператор берёт свою. Пока партия не разбита, предлагаем разбить.
+  function renderBatchPartsCell(item) {
+    const parts = Array.isArray(item.parts) ? item.parts : [];
+    if (!parts.length) {
+      return `<button type="button" class="ghost-button" data-blank-split="${Number(item.id)}">Разбить на пачки</button>`;
+    }
+    const width = item.number_width || 6;
+    return parts
+      .map(
+        (part) => `
+          <div>Пачка ${Number(part.part_no)}: ${esc(item.series || "")}${String(part.number_from).padStart(width, "0")}–${esc(item.series || "")}${String(part.number_to).padStart(width, "0")}
+            · своб. ${Number(part.free_count || 0)}, выдано ${Number(part.issued_count || 0)}</div>
+        `,
+      )
+      .join("");
   }
 
   function getIssuedHistoryGroups() {
@@ -872,6 +891,34 @@
           window.renderApp?.();
         }
       }
+    });
+
+    document.querySelectorAll("[data-blank-split]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const batchId = button.dataset.blankSplit;
+        const answer = window.prompt("По сколько номеров в пачке? Например, 500: каждый оператор возьмёт свою пачку", "500");
+        if (answer === null) return;
+        const packSize = Number(String(answer).trim());
+        if (!Number.isInteger(packSize) || packSize < 1) {
+          window.showToast?.("Укажите целое число номеров в пачке");
+          return;
+        }
+
+        try {
+          await window.apiRequest(`/blanks/batches/${encodeURIComponent(batchId)}/parts`, {
+            method: "POST",
+            body: JSON.stringify({ pack_size: packSize }),
+          });
+          window.showToast?.("Партия разбита на пачки");
+          await loadBlanksData({ force: true });
+        } catch (error) {
+          window.showToast?.(
+            window.humanizeApiError
+              ? window.humanizeApiError(error, "Не удалось разбить партию на пачки")
+              : String(error?.message || error || "Не удалось разбить партию на пачки"),
+          );
+        }
+      });
     });
 
     document.querySelectorAll("[data-blank-spoil]").forEach((button) => {

@@ -7,6 +7,8 @@ from app.models.center import Center
 from app.models.user import User
 from app.schemas.blank_form import (
     BlankBatchCreate,
+    BlankBatchPartRead,
+    BlankBatchPartSplitRequest,
     BlankBatchRead,
     BlankClearRequest,
     BlankClearResult,
@@ -19,6 +21,8 @@ from app.schemas.blank_form import (
     BlankTypeRead,
 )
 from app.services.blank_forms import (
+    BlankNotFreeError,
+    BlankPartsExistError,
     BlankRangeInvalidError,
     BlankRangeOverlapError,
     BlankServiceError,
@@ -29,13 +33,16 @@ from app.services.blank_forms import (
     get_form_by_printed_number,
     get_next_free_form,
     is_paper_certificate_series,
+    list_batch_parts_with_counts,
     list_free_series,
     list_batches,
     list_blank_types,
     list_forms,
     list_forms_page,
+    manual_pick_form,
     release_form,
     resolve_blank_type_for_series,
+    split_batch_into_parts,
     spoil_form,
     stats as compute_stats,
 )
@@ -79,6 +86,7 @@ def get_batches(
     db: Session = Depends(get_db),
 ) -> list[BlankBatchRead]:
     items = list_batches(db, blank_type=blank_type, center_id=center_id)
+    parts_by_batch = list_batch_parts_with_counts(db, [batch.id for batch, _ in items])
     result: list[BlankBatchRead] = []
     for batch, counts in items:
         payload = BlankBatchRead.model_validate(batch)
@@ -87,6 +95,7 @@ def get_batches(
         payload.spoiled_count = counts.get("spoiled", 0)
         payload.cancelled_count = counts.get("cancelled", 0)
         payload.is_paper_certificate = is_paper_certificate_series(batch.series, batch.comment)
+        payload.parts = [BlankBatchPartRead(**part) for part in parts_by_batch.get(batch.id, [])]
         result.append(payload)
     return result
 
@@ -123,6 +132,31 @@ def create_batch_endpoint(
     response = BlankBatchRead.model_validate(batch)
     response.free_count = batch.quantity
     return response
+
+
+@router.post("/batches/{batch_id}/parts", response_model=list[BlankBatchPartRead], status_code=status.HTTP_201_CREATED)
+def split_batch_endpoint(
+    batch_id: int,
+    payload: BlankBatchPartSplitRequest,
+    db: Session = Depends(get_db),
+) -> list[BlankBatchPartRead]:
+    """Разбивает партию на пачки: каждый оператор берёт свою."""
+
+    try:
+        split_batch_into_parts(db, batch_id=batch_id, pack_size=payload.pack_size, user_id=_current_user_id())
+    except BlankPartsExistError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except BlankRangeInvalidError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except BlankServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    db.commit()
+    parts = list_batch_parts_with_counts(db, [batch_id]).get(batch_id, [])
+    return [BlankBatchPartRead(**part) for part in parts]
 
 
 @router.get("/forms", response_model=list[BlankFormRead])
@@ -183,6 +217,7 @@ def get_next_form(
     series: str | None = Query(default=None),
     auto_create: bool = Query(default=False),
     strict_only: bool = Query(default=False),
+    batch_part_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> BlankFormRead:
     blank_type = resolve_blank_type_for_series(blank_type, series)
@@ -219,11 +254,14 @@ def get_next_form(
         center_id=center_id,
         series=series,
         strict_only=strict_only,
+        batch_part_id=batch_part_id,
     )
     if form is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Свободные бланки не найдены. Заведите диапазон номеров в разделе «Бланки»",
+            detail="Свободные бланки не найдены. Заведите диапазон номеров в разделе «Бланки»"
+            if batch_part_id is None
+            else "В этой пачке свободных бланков не осталось. Выберите другую пачку",
         )
     return BlankFormRead.model_validate(enrich_form_for_read(db, form))
 
@@ -234,6 +272,7 @@ def get_exact_form(
     center_id: int | None = Query(default=None),
     series: str = Query(...),
     number: str = Query(...),
+    strict_only: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> BlankFormRead:
     try:
@@ -243,6 +282,7 @@ def get_exact_form(
             center_id=center_id,
             series=series,
             number_input=number,
+            strict_only=strict_only,
         )
     except BlankRangeInvalidError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -251,6 +291,24 @@ def get_exact_form(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Бланк с указанными серией и номером не найден",
         )
+    return BlankFormRead.model_validate(enrich_form_for_read(db, form))
+
+
+@router.post("/forms/{form_id}/manual-pick", response_model=BlankFormRead)
+def manual_pick_endpoint(form_id: int, db: Session = Depends(get_db)) -> BlankFormRead:
+    """Фиксирует выбор номера, вписанного вручную, в истории."""
+
+    try:
+        form = manual_pick_form(db, form_id=form_id, user_id=_current_user_id())
+    except BlankNotFreeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except BlankServiceError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(form)
     return BlankFormRead.model_validate(enrich_form_for_read(db, form))
 
 

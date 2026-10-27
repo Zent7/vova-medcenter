@@ -472,6 +472,7 @@ const columnKeys = [
   "chairman",
   "glasses",
   "note",
+  "position",
   "organization",
   "agent",
 ];
@@ -794,6 +795,17 @@ function renderCopyableValue(value, label, options = {}) {
       ${text ? '<i aria-hidden="true">коп.</i>' : ""}
     </strong>
   `;
+}
+
+// Ячейка строки таблицы клиентов копируется по одному щелчку и не выбирает строку
+// (обработчик копирования останавливает всплытие клика).
+function renderDashboardCopyCell(value, label, copyMessage) {
+  return renderCopyableValue(value, label, {
+    className: "copyable-table-value",
+    fallback: "—",
+    copyMessage,
+    keyboard: false,
+  });
 }
 
 function formatCertificate086SeriesForSex(options = {}) {
@@ -6423,6 +6435,7 @@ function buildExcelRows(clients) {
       stamp: "",
       note: client.note || "",
       encounterDate: client.encounterDate || "",
+      position: client.profession || "",
       organization: client.organization || "",
       agent: client.agent || "",
     };
@@ -6594,7 +6607,7 @@ function renderAmbulatoryCardPage() {
             <div><span>СНИЛС</span><strong>${escapeHtml(selectedClient.snils || "не указан")}</strong></div>
             <div><span>Центр</span><strong>${escapeHtml(selectedClient.center || getWorkspaceCenterName())}</strong></div>
             <div><span>Регистрация</span>${renderCopyableValue(selectedClient.registration, "регистрацию", { fallback: "не указана", copyMessage: "Регистрация скопирована" })}</div>
-            <div><span>Профессия</span><strong>${escapeHtml(selectedClient.profession || "не указана")}</strong></div>
+            <div><span>Должность</span><strong>${escapeHtml(selectedClient.profession || "не указана")}</strong></div>
             <div><span>Место работы</span><strong>${escapeHtml(selectedClient.workPlace || "не указано")}</strong></div>
             <div><span>Организация</span><strong>${escapeHtml(selectedClient.organization || "не указана")}</strong></div>
             <div><span>Агент</span><strong>${escapeHtml(selectedClient.agent || "не указан")}</strong></div>
@@ -6787,6 +6800,7 @@ function renderSketchHome() {
     "Председатель",
     "Очки",
     "Примечания",
+    "Должность",
     "Организация",
     "Агент",
   ];
@@ -6830,7 +6844,7 @@ function renderSketchHome() {
             <div class="sketch-toolbar">
               <label class="field sketch-search">
                 <span></span>
-                <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="поиск" autocapitalize="words" />
+                <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="ФИО, номер справки, организация, агент" autocapitalize="words" />
               </label>
               <div class="sketch-toolbar__actions">
                 <button class="primary-button" id="addClientButton" type="button" title="Создать новую карточку пациента">Новый клиент</button>
@@ -6914,11 +6928,11 @@ function renderSketchHome() {
                       (row) => `
                         <button type="button" class="sketch-table__grid sketch-table__grid--row ${selectedClient && String(selectedClient.id) === String(row.id) && String(appState.selectedEncounterId || "") === String(row.encounterId || "") ? "sketch-table__grid--active" : ""}" data-client-id="${row.id}" data-encounter-id="${row.encounterId || ""}" data-dashboard-row-id="${escapeHtml(row.rowId)}" title="Один щелчок — выбрать обращение, двойной — изменить клиента">
                           <span>${escapeHtml(row.encounterDate)}${row.centerLabel ? `<small class="sketch-table__center">${escapeHtml(row.centerLabel)}</small>` : ""}</span>
-                          <span class="sketch-table__fio">${escapeHtml(displayTableValue(row.fullName))}</span>
-                          <span>${escapeHtml(row.birthDate)}</span>
-                          <span>${renderCopyableValue(row.registration, "регистрацию", { className: "copyable-table-value", fallback: "—", copyMessage: "Регистрация скопирована", keyboard: false })}</span>
+                          <span class="sketch-table__fio">${renderDashboardCopyCell(row.fullName, "ФИО", "ФИО скопировано")}</span>
+                          <span>${renderDashboardCopyCell(row.birthDate, "дату рождения", "Дата рождения скопирована")}</span>
+                          <span>${renderDashboardCopyCell(row.registration, "адрес", "Адрес скопирован")}</span>
                           <span title="${escapeHtml(row.category || "не указана")}">${escapeHtml(displayTableValue(row.category))}</span>
-                          <span>${escapeHtml(row.referenceNumber)}</span>
+                          <span>${renderDashboardCopyCell(row.referenceNumber, "номер справки", "Номер справки скопирован")}</span>
                           ${renderExcelDoctorCell(row, "gynecologist")}
                           ${renderExcelDoctorCell(row, "stomatologist")}
                           ${renderExcelDoctorCell(row, "dermatologist")}
@@ -6935,7 +6949,8 @@ function renderSketchHome() {
                           ${renderExcelDoctorCell(row, "chairman")}
                           ${renderExcelMarkCell(row.glasses)}
                           <span>${escapeHtml(row.note)}</span>
-                          <span>${escapeHtml(row.organization)}</span>
+                          <span>${renderDashboardCopyCell(row.position, "должность", "Должность скопирована")}</span>
+                          <span>${renderDashboardCopyCell(row.organization, "организацию", "Организация скопирована")}</span>
                           <span>${escapeHtml(row.agent)}</span>
                         </button>
                       `,
@@ -10569,6 +10584,8 @@ function getDriverPrintCertificateType(series) {
   if (normalized.includes("экг")) return "ekg";
   if (normalized.includes("лмк")) return "lmk";
   if (normalized.includes("гимс")) return "gims";
+  // СЭНД (СЭМД-196) — справка на бумаге с автономером: в окне ВУ её серии не место.
+  if (normalized.includes("сэнд") || normalized.includes("сэмд")) return "semt196";
   if (normalized.includes("4026") || normalized.includes("чод")) return "chod";
   if (normalized.includes("охран")) return "guard";
   if (normalized.includes("29н") || normalized.includes("проф")) return "prof";
@@ -10919,6 +10936,76 @@ function renderDriverFrontCheckPrompt() {
   `;
 }
 
+// Пачка партии, которую взял оператор. Если он не выбирал, берём первую пачку с остатком.
+function getDriverFlowBatchPartId(flowState) {
+  const parts = Array.isArray(flowState.batchParts) ? flowState.batchParts : [];
+  const chosen = parts.find((part) => Number(part.id) === Number(flowState.batchPartId));
+  if (chosen) return Number(chosen.id);
+  return Number(parts.find((part) => Number(part.free_count) > 0)?.id) || null;
+}
+
+function applyDriverFlowBatchPart(query, flowState) {
+  const partId = getDriverFlowBatchPartId(flowState);
+  if (partId) query.set("batch_part_id", String(partId));
+}
+
+// Пачки серии: партии того же типа и медцентра, которые разбиты на пачки.
+async function loadDriverFlowBatchParts(flowState) {
+  flowState.batchParts = [];
+  flowState.batchPartId = null;
+  if (!flowState.selectedSeries || !flowState.blankType) return;
+  try {
+    const query = new URLSearchParams({
+      blank_type: flowState.blankType,
+      center_id: String(flowState.centerId),
+    });
+    const batches = await apiRequest(`/blanks/batches?${query.toString()}`);
+    const seriesKey = getBlankSeriesMatchKey(flowState.selectedSeries);
+    flowState.batchParts = (Array.isArray(batches) ? batches : [])
+      .filter((batch) => getBlankSeriesMatchKey(batch.series) === seriesKey)
+      .flatMap((batch) =>
+        (batch.parts || []).map((part) => ({
+          ...part,
+          series: normalizeBlankSeries(batch.series),
+          width: batch.number_width || 6,
+        })),
+      );
+  } catch (error) {
+    console.warn("Не удалось загрузить пачки бланков", error);
+  }
+}
+
+function renderDriverFlowBatchPartOptions(flowState) {
+  const selectedId = getDriverFlowBatchPartId(flowState);
+  return flowState.batchParts
+    .map((part) => {
+      const width = part.width || 6;
+      const range = `${String(part.number_from).padStart(width, "0")}–${String(part.number_to).padStart(width, "0")}`;
+      const label = `Пачка ${part.part_no}: ${part.series}${range} (своб. ${Number(part.free_count || 0)})`;
+      return `<option value="${Number(part.id)}" ${Number(part.id) === selectedId ? "selected" : ""}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+// Номер, вписанный вручную: бланк берём только свободный из заведённой партии, выбор идёт в историю.
+async function pickManualDriverBlank(flowState, number) {
+  const lookupSeries =
+    resolveNumberedCertificateLookupSeries(
+      flowState.selectedSeries,
+      flowState.selectedCertificateType,
+      flowState.seriesOptions,
+    ) || flowState.selectedSeries;
+  const query = new URLSearchParams({
+    blank_type: flowState.blankType,
+    center_id: String(flowState.centerId),
+    series: lookupSeries || "",
+    number,
+  });
+  if (isStrictDriverBlankSeries(lookupSeries, flowState.blankType)) query.set("strict_only", "true");
+  const form = await apiRequest(`/blanks/forms/exact?${query.toString()}`);
+  return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/${Number(form.id)}/manual-pick`, { method: "POST" }));
+}
+
 async function openDriverPrintFlow(options = {}) {
   ensureVisitsStore();
   // Окно печати открывают из карточки врача и из журнала, и обращение там уже
@@ -11071,6 +11158,8 @@ async function openDriverPrintFlow(options = {}) {
     currentBlank: normalizeDriverPrintBlank(fallbackBlank),
     loading: false,
     error: "",
+    batchParts: [],
+    batchPartId: null,
   };
   flowState.selectedCertificateType =
     String(options.selectedCertificateType || "").toLowerCase() ||
@@ -11085,6 +11174,8 @@ async function openDriverPrintFlow(options = {}) {
     flowState.selectedSeries = flowState.selectedSeries || normalizeBlankSeries(seriesOptions[0]?.series);
   }
 
+  await loadDriverFlowBatchParts(flowState);
+
   if (!flowState.currentBlank && isPreenteredBlankFlow(flowState.selectedSeries, flowState.blankType)) {
     try {
       const query = new URLSearchParams({
@@ -11093,6 +11184,7 @@ async function openDriverPrintFlow(options = {}) {
       });
       query.set("series", flowState.selectedSeries || "");
       if (isStrictDriverBlankSeries(flowState.selectedSeries, flowState.blankType)) query.set("strict_only", "true");
+      applyDriverFlowBatchPart(query, flowState);
       flowState.currentBlank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
     } catch (error) {
       flowState.error = humanizeApiError(error, "Не удалось подобрать свободный бланк");
@@ -11332,8 +11424,10 @@ async function openDriverPrintFlow(options = {}) {
     const certificatePrintDisabled = flowState.loading || !flowState.currentBlank?.id || !visibleCertificateType;
     const canReplaceBlank =
       isOrdinaryDriverFlow ||
-      ["gims", "071"].includes(String(visibleCertificateType || "").toLowerCase());
+      ["gims", "071", "lmk"].includes(String(visibleCertificateType || "").toLowerCase());
     const blankManagementDisabled = flowState.loading || !flowState.currentBlank?.id;
+    // Бланк ГИМС подбирается сам из заведённой партии: номер вручную там не вписывают.
+    const canEnterBlankNumber = canReplaceBlank && String(visibleCertificateType || "").toLowerCase() !== "gims";
 
     openActionModal(
       "Печать результатов:",
@@ -11345,9 +11439,25 @@ async function openDriverPrintFlow(options = {}) {
           <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
           <div class="driver-print-classic__lookup">
             <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" readonly />
-            <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(blankParts.number)}" readonly />
+            <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(blankParts.number)}" ${canEnterBlankNumber ? 'placeholder="вручную"' : "readonly"} />
             <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
+            ${
+              canEnterBlankNumber
+                ? `<button type="button" class="driver-print-classic__button" id="driverPickManualNumber" ${findButtonDisabled ? "disabled" : ""} title="Вписать номер бланка вручную: он должен быть свободным из заведённой партии">Взять номер</button>`
+                : ""
+            }
           </div>
+
+          ${
+            canReplaceBlank && flowState.batchParts.length
+              ? `
+                <div class="driver-print-classic__caption">Пачка оператора:</div>
+                <select id="driverBatchPart" class="driver-print-classic__input">
+                  ${renderDriverFlowBatchPartOptions(flowState)}
+                </select>
+              `
+              : ""
+          }
 
           ${
             canReplaceBlank
@@ -11421,6 +11531,7 @@ async function openDriverPrintFlow(options = {}) {
       flowState.currentBlank = null;
       flowState.error = "";
       renderFlow();
+      loadDriverFlowBatchParts(flowState).then(renderFlow);
     };
     const openSeriesPicker = (event) => {
       event.preventDefault();
@@ -11457,6 +11568,7 @@ async function openDriverPrintFlow(options = {}) {
             center_id: String(flowState.centerId),
           });
           query.set("series", lookupSeries || "");
+          applyDriverFlowBatchPart(query, flowState);
           if (autoCreate) {
             query.set("auto_create", "true");
           } else if (isStrictDriverBlankSeries(requestedSeries, flowState.blankType)) {
@@ -11500,6 +11612,42 @@ async function openDriverPrintFlow(options = {}) {
         flowState.loading = false;
         renderFlow();
       }
+    });
+
+    document.getElementById("driverBatchPart")?.addEventListener("change", (event) => {
+      flowState.batchPartId = Number(event.target.value) || null;
+      flowState.currentBlank = null;
+      flowState.error = "";
+      renderFlow();
+    });
+
+    // Номер, вписанный вручную, берём только свободный из заведённой партии; выбор идёт в историю.
+    const pickManualBlankNumber = async () => {
+      const number = String(document.getElementById("driverBlankNumber")?.value || "").trim();
+      if (!number) {
+        flowState.error = "Введите номер бланка";
+        renderFlow();
+        return;
+      }
+
+      flowState.loading = true;
+      flowState.error = "";
+      renderFlow();
+      try {
+        flowState.currentBlank = await pickManualDriverBlank(flowState, number);
+        const nextParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
+        showToast(`Выбран бланк ${nextParts.fullNumber || nextParts.number}, номер записан в историю`);
+      } catch (error) {
+        flowState.currentBlank = null;
+        flowState.error = humanizeApiError(error, "Бланк с таким номером не найден в заведённых партиях");
+      } finally {
+        flowState.loading = false;
+        renderFlow();
+      }
+    };
+    document.getElementById("driverPickManualNumber")?.addEventListener("click", pickManualBlankNumber);
+    document.getElementById("driverBlankNumber")?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") pickManualBlankNumber();
     });
 
     document.getElementById("driverReleaseBlank")?.addEventListener("click", async () => {
@@ -11563,6 +11711,7 @@ async function openDriverPrintFlow(options = {}) {
           center_id: String(flowState.centerId),
           series: lookupSeries || "",
         });
+        applyDriverFlowBatchPart(query, flowState);
         if (autoCreate) {
           query.set("auto_create", "true");
         } else if (isStrictDriverBlankSeries(requestedSeries, flowState.blankType)) {

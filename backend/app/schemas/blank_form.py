@@ -34,6 +34,22 @@ class BlankBatchCreate(BlankBatchBase):
     pass
 
 
+class BlankBatchPartSplitRequest(BaseModel):
+    # Сколько номеров в одной пачке (например, 500).
+    pack_size: int = Field(ge=1)
+
+
+class BlankBatchPartRead(BaseModel):
+    id: int
+    part_no: int
+    number_from: int
+    number_to: int
+    free_count: int = 0
+    issued_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
 class BlankBatchRead(BlankBatchBase):
     id: int
     quantity: int
@@ -46,6 +62,9 @@ class BlankBatchRead(BlankBatchBase):
     issued_count: int = 0
     spoiled_count: int = 0
     cancelled_count: int = 0
+
+    # Пачки партии; пустой список, если партию не разбивали.
+    parts: list[BlankBatchPartRead] = []
 
     # Партия автономеров справок на бумаге (ГТО, 095у и др.), а не бланков ВУ.
     is_paper_certificate: bool = False

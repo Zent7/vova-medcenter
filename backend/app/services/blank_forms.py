@@ -32,6 +32,7 @@ from app.models.blank_form import (
     BLANK_TYPE_LMK_MEDICAL_CERTIFICATE,
     NUMBERED_BLANK_TYPES,
     BlankBatch,
+    BlankBatchPart,
     BlankForm,
     BlankType,
 )
@@ -124,6 +125,14 @@ class BlankRangeOverlapError(BlankServiceError):
 
 class BlankRangeInvalidError(BlankServiceError):
     """Невалидный диапазон номеров."""
+
+
+class BlankPartsExistError(BlankServiceError):
+    """Партия уже разбита на пачки."""
+
+
+class BlankNotFreeError(BlankServiceError):
+    """Бланк уже выдан, испорчен или аннулирован и не может быть выбран."""
 
 
 class BlankIssuanceContextError(BlankServiceError):
@@ -394,6 +403,138 @@ def create_batch(
     return batch
 
 
+def split_batch_into_parts(
+    db: Session,
+    *,
+    batch_id: int,
+    pack_size: int,
+    user_id: int | None,
+) -> list[BlankBatchPart]:
+    """Режет партию на пачки по pack_size номеров и относит к ним её бланки.
+
+    Пачка — непрерывный диапазон: первый оператор берёт 1–500, второй 501–1000 и т.д.
+    Разбить партию можно один раз: иначе пачки пересекутся с уже выданными номерами.
+    """
+
+    batch = db.get(BlankBatch, batch_id)
+    if batch is None or batch.deleted_at is not None:
+        raise BlankServiceError("Партия не найдена")
+    if pack_size < 1:
+        raise BlankRangeInvalidError("Размер пачки должен быть больше нуля")
+    already_split = db.execute(
+        select(BlankBatchPart.id).where(BlankBatchPart.batch_id == batch.id).limit(1)
+    ).first()
+    if already_split is not None:
+        raise BlankPartsExistError("Партия уже разбита на пачки")
+
+    parts: list[BlankBatchPart] = []
+    number_from = batch.number_from
+    while number_from <= batch.number_to:
+        number_to = min(number_from + pack_size - 1, batch.number_to)
+        part = BlankBatchPart(
+            batch_id=batch.id,
+            part_no=len(parts) + 1,
+            number_from=number_from,
+            number_to=number_to,
+        )
+        db.add(part)
+        db.flush()
+        db.execute(
+            update(BlankForm)
+            .where(
+                BlankForm.batch_id == batch.id,
+                BlankForm.number_value >= number_from,
+                BlankForm.number_value <= number_to,
+            )
+            .values(batch_part_id=part.id)
+        )
+        parts.append(part)
+        number_from = number_to + 1
+
+    write_audit_log(
+        db,
+        entity_type="blank_batch",
+        entity_id=batch.id,
+        action="split_parts",
+        user_id=user_id or 1,
+        center_id=batch.center_id,
+        payload_json={"pack_size": pack_size, "parts": len(parts)},
+    )
+    return parts
+
+
+def list_batch_parts_with_counts(db: Session, batch_ids: Iterable[int]) -> dict[int, list[dict[str, object]]]:
+    """Пачки по партиям с остатками: сколько свободных и выданных бланков в каждой."""
+
+    ids = list(batch_ids)
+    if not ids:
+        return {}
+    parts = list(
+        db.execute(
+            select(BlankBatchPart)
+            .where(BlankBatchPart.batch_id.in_(ids))
+            .order_by(BlankBatchPart.batch_id.asc(), BlankBatchPart.part_no.asc())
+        ).scalars()
+    )
+    if not parts:
+        return {}
+    rows = db.execute(
+        select(BlankForm.batch_part_id, BlankForm.status, func.count(BlankForm.id))
+        .where(BlankForm.batch_part_id.in_([part.id for part in parts]))
+        .group_by(BlankForm.batch_part_id, BlankForm.status)
+    ).all()
+    counts: dict[int, dict[str, int]] = {}
+    for part_id, status, count in rows:
+        counts.setdefault(part_id, {})[status] = int(count)
+
+    result: dict[int, list[dict[str, object]]] = {}
+    for part in parts:
+        part_counts = counts.get(part.id, {})
+        result.setdefault(part.batch_id, []).append(
+            {
+                "id": part.id,
+                "part_no": part.part_no,
+                "number_from": part.number_from,
+                "number_to": part.number_to,
+                "free_count": part_counts.get(BLANK_STATUS_FREE, 0),
+                "issued_count": part_counts.get(BLANK_STATUS_ISSUED, 0),
+            }
+        )
+    return result
+
+
+def record_manual_pick(db: Session, *, form: BlankForm, user_id: int | None) -> None:
+    """Пишет в историю, что номер выбран вручную, а не взят следующим по порядку."""
+
+    write_audit_log(
+        db,
+        entity_type="blank_form",
+        entity_id=form.id,
+        action="manual_pick",
+        user_id=user_id or 1,
+        center_id=form.center_id,
+        payload_json={
+            "full_number": form.full_number,
+            "series": form.series,
+            "blank_type": form.blank_type,
+            "batch_id": form.batch_id,
+            "batch_part_id": form.batch_part_id,
+        },
+    )
+
+
+def manual_pick_form(db: Session, *, form_id: int, user_id: int | None) -> BlankForm:
+    """Оператор вписал номер вручную: бланк берём только свободный из заведённой партии."""
+
+    form = db.get(BlankForm, form_id)
+    if form is None:
+        raise BlankServiceError("Бланк не найден")
+    if form.status != BLANK_STATUS_FREE:
+        raise BlankNotFreeError(f"Бланк {form.full_number} уже не свободен")
+    record_manual_pick(db, form=form, user_id=user_id)
+    return form
+
+
 def list_forms(
     db: Session,
     *,
@@ -564,6 +705,16 @@ def _not_auto_numbered():
     return or_(BlankForm.batch_id.is_(None), BlankForm.batch_id.not_in(auto_batches))
 
 
+def _not_certificate_series():
+    """Условие: серия не справочная (ГТО, 095У, СЭНД и т.д.), даже если партия заведена вручную.
+
+    Строгому бланку ВУ такие серии не подходят: их печатают отдельными справками, а в
+    окне водительской комиссии они попадали в список серий.
+    """
+
+    return or_(BlankForm.series.is_(None), BlankForm.series.not_in(PAPER_CERTIFICATE_SERIES))
+
+
 def list_free_series(
     db: Session,
     *,
@@ -578,7 +729,7 @@ def list_free_series(
         BlankForm.status == BLANK_STATUS_FREE,
     )
     if strict_only:
-        query = query.where(_not_auto_numbered())
+        query = query.where(_not_auto_numbered(), _not_certificate_series())
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
     skip_used = _skip_used_numbers(db, blank_type=blank_type, center_id=center_id)
@@ -652,6 +803,7 @@ def get_next_free_form(
     center_id: int | None = None,
     series: str | None = None,
     strict_only: bool = False,
+    batch_part_id: int | None = None,
 ) -> BlankForm | None:
     query = (
         select(BlankForm)
@@ -663,7 +815,9 @@ def get_next_free_form(
         .limit(1)
     )
     if strict_only:
-        query = query.where(_not_auto_numbered())
+        query = query.where(_not_auto_numbered(), _not_certificate_series())
+    if batch_part_id is not None:
+        query = query.where(BlankForm.batch_part_id == batch_part_id)
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
     lookup_series = normalize_lookup_series(blank_type, series)
@@ -683,8 +837,12 @@ def get_form_by_printed_number(
     center_id: int | None,
     series: str,
     number_input: str | int,
+    strict_only: bool = False,
 ) -> BlankForm | None:
-    """Находит конкретный типографский бланк без выбора следующего номера."""
+    """Находит конкретный типографский бланк без выбора следующего номера.
+
+    Для строгого бланка (ВУ) вписанный вручную номер должен быть из заведённой партии.
+    """
 
     series_clean = (series or "").strip()
     if not series_clean:
@@ -696,6 +854,8 @@ def get_form_by_printed_number(
         BlankForm.series == series_clean,
         BlankForm.number_value == number_value,
     )
+    if strict_only:
+        query = query.where(_not_auto_numbered(), _not_certificate_series())
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
     return db.execute(query.order_by(BlankForm.id.asc()).limit(1)).scalar_one_or_none()
@@ -995,6 +1155,12 @@ def clear_center_blanks(
     forms_deleted = db.execute(
         delete(BlankForm).where(center_forms).execution_options(synchronize_session=False)
     ).rowcount
+    # Пачки ссылаются на бланки, поэтому удаляются после них.
+    db.execute(
+        delete(BlankBatchPart)
+        .where(BlankBatchPart.batch_id.in_(center_batch_ids))
+        .execution_options(synchronize_session=False)
+    )
     batches_deleted = db.execute(
         update(BlankBatch)
         .where(BlankBatch.center_id == center_id, BlankBatch.deleted_at.is_(None))
