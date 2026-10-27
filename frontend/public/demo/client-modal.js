@@ -833,19 +833,17 @@ function getClientServiceDetailKey(service) {
   return String(getServiceToken(service) || service?.name || "");
 }
 
-// Лишение прав — отдельная плата 1500 ₽ к цене водительской комиссии.
-const LICENSE_REVOCATION_FEE = 1500;
+// Лишение прав: водительская комиссия стоит 1500 ₽ вместо цены категорий.
+const LICENSE_REVOCATION_PRICE = 1500;
 
-function getLicenseRevocationFee() {
-  return actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked
-    ? LICENSE_REVOCATION_FEE
-    : 0;
+function isLicenseRevocationChecked() {
+  return Boolean(actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked);
 }
 
 function getDefaultServiceUnitPrice(service) {
   if (service && isDriverService(service)) {
-    const categoryPrice = getDriverCategoryPrice(normalizeDriverCategories(getClientDriverCategoriesFromForm()));
-    return categoryPrice + getLicenseRevocationFee();
+    if (isLicenseRevocationChecked()) return LICENSE_REVOCATION_PRICE;
+    return getDriverCategoryPrice(normalizeDriverCategories(getClientDriverCategoriesFromForm()));
   }
   return Number(service?.price || 0);
 }
