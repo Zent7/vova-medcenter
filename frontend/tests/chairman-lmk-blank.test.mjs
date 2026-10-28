@@ -109,3 +109,19 @@ test("LMK print menu has a spoil button for the current typographic blank", () =
   assert.match(spoilSource, /selectedPrintBlanks\.delete\(series\)/);
   assert.match(spoilSource, /await findChairmanBlank\(series, null\)/);
 });
+
+test("LMK print menu can release an issued blank back to the stock", () => {
+  const menuSource = sourceBetween(
+    "const openChairmanPrintMenu = () =>",
+    "const runChairmanPrint = async",
+  );
+  assert.match(menuSource, /data-chairman-print-release-blank>Освободить номер</);
+
+  const releaseSource = sourceBetween(
+    "querySelector(\"[data-chairman-print-release-blank]\")",
+    "querySelector(\"[data-chairman-print-spoil-blank]\")",
+  );
+  assert.match(releaseSource, /currentBlank\.status !== "free"/);
+  assert.match(releaseSource, /\/blanks\/forms\/\$\{Number\(currentBlank\.id\)\}\/release/);
+  assert.match(releaseSource, /selectedPrintBlanks\.delete\(series\)/);
+});

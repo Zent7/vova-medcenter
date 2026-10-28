@@ -13902,7 +13902,10 @@ function bindContentEvents() {
                 <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
                 <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
               </div>
-              <button type="button" class="driver-print-classic__button driver-print-classic__button--spoiled chairman-print-results__wide" data-chairman-print-spoil-blank>Бракованный бланк</button>
+              <div class="driver-print-classic__blank-actions">
+                <button type="button" class="driver-print-classic__button" data-chairman-print-release-blank>Освободить номер</button>
+                <button type="button" class="driver-print-classic__button driver-print-classic__button--spoiled" data-chairman-print-spoil-blank>Бракованный бланк</button>
+              </div>
               <button type="button" class="driver-print-classic__button chairman-print-results__wide chairman-print-results__book" data-chairman-print-menu-kind="lmk_title">Личная медицинская книжка</button>
             </div>
 
@@ -14040,6 +14043,36 @@ function bindContentEvents() {
         button.addEventListener("click", async (event) => {
           await findChairmanBlank(selectedBlankSeries, event.currentTarget);
         });
+      });
+
+      // Освобождение номера ЛМК: выданный бланк возвращается в свободные, свободный
+      // просто убирается из окна. Печать книжки по нему после этого не пройдёт.
+      actionModalContent?.querySelector("[data-chairman-print-release-blank]")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        const series = selectedBlankSeries;
+        const currentBlank = selectedPrintBlanks.get(series);
+        if (!currentBlank?.id) {
+          showToast(`Сначала нажмите «Найти номер» для серии ${series}`);
+          return;
+        }
+
+        button.disabled = true;
+        try {
+          if (currentBlank.status !== "free") {
+            await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/release`, {
+              method: "POST",
+            });
+            await refreshDocumentWorkflowState(client?.id, visit?.backendId || null);
+          }
+          selectedPrintBlanks.delete(series);
+          const numberInput = document.getElementById("chairmanPrintBlankNumber");
+          if (numberInput) numberInput.value = "";
+          showToast(`Номер ${currentBlank.full_number || ""} освобождён`);
+        } catch (error) {
+          showToast(humanizeApiError(error, "Не удалось освободить номер бланка"));
+        } finally {
+          button.disabled = false;
+        }
       });
 
       // Списание бланка ЛМК: свободный бланк помечается испорченным, выданный
