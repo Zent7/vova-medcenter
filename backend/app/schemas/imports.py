@@ -14,7 +14,6 @@ class ClientImportPreviewRow(BaseModel):
     patient_number: int | None = None
     full_name: str
     birth_date: str | None = None
-    organization: str | None = None
     service_name: str | None = None
     encounter_date: str | None = None
     status: str

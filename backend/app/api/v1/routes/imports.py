@@ -979,7 +979,6 @@ def preview_client_excel_import(payload: ClientImportExcelRequest, db: Session =
                     part for part in [row.get("last_name"), row.get("first_name"), row.get("middle_name")] if part
                 ),
                 birth_date=row.get("birth_date").strftime("%d.%m.%y") if row.get("birth_date") else None,
-                organization=row.get("organization"),
                 service_name=service.name if service is not None else None,
                 encounter_date=(row.get("encounter_date") or date.today()).strftime("%d.%m.%Y")
                 if service is not None

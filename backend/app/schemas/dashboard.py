@@ -59,7 +59,6 @@ class DashboardEncounterRow(BaseModel):
     card_number: str | None = None
     profession: str | None = None
     work_place: str | None = None
-    organization: str | None = None
     real_date_text: str | None = None
     # Агент хранится только в legacy_payload_json: таблица берёт его оттуда.
     legacy_payload_json: dict | None = None

@@ -130,7 +130,6 @@ class DashboardEncounterRowsTests(unittest.TestCase):
         self.assertEqual(rows[0].services, ["Service C"])
         self.assertEqual(rows[1].services, ["Service A", "Service B"])
         self.assertEqual(rows[2].services, [])
-        self.assertEqual(rows[0].organization, "Acme Clinic")
         self.assertEqual(rows[0].encounter_date, date(2026, 7, 20))
         self.assertEqual(rows[0].center_name, "Demo")
         self.assertEqual(rows[0].latest_encounter_created_at, rows[0].encounter_created_at)

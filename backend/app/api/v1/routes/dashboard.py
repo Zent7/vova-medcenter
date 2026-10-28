@@ -174,7 +174,6 @@ def get_dashboard_encounter_rows(
                 card_number=client.card_number,
                 profession=client.profession,
                 work_place=client.work_place,
-                organization=client.organization,
                 real_date_text=client.real_date_text,
                 legacy_payload_json=client.legacy_payload_json,
                 client_center_ids=client_centers_by_client.get(client.id, []),

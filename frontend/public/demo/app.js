@@ -473,7 +473,6 @@ const columnKeys = [
   "glasses",
   "note",
   "position",
-  "organization",
   "agent",
 ];
 
@@ -2563,7 +2562,6 @@ function mapApiClient(client) {
     cardNumber: client.card_number || "",
     profession: client.profession || "",
     workPlace: client.work_place || "",
-    organization: client.organization || "",
     agent: client.agent || client.legacy_payload_json?.agent || "",
     mkb10: client.mkb10 || "",
     realDate: client.real_date_text || "",
@@ -5615,7 +5613,6 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
       flg: nextRaw.flg || null,
       profession: nextRaw.profession || null,
       work_place: nextRaw.work_place || null,
-      organization: nextRaw.organization || null,
       mkb10: nextRaw.mkb10 || null,
       real_date_text: nextRaw.real_date_text || null,
       legacy_payload_json: nextRaw.legacy_payload_json || null,
@@ -5634,7 +5631,7 @@ async function syncChairmanExamToClientAndMedicalRecord(exam) {
     marital_status: currentRecord?.marital_status || null,
     education: currentRecord?.education || null,
     employment_status: currentRecord?.employment_status || null,
-    work_place: currentRecord?.work_place || nextRaw.work_place || nextRaw.organization || null,
+    work_place: currentRecord?.work_place || nextRaw.work_place || null,
     position: currentRecord?.position || null,
     disability: currentRecord?.disability || null,
     blood_group: chairmanMedicalRecordData.bloodGroup || currentRecord?.blood_group || null,
@@ -6209,7 +6206,6 @@ function buildClientSearchHaystack(client) {
     client?.referenceNumber,
     client?.profession,
     client?.workPlace,
-    client?.organization,
     client?.agent,
     client?.note,
     client?.phone,
@@ -6436,7 +6432,6 @@ function buildExcelRows(clients) {
       note: client.note || "",
       encounterDate: client.encounterDate || "",
       position: client.profession || "",
-      organization: client.organization || "",
       agent: client.agent || "",
     };
   });
@@ -6609,7 +6604,6 @@ function renderAmbulatoryCardPage() {
             <div><span>Регистрация</span>${renderCopyableValue(selectedClient.registration, "регистрацию", { fallback: "не указана", copyMessage: "Регистрация скопирована" })}</div>
             <div><span>Должность</span><strong>${escapeHtml(selectedClient.profession || "не указана")}</strong></div>
             <div><span>Место работы</span><strong>${escapeHtml(selectedClient.workPlace || "не указано")}</strong></div>
-            <div><span>Организация</span><strong>${escapeHtml(selectedClient.organization || "не указана")}</strong></div>
             <div><span>Агент</span><strong>${escapeHtml(selectedClient.agent || "не указан")}</strong></div>
             <div><span>Категория</span><strong>${escapeHtml(selectedClient.category || "не указана")}</strong></div>
             <div><span>№ карты</span><strong>${escapeHtml(selectedClient.cardNumber || "не указан")}</strong></div>
@@ -6801,7 +6795,6 @@ function renderSketchHome() {
     "Очки",
     "Примечания",
     "Должность",
-    "Организация",
     "Агент",
   ];
   const tableLoading =
@@ -6844,7 +6837,7 @@ function renderSketchHome() {
             <div class="sketch-toolbar">
               <label class="field sketch-search">
                 <span></span>
-                <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="ФИО, номер справки, организация, агент" autocapitalize="words" />
+                <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="ФИО, номер справки, агент" autocapitalize="words" />
               </label>
               <div class="sketch-toolbar__actions">
                 <button class="primary-button" id="addClientButton" type="button" title="Создать новую карточку пациента">Новый клиент</button>
@@ -6950,7 +6943,6 @@ function renderSketchHome() {
                           ${renderExcelMarkCell(row.glasses)}
                           <span>${escapeHtml(row.note)}</span>
                           <span>${renderDashboardCopyCell(row.position, "должность", "Должность скопирована")}</span>
-                          <span>${renderDashboardCopyCell(row.organization, "организацию", "Организация скопирована")}</span>
                           <span>${escapeHtml(row.agent)}</span>
                         </button>
                       `,
@@ -7175,7 +7167,7 @@ function renderClientImportPage() {
                       <div class="import-preview-row">
                         <div>
                           <strong>${escapeHtml(row.full_name)}</strong>
-                          <small>Строка ${row.row_number}${row.birth_date ? ` В· ${escapeHtml(row.birth_date)}` : ""}${row.organization ? ` В· ${escapeHtml(row.organization)}` : ""}</small>
+                          <small>Строка ${row.row_number}${row.birth_date ? ` В· ${escapeHtml(row.birth_date)}` : ""}</small>
                           ${
                             row.service_name
                               ? `<small>Услуга: ${escapeHtml(row.service_name)}${row.encounter_date ? ` · ${escapeHtml(row.encounter_date)}` : ""}</small>`
@@ -8626,7 +8618,7 @@ function buildMedicalRecordDraft(selectedClient, record = {}, entries = []) {
     education: record.education || "",
     employmentStatus: record.employment_status || "",
     disability: record.disability || "",
-    workPlace: record.work_place || raw.organization || "",
+    workPlace: record.work_place || "",
     position: record.position || "",
     diagnosis: record.diagnosis || raw.indications || selectedClient?.mkb10 || "",
     mkb10: record.mkb10 || raw.mkb10 || selectedClient?.mkb10 || "",
@@ -8817,7 +8809,6 @@ function renderMedicalRecordBackendBlock(selectedClient, exams = []) {
   const jobLine = [draft.workPlace, draft.position].map((item) => String(item || "").trim()).filter(Boolean).join(", ");
   const clinicName = normalizeSheetValue(selectedClient?.center || getWorkspaceCenterName());
   const clinicDetails = [
-    selectedClient?.organization,
     selectedClient?.registration,
     selectedClient?.phone ? `тел. ${selectedClient.phone}` : "",
   ]
@@ -9205,7 +9196,6 @@ async function saveMedicalRecordForm() {
         flg: raw.flg || null,
         profession: getMedicalRecordTextValue(formData, "position"),
         work_place: getMedicalRecordTextValue(formData, "workPlace"),
-        organization: raw.organization || null,
         mkb10: pickValue("mkb10", "mkb10Factors", "mkb10Commission"),
         real_date_text: raw.real_date_text || null,
         legacy_payload_json: raw.legacy_payload_json || null,
