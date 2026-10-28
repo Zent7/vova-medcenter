@@ -1292,19 +1292,11 @@ function bindClientServiceGroupButtons() {
   });
 }
 
-// Админу в форме клиента Здравница не нужна: её нет ни в переключателе центров, ни в кнопках
-// договора. У клиентов Здравницы её отметка остаётся как была.
-function getClientFormCenterNames(centerNames) {
-  const { accessToken, allCenters } = appState.auth;
-  if (!accessToken || !allCenters) return centerNames;
-  return centerNames.filter((name) => name !== "ПЕРВАЯ ЗДРАВНИЦА");
-}
-
 // Кнопка «ОК + договор»: одна, как была, или по кнопке на каждый центр сотрудника
 // с несколькими центрами: договор у каждого центра свой.
 function renderClientContractSubmitButtons(encounterMode = false) {
   const label = encounterMode ? "Сохранить + договор" : "ОК + договор";
-  const centerNames = getClientFormCenterNames(getContractCenterNames());
+  const centerNames = getContractCenterNames();
   if (!centerNames.length) {
     return `<button type="submit" class="ghost-button" name="clientSubmitAction" value="contract">${label}</button>`;
   }
@@ -1427,7 +1419,7 @@ function openClientModal(clientId = null, options = {}) {
     "";
   // Центры клиента. Если у открытого клиента они не известны, их не показываем и не
   // меняем: сохранение не должно переложить его в другую базу наугад.
-  const centerChoiceNames = encounterMode ? [] : getClientFormCenterNames(getClientCenterChoiceNames());
+  const centerChoiceNames = encounterMode ? [] : getClientCenterChoiceNames();
   // Центры берём из последнего списка с сервера: карточка в кэше могла устареть, если
   // их поменял другой сотрудник или сам сотрудник в этой же вкладке.
   const listedClient = editingClient

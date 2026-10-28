@@ -221,28 +221,37 @@ test("кнопки «ОК + договор» по центрам и перекл
 
   const submitButtons = new Function(
     "getContractCenterNames",
-    "getClientFormCenterNames",
     "escapeHtml",
     `${extractFrom(modalSource, "renderClientContractSubmitButtons")}\nreturn renderClientContractSubmitButtons;`,
   );
-  const multi = submitButtons(() => [CENTERS[0], CENTERS[1]], (names) => names, (value) => String(value))(false);
+  const multi = submitButtons(() => [CENTERS[0], CENTERS[1]], (value) => String(value))(false);
   assert.match(multi, new RegExp(`data-contract-center="${CENTERS[0]}">ОК \\+ договор ${CENTERS[0]}<`));
   assert.match(multi, new RegExp(`data-contract-center="${CENTERS[1]}">ОК \\+ договор ${CENTERS[1]}<`));
-  const plain = submitButtons(() => [], (names) => names, (value) => String(value))(true);
+  const plain = submitButtons(() => [], (value) => String(value))(true);
   assert.match(plain, />Сохранить \+ договор</);
   assert.doesNotMatch(plain, /data-contract-center/);
 });
 
-test("админу в форме клиента не предлагается Здравница, остальным центры как были", () => {
-  const formNames = (auth, names) =>
-    new Function(
-      "appState",
-      `${extractFrom(modalSource, "getClientFormCenterNames")}\nreturn getClientFormCenterNames;`,
-    )({ auth: { ...emptyAuth(), ...auth } })(names);
+test("админ в форме клиента выбирает любой центр, Здравница в том числе", () => {
   const all = ["Мед-Авто", "Медилэнд", "ПЕРВАЯ ЗДРАВНИЦА"];
-  assert.deepEqual(formNames({ accessToken: "t", roleCode: "admin", allCenters: true }, all), ["Мед-Авто", "Медилэнд"]);
-  assert.deepEqual(formNames(SINGLE_ZDRAV, ["ПЕРВАЯ ЗДРАВНИЦА"]), ["ПЕРВАЯ ЗДРАВНИЦА"]);
-  assert.deepEqual(formNames({}, all), all);
+  assert.deepEqual(scope(ADMIN, { workspaceNames: all }).choice(), all);
+  assert.deepEqual(scope(ADMIN, { workspaceNames: all }).contract(), all);
+
+  const picker = extractFrom(modalSource, "renderClientCenterPicker");
+  const html = new Function("escapeHtml", `${picker}\nreturn renderClientCenterPicker;`)((value) => String(value))(
+    all,
+    ["ПЕРВАЯ ЗДРАВНИЦА"],
+  );
+  assert.match(html, /value="ПЕРВАЯ ЗДРАВНИЦА" checked/);
+  assert.equal((html.match(/name="clientCenter"/g) || []).length, 3);
+
+  const submitButtons = new Function(
+    "getContractCenterNames",
+    "escapeHtml",
+    `${extractFrom(modalSource, "renderClientContractSubmitButtons")}\nreturn renderClientContractSubmitButtons;`,
+  );
+  const buttons = submitButtons(() => all, (value) => String(value))(false);
+  assert.match(buttons, /data-contract-center="ПЕРВАЯ ЗДРАВНИЦА">ОК \+ договор ПЕРВАЯ ЗДРАВНИЦА</);
 });
 
 test("изменённые файлы подняли версию в index.html", () => {
