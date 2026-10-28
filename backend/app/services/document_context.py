@@ -408,8 +408,7 @@ def build_document_context(
     else:
         pool_admission = "Допущен(а)"
         pool_healthy = "здоров(а)"
-    organization = _text(client.organization) or _first_legacy_value(client, "Организация", "organization", "CompanyName")
-    work_place = _text(client.work_place) or organization or _first_legacy_value(client, "Место работы", "WorkPlace", "qdfMain.WorkPlace")
+    work_place = _text(client.work_place) or _first_legacy_value(client, "Место работы", "WorkPlace", "qdfMain.WorkPlace", "CompanyName")
     post = _text(client.profession) or _first_legacy_value(client, "Должность", "Post", "qdfMain.Post") or "не указано"
     document_series = _text(client.document_series) or _first_legacy_value(client, "DocumentSeries", "qdfMain.DocumentSeries")
     document_number = _text(client.document_number) or _first_legacy_value(client, "DocumentNumber", "qdfMain.DocumentNumber")
@@ -536,7 +535,6 @@ def build_document_context(
         "Post": post,
         "PositionApplied": position_applied,
         "CompanyName": work_place or "не указано",
-        "Organization": organization,
         "WorkPlace": work_place,
         "Phone": _text(client.phone),
         "Email": _text(client.email),

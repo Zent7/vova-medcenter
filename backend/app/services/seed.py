@@ -886,7 +886,7 @@ def _backfill_related_records(db: Session) -> None:
                     card_number=client.card_number or str(client.patient_number or client.id),
                     opened_at=client.birth_date,
                     oms_policy=client.oms_policy,
-                    work_place=client.organization,
+                    work_place=client.work_place,
                     diagnosis=client.indications,
                     mkb10=client.mkb10,
                     notes=client.notes,

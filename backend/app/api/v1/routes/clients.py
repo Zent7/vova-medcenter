@@ -541,7 +541,7 @@ def create_client(
             card_number=client.card_number or f"{client.patient_number:07d}",
             opened_at=date.today(),
             oms_policy=client.oms_policy,
-            work_place=client.work_place or client.organization,
+            work_place=client.work_place,
             position=client.profession,
             diagnosis=client.indications,
             mkb10=client.mkb10,

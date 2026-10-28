@@ -316,7 +316,7 @@ class ClientExcelImportTests(unittest.TestCase):
         self.assertEqual(result.updated, 1)
         self.assertEqual(result.created, 0)
         client = self.db.execute(select(Client)).scalar_one()
-        self.assertEqual(client.organization, "ООО Новый Завод")
+        self.assertEqual(client.work_place, "ООО Новый Завод")
         self.assertEqual(client.document_series, "4501")
         self.assertEqual(client.document_number, "123456")
         self.assertEqual(client.document_type, "Паспорт РФ")
@@ -376,7 +376,7 @@ class FactoryTemplateImportTests(unittest.TestCase):
             payload["registration_text"],
             "Тверская, г. Тверь, ул. Лесная, д. 1, корп. 2, кв. 15",
         )
-        self.assertEqual(payload["organization"], "Завод Пример")
+        self.assertEqual(payload["work_place"], "Завод Пример")
         self.assertEqual(payload["profession"], "Слесарь")
         self.assertEqual(payload["indications"], "Шум, вибрация")
         self.assertEqual(payload["flg"], "12.03.2025")

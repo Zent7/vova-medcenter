@@ -59,7 +59,7 @@ FIELD_BY_COLUMN = {
     24: "journal_number",
     25: "no_number",
     26: "flg",
-    27: "organization",
+    27: "work_place",
     28: "mkb10",
     29: "real_date_text",
 }

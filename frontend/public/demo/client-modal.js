@@ -420,7 +420,6 @@ function getClientTextFieldOptions(name, presets = []) {
     if (name === "agent") return raw.agent || raw.legacy_payload_json?.agent || client?.agent || "";
     if (name === "profession") return raw.profession || raw.legacy_payload_json?.profession || client?.profession || "";
     if (name === "workPlace") return raw.work_place || raw.legacy_payload_json?.work_place || client?.workPlace || "";
-    if (name === "organization") return raw.organization || raw.legacy_payload_json?.organization || client?.organization || "";
     return "";
   });
   return uniqueClientTextOptions([...recent, ...values, ...presets]);
@@ -458,7 +457,6 @@ function renderClientAddressDatalists() {
   const agentOptions = getClientTextFieldOptions("agent");
   const professionOptions = getClientTextFieldOptions("profession");
   const workPlaceOptions = getClientTextFieldOptions("workPlace");
-  const organizationOptions = getClientTextFieldOptions("organization");
   return `
     <datalist id="clientDocumentTypeSuggestions">
       ${documentTypeOptions.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}
@@ -496,10 +494,6 @@ function renderClientAddressDatalists() {
 
     <datalist id="clientWorkPlaceSuggestions">
       ${workPlaceOptions.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}
-    </datalist>
-
-    <datalist id="clientOrganizationSuggestions">
-      ${organizationOptions.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}
     </datalist>
   `;
 }
@@ -1431,11 +1425,6 @@ function openClientModal(clientId = null, options = {}) {
     rawClientDocument.work_place ||
     rawClientDocument.legacy_payload_json?.work_place ||
     "";
-  const initialOrganization =
-    editingClient?.organization ||
-    rawClientDocument.organization ||
-    rawClientDocument.legacy_payload_json?.organization ||
-    "";
   // Центры клиента. Если у открытого клиента они не известны, их не показываем и не
   // меняем: сохранение не должно переложить его в другую базу наугад.
   const centerChoiceNames = encounterMode ? [] : getClientFormCenterNames(getClientCenterChoiceNames());
@@ -1628,10 +1617,6 @@ function openClientModal(clientId = null, options = {}) {
           <label class="field">
             <span>Место работы</span>
             <input name="workPlace" value="${escapeHtml(initialWorkPlace)}" list="clientWorkPlaceSuggestions" />
-          </label>
-          <label class="field">
-            <span>Организация</span>
-            <input name="organization" value="${escapeHtml(initialOrganization)}" list="clientOrganizationSuggestions" />
           </label>
         </div>
 
@@ -1840,7 +1825,6 @@ function openClientModal(clientId = null, options = {}) {
       phone: String(formData.get("phone") || "").trim(),
       profession: String(formData.get("profession") || "").trim(),
       workPlace: String(formData.get("workPlace") || "").trim(),
-      organization: String(formData.get("organization") || "").trim(),
       center: editingClient?.center || center,
       document: [
         String(formData.get("documentType") || "").trim(),
@@ -1893,7 +1877,6 @@ function openClientModal(clientId = null, options = {}) {
         agent: formData.get("agent"),
         profession: formData.get("profession"),
         workPlace: formData.get("workPlace"),
-        organization: formData.get("organization"),
       });
       if (!encounterMode) {
         const backendId = editingClient?.backendId || (editingClient?.rawApiClient ? editingClient.id : null);
@@ -1940,7 +1923,6 @@ function openClientModal(clientId = null, options = {}) {
           address_text: addressText || null,
           profession: String(formData.get("profession") || "").trim() || null,
           work_place: String(formData.get("workPlace") || "").trim() || null,
-          organization: String(formData.get("organization") || "").trim() || null,
           encounter_date_text: encounterDateText || null,
           notes: String(formData.get("comment") || "").trim() || null,
           registration_text: addressText || null,
@@ -1950,7 +1932,6 @@ function openClientModal(clientId = null, options = {}) {
             agent: String(formData.get("agent") || "").trim() || null,
             profession: String(formData.get("profession") || "").trim() || null,
             work_place: String(formData.get("workPlace") || "").trim() || null,
-            organization: String(formData.get("organization") || "").trim() || null,
           },
         }),
       });
@@ -1967,7 +1948,6 @@ function openClientModal(clientId = null, options = {}) {
             agent: String(formData.get("agent") || "").trim() || savedMapped.agent || "",
             profession: String(formData.get("profession") || "").trim() || savedMapped.profession || "",
             workPlace: String(formData.get("workPlace") || "").trim() || savedMapped.workPlace || "",
-            organization: String(formData.get("organization") || "").trim() || savedMapped.organization || "",
             sex: savedClient.sex || formSex,
             gender: savedClient.sex || formSex,
             rawApiClient: savedClient,
