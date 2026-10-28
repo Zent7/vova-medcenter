@@ -90,3 +90,22 @@ test("LMK printing reads the selected blank series from shared state", () => {
   );
   assert.doesNotMatch(printSource, /\bselectedBlankSeries\b/);
 });
+
+test("LMK print menu has a spoil button for the current typographic blank", () => {
+  const menuSource = sourceBetween(
+    "const openChairmanPrintMenu = () =>",
+    "const runChairmanPrint = async",
+  );
+  assert.match(menuSource, /data-chairman-print-spoil-blank>Бракованный бланк</);
+
+  const spoilSource = sourceBetween(
+    "querySelector(\"[data-chairman-print-spoil-blank]\")",
+    "actionModalContent?.querySelectorAll(\"[data-chairman-print-menu-kind]\")",
+  );
+  assert.match(spoilSource, /currentBlank\.status === "free"/);
+  assert.match(spoilSource, /\/blanks\/forms\/\$\{Number\(currentBlank\.id\)\}\/spoil/);
+  assert.match(spoilSource, /apiRequest\("\/documents\/print-result"/);
+  assert.match(spoilSource, /success: false/);
+  assert.match(spoilSource, /selectedPrintBlanks\.delete\(series\)/);
+  assert.match(spoilSource, /await findChairmanBlank\(series, null\)/);
+});
