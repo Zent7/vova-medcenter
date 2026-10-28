@@ -3118,9 +3118,11 @@ function getPinnedCenterName() {
 }
 
 // У каждого медцентра своя клиентская база. Сотрудник с несколькими центрами
-// видит базы всех своих центров сразу, а админ, гость и тот, чьих центров
-// интерфейс не знает, — базу центра, выбранного в переключателе.
+// видит базы всех своих центров сразу, админ — базы всех медцентров, а гость и
+// тот, чьих центров интерфейс не знает, — базу центра, выбранного в переключателе.
 function getClientBaseCenterNames() {
+  const { accessToken, allCenters } = appState.auth;
+  if (accessToken && allCenters) return WORKSPACE_CENTER_NAMES.slice();
   const allowed = getAllowedCenterNames();
   return allowed.length ? allowed : [getWorkspaceCenterName()];
 }

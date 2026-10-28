@@ -87,9 +87,20 @@ test("сотрудник с одним центром видит базу это
   assert.deepEqual(scope(SINGLE, { centerFilter: CENTERS[0] }).base(), [CENTERS[1]]);
 });
 
-test("админ и гость видят базу центра, выбранного в переключателе", () => {
-  assert.deepEqual(scope(ADMIN, { centerFilter: CENTERS[2] }).base(), [CENTERS[2]]);
+test("админ видит базы всех центров, гость — базу центра, выбранного в переключателе", () => {
+  assert.deepEqual(scope(ADMIN, { centerFilter: CENTERS[2] }).base(), CENTERS);
   assert.deepEqual(scope({}, { centerFilter: CENTERS[1] }).base(), [CENTERS[1]]);
+});
+
+test("админ просит у сервера клиентов всех центров, гость — только центра переключателя", () => {
+  const centers = [
+    { id: 1, name: CENTERS[0] },
+    { id: 2, name: CENTERS[1] },
+    { id: 3, name: CENTERS[2] },
+  ];
+  assert.deepEqual(scope(ADMIN, { centers }).baseIds(), [1, 2, 3]);
+  assert.deepEqual(scope({}, { centers, centerFilter: CENTERS[1] }).baseIds(), [2]);
+  assert.equal(scope(ADMIN).matches(CENTERS[2]), true);
 });
 
 test("серверу уходят номера центров базы, а неизвестные названия пропускаются", () => {
