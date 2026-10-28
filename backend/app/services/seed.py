@@ -308,6 +308,8 @@ SERVICE_RECALL_AFTER_DAYS = {
     if service_id not in DEPRECATED_SERVICE_LEGACY_IDS
 }
 CERTIFICATE_SERVICE_LEGACY_IDS = {legacy_id for legacy_id, group_id, _, _ in SERVICE_CATALOG if group_id == 7}
+# Части названий СЭМД-196 в нижнем регистре (сэмт — так её писали раньше).
+SEMD196_NAME_MARKERS = ("сэмд", "сэмт")
 
 SERVICE_GROUP_SORT_OVERRIDES = {
     "legacy-group-2": 10,  # ВУ
@@ -780,6 +782,13 @@ def _ensure_service_catalog(db: Session) -> None:
             doctor_role_id = role_by_legacy_id.get(role_legacy_id)
             if doctor_role_id is not None:
                 db.add(ServiceDoctorRole(service_id=service.id, doctor_role_id=doctor_role_id))
+
+    # СЭМД-196 — справка, её место в «Справках». Услугу, заведённую в «Услугах» без группы,
+    # форма открывает на первой группе — «ВУ», поэтому возвращаем её в «Справки» при старте.
+    certificates_category_id = category_by_group_id[7]
+    for service in db.execute(select(Service)).scalars():
+        if any(marker in service.name.lower() for marker in SEMD196_NAME_MARKERS):
+            service.category_id = certificates_category_id
 
     for old_code in ("spravka-driver", "spravka-pool", "med-inspection"):
         old_service = db.execute(select(Service).where(Service.code == old_code)).scalar_one_or_none()
