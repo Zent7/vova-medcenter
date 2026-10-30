@@ -13837,6 +13837,7 @@ function bindContentEvents() {
       let selectedCertificateType = certificatePrintGroup?.currentType || "";
       let selectedCertificateSeries = getChairmanCertificatePrintSeries(selectedCertificateType, client);
       let selectedBlankSeries = "ЛМК";
+      let chairmanBlankNumberEdited = false;
       const getSelectedCertificateSeries = () => selectedCertificateSeries;
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
@@ -13914,7 +13915,7 @@ function bindContentEvents() {
               <div class="driver-print-classic__caption">Типографский бланк ЛМК:</div>
               <div class="driver-print-classic__lookup">
                 <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка ЛМК" role="button" readonly />
-                <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" readonly />
+                <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" aria-label="Номер бланка ЛМК" inputmode="numeric" autocomplete="off" />
                 <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
               </div>
               <div class="driver-print-classic__blank-actions">
@@ -13987,7 +13988,45 @@ function bindContentEvents() {
         const blankParts = blank ? getDriverPrintBlankParts(blank, normalizedSeries) : null;
         if (seriesInput) seriesInput.value = normalizedSeries;
         if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
+        chairmanBlankNumberEdited = false;
       };
+
+      const resolveChairmanPrintBlank = async (series) => {
+        const normalizedSeries = normalizeBlankSeries(series);
+        const numberInput = document.getElementById("chairmanPrintBlankNumber");
+        const number = String(numberInput?.value || "").trim();
+        const currentBlank = selectedPrintBlanks.get(normalizedSeries);
+        const currentParts = currentBlank ? getDriverPrintBlankParts(currentBlank, normalizedSeries) : null;
+        // Неизменённый выданный бланк этого обращения можно напечатать повторно.
+        if (currentBlank?.id && number === String(currentParts?.number || currentParts?.fullNumber || "").trim()) {
+          return currentBlank;
+        }
+        selectedPrintBlanks.delete(normalizedSeries);
+        if (!number) return null;
+        if (!/^\d+$/.test(number)) throw new Error("Номер бланка должен содержать только цифры");
+        if (!client || !visit) throw new Error("Сначала выберите клиента и обращение");
+
+        const centerId = await resolveCenterIdForVisit(visit, client);
+        const blank = await pickManualDriverBlank({
+          selectedSeries: normalizedSeries,
+          blankType: resolveDriverPrintBlankType({ selectedSeries: normalizedSeries }),
+          centerId,
+        }, number);
+        if (
+          document.getElementById("chairmanPrintBlankNumber") !== numberInput ||
+          String(numberInput?.value || "").trim() !== number ||
+          chairmanPrintBlankState.blanks !== selectedPrintBlanks ||
+          chairmanPrintBlankState.selectedSeries !== normalizedSeries
+        ) {
+          throw new Error("Номер или серия бланка изменены. Повторите выбор номера");
+        }
+        selectedPrintBlanks.set(normalizedSeries, blank);
+        const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
+        numberInput.value = blankParts.number || blankParts.fullNumber || "";
+        chairmanBlankNumberEdited = false;
+        return blank;
+      };
+      chairmanPrintBlankState.resolveBlank = resolveChairmanPrintBlank;
 
       const findChairmanBlank = async (series, button = null, options = {}) => {
         const normalizedSeries = normalizeBlankSeries(series);
@@ -13996,6 +14035,15 @@ function bindContentEvents() {
           : certificateTemplateMenu
             ? document.getElementById("chairmanCertificateBlankNumber")
             : document.getElementById("chairmanPrintBlankNumber");
+        const lookupInputValue = input?.value;
+        const lookupBlank = selectedPrintBlanks.get(normalizedSeries);
+        const isCurrentLookup = () => certificateTemplateMenu || !input || (
+          document.getElementById("chairmanPrintBlankNumber") === input &&
+          input.value === lookupInputValue &&
+          chairmanPrintBlankState.blanks === selectedPrintBlanks &&
+          chairmanPrintBlankState.selectedSeries === normalizedSeries &&
+          selectedPrintBlanks.get(normalizedSeries) === lookupBlank
+        );
         if (!client || !visit) {
           showToast("Сначала выбери клиента и обращение");
           return null;
@@ -14033,15 +14081,18 @@ function bindContentEvents() {
             query.set("auto_create", "true");
             blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
           }
+          if (!isCurrentLookup()) return null;
           selectedPrintBlanks.set(normalizedSeries, blank);
           const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
           const resolvedBlankNumber = blankParts.number || blankParts.fullNumber || "";
           if (input) input.value = resolvedBlankNumber;
+          chairmanBlankNumberEdited = false;
           if (!options.silent) {
             showToast(resolvedBlankNumber ? `Номер ${normalizedSeries} подставлен` : `Свободный номер ${normalizedSeries} не найден`);
           }
           return blank;
         } catch (error) {
+          if (!isCurrentLookup()) return null;
           selectedPrintBlanks.delete(normalizedSeries);
           if (input && !input.value) input.value = splitExistingBlankNumber(normalizedSeries);
           if (!options.silent) {
@@ -14054,8 +14105,33 @@ function bindContentEvents() {
       };
       chairmanPrintBlankState.findBlank = findChairmanBlank;
 
+      const pickChairmanManualBlank = async (button = null) => {
+        if (button) button.disabled = true;
+        try {
+          const blank = await resolveChairmanPrintBlank(selectedBlankSeries);
+          showToast(blank?.id ? `Выбран бланк ${blank.full_number}` : "Введите номер бланка");
+        } catch (error) {
+          showToast(humanizeApiError(error, "Не удалось выбрать номер бланка"));
+        } finally {
+          if (button) button.disabled = false;
+        }
+      };
+      const chairmanNumberInput = actionModalContent?.querySelector("#chairmanPrintBlankNumber");
+      chairmanNumberInput?.addEventListener("input", () => {
+        chairmanBlankNumberEdited = true;
+      });
+      chairmanNumberInput?.addEventListener("keydown", async (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        await pickChairmanManualBlank();
+      });
+
       actionModalContent?.querySelectorAll("[data-chairman-print-find-blank]").forEach((button) => {
         button.addEventListener("click", async (event) => {
+          if (chairmanBlankNumberEdited && String(chairmanNumberInput?.value || "").trim()) {
+            await pickChairmanManualBlank(event.currentTarget);
+            return;
+          }
           await findChairmanBlank(selectedBlankSeries, event.currentTarget);
         });
       });
@@ -14065,14 +14141,13 @@ function bindContentEvents() {
       actionModalContent?.querySelector("[data-chairman-print-release-blank]")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
         const series = selectedBlankSeries;
-        const currentBlank = selectedPrintBlanks.get(series);
-        if (!currentBlank?.id) {
-          showToast(`Сначала нажмите «Найти номер» для серии ${series}`);
-          return;
-        }
-
         button.disabled = true;
         try {
+          const currentBlank = await resolveChairmanPrintBlank(series);
+          if (!currentBlank?.id) {
+            showToast(`Введите номер бланка или нажмите «Найти номер» для серии ${series}`);
+            return;
+          }
           if (currentBlank.status !== "free") {
             await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/release`, {
               method: "POST",
@@ -14082,6 +14157,7 @@ function bindContentEvents() {
           selectedPrintBlanks.delete(series);
           const numberInput = document.getElementById("chairmanPrintBlankNumber");
           if (numberInput) numberInput.value = "";
+          chairmanBlankNumberEdited = false;
           showToast(`Номер ${currentBlank.full_number || ""} освобождён`);
         } catch (error) {
           showToast(humanizeApiError(error, "Не удалось освободить номер бланка"));
@@ -14095,14 +14171,13 @@ function bindContentEvents() {
       actionModalContent?.querySelector("[data-chairman-print-spoil-blank]")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
         const series = selectedBlankSeries;
-        const currentBlank = selectedPrintBlanks.get(series);
-        if (!currentBlank?.id) {
-          showToast(`Сначала нажмите «Найти номер» для серии ${series}`);
-          return;
-        }
-
         button.disabled = true;
         try {
+          const currentBlank = await resolveChairmanPrintBlank(series);
+          if (!currentBlank?.id) {
+            showToast(`Введите номер бланка или нажмите «Найти номер» для серии ${series}`);
+            return;
+          }
           if (currentBlank.status === "free") {
             await apiRequest(`/blanks/forms/${Number(currentBlank.id)}/spoil`, {
               method: "POST",
@@ -14123,6 +14198,7 @@ function bindContentEvents() {
           selectedPrintBlanks.delete(series);
           const numberInput = document.getElementById("chairmanPrintBlankNumber");
           if (numberInput) numberInput.value = "";
+          chairmanBlankNumberEdited = false;
           await refreshDocumentWorkflowState(client?.id, visit?.backendId || null);
           showToast(`Бланк ${currentBlank.full_number || ""} списан. Подставляем следующий номер`);
           await findChairmanBlank(series, null);
@@ -14308,6 +14384,9 @@ function bindContentEvents() {
             Boolean(certificateType) && isNumberedCertificatePrintType(certificateType);
           if (requiredBlankSeries) {
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
+            if (printKind === "lmk_title" && chairmanPrintBlankState.resolveBlank) {
+              selectedBlank = await chairmanPrintBlankState.resolveBlank(requiredBlankSeries);
+            }
             if (!autoNumberedDocument && autoNumberedCertificate && !selectedBlank?.id) {
               selectedBlank = await chairmanPrintBlankState.findBlank(requiredBlankSeries, null, {
                 silent: true,
