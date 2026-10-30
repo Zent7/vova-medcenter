@@ -4910,6 +4910,10 @@ body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
   margin-bottom: 9px;
 }
 
+.driver-print-classic__lookup > :is(#driverPickManualNumber, [data-chairman-manual-blank]) {
+  grid-column: 1 / -1;
+}
+
 .driver-print-classic__input {
   width: 100%;
   font-size: 16px;

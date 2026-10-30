@@ -75,6 +75,7 @@ class BlankBatchRead(BlankBatchBase):
 class BlankFormRead(BaseModel):
     id: int
     batch_id: int
+    batch_part_id: int | None = None
     center_id: int | None = None
     blank_type: str
     series: str | None = None

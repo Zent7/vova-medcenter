@@ -26,6 +26,12 @@ function createResolver({ number = "66483001", cachedBlank, pick } = {}) {
     selectedPrintBlanks,
     chairmanPrintBlankState: { blanks: selectedPrintBlanks, selectedSeries: "ЛМК" },
     chairmanBlankNumberEdited: true,
+    chairmanManualDrafts: new Set(),
+    batchState: { selectedSeries: "ЛМК", blankType: "lmk_medical_certificate", centerId: 3, batchParts: [], batchPartId: null },
+    async getChairmanBatchState() { return this.batchState; },
+    getDriverFlowBatchPartId: state => state.batchPartId || null,
+    applyDriverFlowBatchPart: (query, state) => { if (state.batchPartId) query.set("batch_part_id", String(state.batchPartId)); },
+    setChairmanBlankBusy() {},
     normalizeBlankSeries: value => String(value || "").trim(),
     resolveDriverPrintBlankType: () => "lmk_medical_certificate",
     resolveCenterIdForVisit: async () => 3,
@@ -37,6 +43,7 @@ function createResolver({ number = "66483001", cachedBlank, pick } = {}) {
     },
     formatApiDate: value => value,
   });
+  context.getChairmanBatchState = async () => context.batchState;
   vm.runInContext(sourceBetween("function getDriverPrintBlankParts(", "function normalizeDriverPrintBlank("), context);
   vm.runInContext(sourceBetween(
     "const resolveChairmanPrintBlank = async",
@@ -104,7 +111,7 @@ test("unavailable manual number fails without falling back to the old blank", as
   assert.equal(selectedPrintBlanks.has("ЛМК"), false);
 });
 
-for (const change of ["number", "series", "menu"]) {
+for (const change of ["number", "series", "menu", "pack"]) {
   test(`a pending exact lookup cannot overwrite a changed ${change}`, async () => {
     let finish;
     const pending = new Promise(resolve => { finish = resolve; });
@@ -115,6 +122,7 @@ for (const change of ["number", "series", "menu"]) {
     assert.equal(picks.length, 1);
     if (change === "number") input.value = "66483002";
     if (change === "series") context.chairmanPrintBlankState.selectedSeries = "ДРУГАЯ";
+    if (change === "pack") context.batchState.batchPartId = 22;
     if (change === "menu") context.chairmanPrintBlankState.blanks = new Map();
     finish({ id: 202, series: "ЛМК", full_number: "ЛМК66483001", status: "free" });
     await assert.rejects(resolution);
@@ -206,6 +214,9 @@ test("clearing the number and clicking Find selects the next free blank", async 
   };
   Object.assign(context, {
     selectedBlankSeries: "ЛМК",
+    chairmanNumberInput: input,
+    chairmanManualDrafts: new Set(),
+    certificateTemplateMenu: false,
     actionModalContent: {
       querySelector: () => input,
       querySelectorAll: () => [button],

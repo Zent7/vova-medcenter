@@ -26,5 +26,7 @@ test("GIMS print flow automatically loads the next free blank", () => {
   assert.match(printFlow, /series: lookupSeries \|\| ""/);
   assert.doesNotMatch(printFlow, /manualGimsBlank/);
   assert.doesNotMatch(printFlow, /\/blanks\/forms\/exact\?/);
-  assert.doesNotMatch(printFlow, /Проверить номер/);
+  assert.match(printFlow, /Проверить номер/);
+  assert.match(printFlow, /const canEnterBlankNumber = canReplaceBlank;/);
+  assert.match(printFlow, /pickManualDriverBlank\(flowState, number\)/);
 });

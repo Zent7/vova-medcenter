@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.v1.routes.auth import get_current_user
+from app.api.v1.routes.auth import get_current_user, get_optional_current_user
 from app.db.session import get_db
+from app.models.blank_form import BlankBatch, BlankForm
 from app.models.center import Center
 from app.models.user import User
 from app.schemas.blank_form import (
@@ -53,14 +54,15 @@ router = APIRouter()
 BLANK_CLEAR_ROLE_CODES = ("chairman",)
 
 
-def _current_user_id() -> int:
-    """Заглушка под будущую авторизацию.
+def _current_user_id(current_user: User | None) -> int:
+    return current_user.id if current_user is not None else 1
 
-    В проекте сейчас нет JWT-зависимости, документация уже использует user_id=1
-    (см. routes/doctor_exams.py), поэтому здесь следуем тому же подходу.
-    """
 
-    return 1
+def _check_center_access(current_user: User | None, center_id: int | None) -> None:
+    if current_user is None or current_user.sees_all_centers:
+        return
+    if center_id not in {center.id for center in current_user.work_centers}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Бланки другого медцентра недоступны")
 
 
 @router.get("/types", response_model=list[BlankTypeRead])
@@ -104,7 +106,9 @@ def get_batches(
 def create_batch_endpoint(
     payload: BlankBatchCreate,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankBatchRead:
+    _check_center_access(current_user, payload.center_id)
     try:
         batch = create_batch(
             db,
@@ -115,7 +119,7 @@ def create_batch_endpoint(
             received_at=payload.received_at,
             comment=payload.comment,
             center_id=payload.center_id,
-            user_id=_current_user_id(),
+            user_id=_current_user_id(current_user),
         )
     except BlankRangeOverlapError as exc:
         db.rollback()
@@ -139,11 +143,15 @@ def split_batch_endpoint(
     batch_id: int,
     payload: BlankBatchPartSplitRequest,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> list[BlankBatchPartRead]:
     """Разбивает партию на пачки: каждый оператор берёт свою."""
 
+    batch = db.get(BlankBatch, batch_id)
+    if batch is not None:
+        _check_center_access(current_user, batch.center_id)
     try:
-        split_batch_into_parts(db, batch_id=batch_id, pack_size=payload.pack_size, user_id=_current_user_id())
+        split_batch_into_parts(db, batch_id=batch_id, pack_size=payload.pack_size, user_id=_current_user_id(current_user))
     except BlankPartsExistError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -219,21 +227,23 @@ def get_next_form(
     strict_only: bool = Query(default=False),
     batch_part_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankFormRead:
     blank_type = resolve_blank_type_for_series(blank_type, series)
-    if auto_create and strict_only:
+    if auto_create and (strict_only or batch_part_id is not None):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Для строгого бланка автонумерация не применяется: номер берётся из заведённой партии",
         )
     if auto_create:
+        _check_center_access(current_user, center_id)
         try:
             form = create_auto_number_form(
                 db,
                 blank_type=blank_type,
                 center_id=center_id,
                 series=series or "",
-                user_id=_current_user_id(),
+                user_id=_current_user_id(current_user),
             )
         except BlankRangeInvalidError as exc:
             db.rollback()
@@ -273,8 +283,10 @@ def get_exact_form(
     series: str = Query(...),
     number: str = Query(...),
     strict_only: bool = Query(default=False),
+    batch_part_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> BlankFormRead:
+    blank_type = resolve_blank_type_for_series(blank_type, series)
     try:
         form = get_form_by_printed_number(
             db,
@@ -283,6 +295,7 @@ def get_exact_form(
             series=series,
             number_input=number,
             strict_only=strict_only,
+            batch_part_id=batch_part_id,
         )
     except BlankRangeInvalidError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -295,11 +308,18 @@ def get_exact_form(
 
 
 @router.post("/forms/{form_id}/manual-pick", response_model=BlankFormRead)
-def manual_pick_endpoint(form_id: int, db: Session = Depends(get_db)) -> BlankFormRead:
+def manual_pick_endpoint(
+    form_id: int,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+) -> BlankFormRead:
     """Фиксирует выбор номера, вписанного вручную, в истории."""
 
+    candidate = db.get(BlankForm, form_id)
+    if candidate is not None:
+        _check_center_access(current_user, candidate.center_id)
     try:
-        form = manual_pick_form(db, form_id=form_id, user_id=_current_user_id())
+        form = manual_pick_form(db, form_id=form_id, user_id=_current_user_id(current_user))
     except BlankNotFreeError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -317,10 +337,14 @@ def spoil_form_endpoint(
     form_id: int,
     payload: BlankFormSpoilRequest | None = None,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankFormRead:
+    candidate = db.get(BlankForm, form_id)
+    if candidate is not None:
+        _check_center_access(current_user, candidate.center_id)
     reason = payload.reason if payload is not None else None
     try:
-        form = spoil_form(db, form_id=form_id, reason=reason, user_id=_current_user_id())
+        form = spoil_form(db, form_id=form_id, reason=reason, user_id=_current_user_id(current_user))
     except BlankServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -334,9 +358,13 @@ def spoil_form_endpoint(
 def release_form_endpoint(
     form_id: int,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankFormRead:
+    candidate = db.get(BlankForm, form_id)
+    if candidate is not None:
+        _check_center_access(current_user, candidate.center_id)
     try:
-        form = release_form(db, form_id=form_id, user_id=_current_user_id())
+        form = release_form(db, form_id=form_id, user_id=_current_user_id(current_user))
     except BlankServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

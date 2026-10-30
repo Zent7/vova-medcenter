@@ -6465,6 +6465,7 @@ def generate_document(
     blank_form_id: int | None = None,
     print_variant: str | None = None,
     template_center_id: int | None = None,
+    user_id: int = 1,
 ) -> DocumentGenerateResponse:
     print_variant_value = str(print_variant or "").strip().lower()
     side_print_variants = {"driver_front", "driver_back", "tractor_front", "tractor_back"}
@@ -6504,7 +6505,7 @@ def generate_document(
         output_dir = output_dir / "contracts"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     output_file_name = f"{template_path.stem}_{client.id}_{timestamp}{template_path.suffix}"
     output_path = output_dir / output_file_name
 
@@ -6534,127 +6535,70 @@ def generate_document(
                     "Сначала оформите обращение в нужном медцентре."
                 )
 
-            if miac_xml_kind is not None:
-                candidate_form = db.get(BlankForm, blank_form_id) if blank_form_id is not None else None
-                if miac_xml_kind == "gims" and candidate_form is not None and candidate_form.status == BLANK_STATUS_FREE:
-                    blank_form = issue_specific_blank(
-                        db,
-                        form_id=candidate_form.id,
-                        blank_type=required_blank_type,
-                        client_id=client.id,
-                        center_id=encounter.center_id,
-                        encounter_id=encounter.id,
-                        user_id=1,
-                    )
-                else:
-                    blank_form = _resolve_miac_issued_blank(
-                        db,
-                        blank_type=required_blank_type,
-                        client_id=client.id,
-                        encounter_id=encounter.id,
-                        center_id=encounter.center_id,
-                        blank_form_id=blank_form_id,
-                    )
-            else:
-                # Номер, который оператор нашёл в окне печати, важнее ранее
-                # выданного на это обращение: иначе после первой печати «Найти
-                # номер» показывает следующий, а печатается снова первый.
-                chosen_form = db.get(BlankForm, blank_form_id) if blank_form_id is not None else None
-                if chosen_form is not None and chosen_form.status == BLANK_STATUS_FREE:
-                    blank_form = issue_specific_blank(
-                        db,
-                        form_id=chosen_form.id,
-                        blank_type=required_blank_type,
-                        client_id=client.id,
-                        center_id=encounter.center_id,
-                        encounter_id=encounter.id,
-                        user_id=1,
-                    )
-                else:
-                    blank_form = reuse_blank_for_existing_document(
-                        db,
-                        blank_type=required_blank_type,
-                        client_id=client.id,
-                        encounter_id=encounter.id,
-                        template_id=template.id,
-                    )
-                    if blank_form is None:
-                        if blank_form_id is not None:
-                            blank_form = issue_specific_blank(
-                                db,
-                                form_id=blank_form_id,
-                                blank_type=required_blank_type,
-                                client_id=client.id,
-                                center_id=encounter.center_id,
-                                encounter_id=encounter.id,
-                                user_id=1,
-                            )
-                        else:
-                            blank_form = issue_next_blank(
-                                db,
-                                blank_type=required_blank_type,
-                                client_id=client.id,
-                                center_id=encounter.center_id,
-                                encounter_id=encounter.id,
-                                user_id=1,
-                            )
-
-        elif blank_form_id is not None and not is_side_print:
-            if encounter is None or encounter.center_id is None:
-                raise ValueError(
-                    "Р”Р»СЏ РїРµС‡Р°С‚Рё РЅР° РЅРѕРјРµСЂРЅРѕРј Р±Р»Р°РЅРєРµ С‚СЂРµР±СѓРµС‚СЃСЏ encounter_id Рё center_id. "
-                    "РЎРЅР°С‡Р°Р»Р° РѕС„РѕСЂРјРёС‚Рµ РѕР±СЂР°С‰РµРЅРёРµ РІ РЅСѓР¶РЅРѕРј РјРµРґС†РµРЅС‚СЂРµ."
+            if miac_xml_kind is not None and not (miac_xml_kind == "gims" and blank_form_id is not None):
+                blank_form = _resolve_miac_issued_blank(
+                    db,
+                    blank_type=required_blank_type,
+                    client_id=client.id,
+                    encounter_id=encounter.id,
+                    center_id=encounter.center_id,
+                    blank_form_id=blank_form_id,
                 )
-            candidate_form = db.get(BlankForm, blank_form_id)
-            if candidate_form is None:
-                raise ValueError("Р‘Р»Р°РЅРє РЅРµ РЅР°Р№РґРµРЅ")
-            blank_type = template.blank_type or candidate_form.blank_type or BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE
-            if candidate_form.status == BLANK_STATUS_FREE:
+            elif blank_form_id is not None:
+                # Явный выбор проверяется под блокировкой. Занятый чужой номер
+                # нельзя молча заменить прежним номером этого обращения.
                 blank_form = issue_specific_blank(
                     db,
                     form_id=blank_form_id,
-                    blank_type=blank_type,
+                    blank_type=required_blank_type,
                     client_id=client.id,
                     center_id=encounter.center_id,
                     encounter_id=encounter.id,
-                    user_id=1,
+                    user_id=user_id,
+                    allow_reuse=True,
                 )
-            elif (
-                candidate_form.status == BLANK_STATUS_ISSUED
-                and candidate_form.client_id == client.id
-                and candidate_form.encounter_id == encounter.id
-            ):
-                blank_form = candidate_form
             else:
-                raise ValueError("Р’С‹Р±СЂР°РЅРЅС‹Р№ Р±Р»Р°РЅРє СѓР¶Рµ РЅРµРґРѕСЃС‚СѓРїРµРЅ РґР»СЏ СЌС‚РѕР№ РїРµС‡Р°С‚Рё")
+                blank_form = reuse_blank_for_existing_document(
+                    db,
+                    blank_type=required_blank_type,
+                    client_id=client.id,
+                    encounter_id=encounter.id,
+                    template_id=template.id,
+                )
+                if blank_form is None:
+                    blank_form = issue_next_blank(
+                        db,
+                        blank_type=required_blank_type,
+                        client_id=client.id,
+                        center_id=encounter.center_id,
+                        encounter_id=encounter.id,
+                        user_id=user_id,
+                    )
 
-        if is_side_print and blank_form_id is not None:
+        elif blank_form_id is not None:
             if encounter is None or encounter.center_id is None:
                 raise ValueError(
                     "Для печати на номерном бланке требуется encounter_id и center_id. "
                     "Сначала оформите обращение в нужном медцентре."
                 )
+            # Обе стороны одного бланка повторно используют выданный ему номер.
+            # Проверки центра, типа, пациента и обращения те же, что при выдаче.
             candidate_form = db.get(BlankForm, blank_form_id)
             if candidate_form is None:
                 raise ValueError("Бланк не найден")
-            if candidate_form.status == BLANK_STATUS_FREE:
-                blank_form = issue_specific_blank(
-                    db,
-                    form_id=blank_form_id,
-                    blank_type=template.blank_type or BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
-                    client_id=client.id,
-                    center_id=encounter.center_id,
-                    encounter_id=encounter.id,
-                    user_id=1,
-                )
-            elif (
-                candidate_form.status == BLANK_STATUS_ISSUED
-                and candidate_form.client_id == client.id
-                and candidate_form.encounter_id == encounter.id
-            ):
-                blank_form = candidate_form
-            else:
-                raise ValueError("Выбранный бланк уже недоступен для этой печати")
+            blank_type = template.blank_type or (
+                BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE if is_side_print else candidate_form.blank_type
+            )
+            blank_form = issue_specific_blank(
+                db,
+                form_id=blank_form_id,
+                blank_type=blank_type,
+                client_id=client.id,
+                center_id=encounter.center_id,
+                encounter_id=encounter.id,
+                user_id=user_id,
+                allow_reuse=True,
+            )
 
         context = build_document_context(
             client,
@@ -6769,7 +6713,7 @@ def generate_document(
             series=document_series,
             file_name=output_file_name,
             file_path=str(output_path.resolve()),
-            generated_by_user_id=1,
+            generated_by_user_id=user_id,
             blank_form_id=blank_form.id if blank_form is not None else None,
             blank_number_snapshot=blank_form.full_number if blank_form is not None else None,
         )
@@ -6794,7 +6738,7 @@ def generate_document(
                     series=generated_document.series,
                     number=generated_document.document_number,
                     result_text=context.get("Diagnosis") or context.get("Conclusion") or "",
-                    created_by_user_id=1,
+                    created_by_user_id=user_id,
                 )
             )
 
@@ -6811,7 +6755,7 @@ def generate_document(
             entity_type="document_template",
             entity_id=template.id,
             action="generate",
-            user_id=1,
+            user_id=user_id,
             center_id=encounter.center_id if encounter else None,
             payload_json={
                 "client_id": client.id,

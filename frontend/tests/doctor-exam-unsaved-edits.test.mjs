@@ -177,6 +177,6 @@ test("флаг несохранённого ввода ставит только
 });
 
 test("index.html грузит app.js с токеном этой правки", () => {
-  assert.match(indexHtml, /app\.js\?v=20261024-doctor-unsaved-edits-v1/);
+  assert.match(indexHtml, /app\.js\?v=[\w-]*operator-blank-packs-v1/);
   assert.match(indexHtml, /doctor-exam-modal\.js\?v=20261024-doctor-unsaved-edits-v1/);
 });

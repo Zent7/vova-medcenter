@@ -22,23 +22,33 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "blank_batch_parts",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("batch_id", sa.Integer(), sa.ForeignKey("blank_batches.id"), nullable=False),
-        sa.Column("part_no", sa.Integer(), nullable=False),
-        sa.Column("number_from", sa.Integer(), nullable=False),
-        sa.Column("number_to", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.UniqueConstraint("batch_id", "part_no", name="uq_blank_batch_parts_batch_no"),
-    )
-    op.create_index("ix_blank_batch_parts_batch_id", "blank_batch_parts", ["batch_id"])
-    op.add_column(
-        "blank_forms",
-        sa.Column("batch_part_id", sa.Integer(), sa.ForeignKey("blank_batch_parts.id"), nullable=True),
-    )
-    op.create_index("ix_blank_forms_batch_part_id", "blank_forms", ["batch_part_id"])
+    inspector = sa.inspect(op.get_bind())
+    # The initial migration creates the current model metadata. On a fresh
+    # database these objects already exist; an older database still needs them.
+    if not inspector.has_table("blank_batch_parts"):
+        op.create_table(
+            "blank_batch_parts",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("batch_id", sa.Integer(), sa.ForeignKey("blank_batches.id"), nullable=False),
+            sa.Column("part_no", sa.Integer(), nullable=False),
+            sa.Column("number_from", sa.Integer(), nullable=False),
+            sa.Column("number_to", sa.Integer(), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+            sa.UniqueConstraint("batch_id", "part_no", name="uq_blank_batch_parts_batch_no"),
+        )
+    part_indexes = {index["name"] for index in inspector.get_indexes("blank_batch_parts")}
+    if "ix_blank_batch_parts_batch_id" not in part_indexes:
+        op.create_index("ix_blank_batch_parts_batch_id", "blank_batch_parts", ["batch_id"])
+    form_columns = {column["name"] for column in inspector.get_columns("blank_forms")}
+    if "batch_part_id" not in form_columns:
+        op.add_column(
+            "blank_forms",
+            sa.Column("batch_part_id", sa.Integer(), sa.ForeignKey("blank_batch_parts.id"), nullable=True),
+        )
+    form_indexes = {index["name"] for index in inspector.get_indexes("blank_forms")}
+    if "ix_blank_forms_batch_part_id" not in form_indexes:
+        op.create_index("ix_blank_forms_batch_part_id", "blank_forms", ["batch_part_id"])
 
 
 def downgrade() -> None:

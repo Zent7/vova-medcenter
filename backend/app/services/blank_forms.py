@@ -416,7 +416,11 @@ def split_batch_into_parts(
     Разбить партию можно один раз: иначе пачки пересекутся с уже выданными номерами.
     """
 
-    batch = db.get(BlankBatch, batch_id)
+    # Два оператора могут нажать кнопку одновременно. Блокировка партии
+    # сериализует проверку «ещё не разбита» и создание всех её пачек.
+    batch = db.execute(
+        select(BlankBatch).where(BlankBatch.id == batch_id).with_for_update()
+    ).scalar_one_or_none()
     if batch is None or batch.deleted_at is not None:
         raise BlankServiceError("Партия не найдена")
     if pack_size < 1:
@@ -526,11 +530,19 @@ def record_manual_pick(db: Session, *, form: BlankForm, user_id: int | None) -> 
 def manual_pick_form(db: Session, *, form_id: int, user_id: int | None) -> BlankForm:
     """Оператор вписал номер вручную: бланк берём только свободный из заведённой партии."""
 
-    form = db.get(BlankForm, form_id)
+    form = db.execute(
+        select(BlankForm)
+        .where(BlankForm.id == form_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
     if form is None:
         raise BlankServiceError("Бланк не найден")
     if form.status != BLANK_STATUS_FREE:
         raise BlankNotFreeError(f"Бланк {form.full_number} уже не свободен")
+    batch = db.get(BlankBatch, form.batch_id)
+    if batch is None or batch.deleted_at is not None or batch.comment == AUTO_NUMBER_BATCH_COMMENT:
+        raise BlankServiceError("Ручной номер должен принадлежать заведённой партии бланков")
     record_manual_pick(db, form=form, user_id=user_id)
     return form
 
@@ -769,6 +781,8 @@ def _skip_used_numbers(
     водительской и тракторной справок. Освобождённый номер остаётся свободным
     и виден в разделе «Бланки», но сам не предлагается. Считаем по партии, а не
     по серии: партию с меньшими номерами, заведённую позже, пропускать нельзя.
+    В разбитой партии у каждой пачки свой порядок: выдача 501 из второй
+    пачки не должна пропускать свободные 1–500 первой пачки.
     Возвращает None, если ограничивать нечего.
     """
 
@@ -777,22 +791,23 @@ def _skip_used_numbers(
         AuditLog.action == "release",
     )
     query = (
-        select(BlankForm.batch_id, func.max(BlankForm.number_value))
+        select(BlankForm.batch_id, BlankForm.batch_part_id, func.max(BlankForm.number_value))
         .where(
             BlankForm.blank_type == blank_type,
             or_(BlankForm.status != BLANK_STATUS_FREE, BlankForm.id.in_(released_ids)),
         )
-        .group_by(BlankForm.batch_id)
+        .group_by(BlankForm.batch_id, BlankForm.batch_part_id)
     )
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
 
     conditions = []
-    for batch_id, used_up_to in db.execute(query).all():
+    for batch_id, part_id, used_up_to in db.execute(query).all():
         if used_up_to is None:
             continue
         in_batch = BlankForm.batch_id.is_(None) if batch_id is None else BlankForm.batch_id == batch_id
-        conditions.append(and_(in_batch, BlankForm.number_value <= used_up_to))
+        in_part = BlankForm.batch_part_id.is_(None) if part_id is None else BlankForm.batch_part_id == part_id
+        conditions.append(and_(in_batch, in_part, BlankForm.number_value <= used_up_to))
     return not_(or_(*conditions)) if conditions else None
 
 
@@ -838,24 +853,29 @@ def get_form_by_printed_number(
     series: str,
     number_input: str | int,
     strict_only: bool = False,
+    batch_part_id: int | None = None,
 ) -> BlankForm | None:
     """Находит конкретный типографский бланк без выбора следующего номера.
 
     Для строгого бланка (ВУ) вписанный вручную номер должен быть из заведённой партии.
     """
 
-    series_clean = (series or "").strip()
-    if not series_clean:
+    lookup_series = normalize_lookup_series(blank_type, series)
+    series_clean = (lookup_series or "").strip()
+    if not series_clean and batch_part_id is None and blank_type != BLANK_TYPE_LMK_MEDICAL_CERTIFICATE:
         raise BlankRangeInvalidError("Укажите серию бланка")
 
     number_value = parse_number_input(number_input)
     query = select(BlankForm).where(
         BlankForm.blank_type == blank_type,
-        BlankForm.series == series_clean,
         BlankForm.number_value == number_value,
     )
+    if lookup_series is not None:
+        query = query.where(BlankForm.series == (series_clean or None))
     if strict_only:
         query = query.where(_not_auto_numbered(), _not_certificate_series())
+    if batch_part_id is not None:
+        query = query.where(BlankForm.batch_part_id == batch_part_id)
     if center_id is not None:
         query = query.where(BlankForm.center_id == center_id)
     return db.execute(query.order_by(BlankForm.id.asc()).limit(1)).scalar_one_or_none()
@@ -1276,6 +1296,8 @@ def issue_next_blank(
         payload_json={
             "blank_type": form.blank_type,
             "full_number": form.full_number,
+            "batch_id": form.batch_id,
+            "batch_part_id": form.batch_part_id,
             "client_id": client_id,
             "encounter_id": encounter_id,
             "generated_document_id": generated_document_id,
@@ -1296,6 +1318,7 @@ def issue_specific_blank(
     generated_document_id: int | None = None,
     client_document_id: int | None = None,
     user_id: int | None = None,
+    allow_reuse: bool = False,
 ) -> BlankForm:
     if center_id is None:
         raise BlankIssuanceContextError(
@@ -1306,13 +1329,31 @@ def issue_specific_blank(
             "Нельзя выдать номерной бланк без encounter_id. Сформируйте документ по уже оформленному обращению."
         )
 
-    form = db.get(BlankForm, form_id)
+    # /forms/next и /forms/exact только показывают номер. Пока оператор
+    # заполнял окно, другой мог его выдать. Перечитываем строку под блокировкой,
+    # включая уже загруженный в identity map экземпляр из document_generator.
+    form = db.execute(
+        select(BlankForm)
+        .where(BlankForm.id == form_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
     if form is None:
         raise BlankServiceError("Бланк не найден")
     if form.blank_type != blank_type:
         raise BlankServiceError("Выбранный бланк не соответствует типу документа")
     if form.center_id != center_id:
         raise BlankServiceError("Выбранный бланк относится к другому медцентру")
+    batch = db.get(BlankBatch, form.batch_id)
+    if batch is None or batch.deleted_at is not None:
+        raise BlankServiceError("Партия выбранного бланка недоступна")
+    if (
+        allow_reuse
+        and form.status == BLANK_STATUS_ISSUED
+        and form.client_id == client_id
+        and form.encounter_id == encounter_id
+    ):
+        return form
     if form.status != BLANK_STATUS_FREE:
         raise BlankServiceError("Выбранный бланк уже занят. Найдите следующий свободный номер.")
 
@@ -1335,6 +1376,8 @@ def issue_specific_blank(
         payload_json={
             "blank_type": form.blank_type,
             "full_number": form.full_number,
+            "batch_id": form.batch_id,
+            "batch_part_id": form.batch_part_id,
             "client_id": client_id,
             "encounter_id": encounter_id,
             "generated_document_id": generated_document_id,
@@ -1489,6 +1532,7 @@ def enrich_form_for_read(
     payload = {
         "id": form.id,
         "batch_id": form.batch_id,
+        "batch_part_id": form.batch_part_id,
         "center_id": form.center_id,
         "blank_type": form.blank_type,
         "series": form.series,

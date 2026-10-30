@@ -10,11 +10,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.v1.routes.auth import get_current_user
+from app.api.v1.routes.auth import get_current_user, get_optional_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.center import Center
 from app.models.document_template import DocumentTemplate
+from app.models.encounter import Encounter
 from app.models.generated_document import GeneratedDocument
 from app.models.user import User
 from app.schemas.document_generation import (
@@ -328,8 +329,21 @@ def reset_document_template(
     return _template_response(template, center_id)
 
 
+def _check_print_center_access(db: Session, current_user: User | None, encounter_id: int | None) -> None:
+    if current_user is None or current_user.sees_all_centers or encounter_id is None:
+        return
+    encounter = db.get(Encounter, encounter_id)
+    if encounter is not None and encounter.center_id not in {center.id for center in current_user.work_centers}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Печать в другом медцентре недоступна")
+
+
 @router.post("/generate", response_model=DocumentGenerateResponse)
-def generate_document_file(payload: DocumentGenerateRequest, db: Session = Depends(get_db)) -> DocumentGenerateResponse:
+def generate_document_file(
+    payload: DocumentGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+) -> DocumentGenerateResponse:
+    _check_print_center_access(db, current_user, payload.encounter_id)
     try:
         result = generate_document(
             db,
@@ -340,6 +354,7 @@ def generate_document_file(payload: DocumentGenerateRequest, db: Session = Depen
             blank_form_id=payload.blank_form_id,
             print_variant=payload.print_variant,
             template_center_id=payload.template_center_id,
+            user_id=current_user.id if current_user is not None else 1,
         )
         db.commit()
         return result
@@ -355,7 +370,12 @@ def generate_document_file(payload: DocumentGenerateRequest, db: Session = Depen
 
 
 @router.post("/print", response_model=DocumentPrintResponse)
-def print_document_file(payload: DocumentGenerateRequest, db: Session = Depends(get_db)) -> DocumentPrintResponse:
+def print_document_file(
+    payload: DocumentGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+) -> DocumentPrintResponse:
+    _check_print_center_access(db, current_user, payload.encounter_id)
     try:
         generated = generate_document(
             db,
@@ -366,6 +386,7 @@ def print_document_file(payload: DocumentGenerateRequest, db: Session = Depends(
             blank_form_id=payload.blank_form_id,
             print_variant=payload.print_variant,
             template_center_id=payload.template_center_id,
+            user_id=current_user.id if current_user is not None else 1,
         )
         db.commit()
         return DocumentPrintResponse(

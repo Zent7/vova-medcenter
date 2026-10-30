@@ -32,6 +32,7 @@ const appState = {
   dashboardPage: 1,
   auth: {
     accessToken: "",
+    userId: null,
     userName: "",
     roleCode: "",
     roleName: "",
@@ -1110,6 +1111,7 @@ function loadPersistedDemoState() {
 function createEmptyAuth() {
   return {
     accessToken: "",
+    userId: null,
     userName: "",
     roleCode: "",
     roleName: "",
@@ -3357,6 +3359,7 @@ async function loginDemoStaff(login, password) {
   const centerBeforeLogin = getWorkspaceCenterName();
   appState.auth = {
     accessToken: response.access_token || "",
+    userId: Number(response.user_id) || null,
     userName: response.user_name || "",
     roleCode: response.role_code || "",
     roleName: response.role_name || "",
@@ -10941,55 +10944,94 @@ function renderDriverFrontCheckPrompt() {
   `;
 }
 
-// Пачка партии, которую взял оператор. Если он не выбирал, берём первую пачку с остатком.
+// Выбор пачки хранится для сотрудника, медцентра, типа и серии бланка.
+function getBlankBatchPartStorageKey(flowState) {
+  const userId = appState.auth?.userId;
+  if (!userId) return "";
+  const series = resolveNumberedCertificateLookupSeries(
+    flowState.selectedSeries, flowState.selectedCertificateType, flowState.seriesOptions,
+  ) || flowState.selectedSeries;
+  return `medcenters:blank-part:${JSON.stringify([userId, Number(flowState.centerId), flowState.blankType, getBlankSeriesMatchKey(series)])}`;
+}
+
+function storeBlankBatchPart(flowState) {
+  const key = getBlankBatchPartStorageKey(flowState);
+  if (!key) return;
+  try {
+    if (flowState.batchPartId) window.localStorage?.setItem(key, String(flowState.batchPartId));
+    else window.localStorage?.removeItem(key);
+  } catch (error) {
+    console.warn("Не удалось запомнить пачку бланков", error);
+  }
+}
+
+// Исчерпанная пачка остаётся выбранной: переход в чужую пачку делает оператор.
 function getDriverFlowBatchPartId(flowState) {
   const parts = Array.isArray(flowState.batchParts) ? flowState.batchParts : [];
   const chosen = parts.find((part) => Number(part.id) === Number(flowState.batchPartId));
-  if (chosen) return Number(chosen.id);
-  return Number(parts.find((part) => Number(part.free_count) > 0)?.id) || null;
+  return chosen ? Number(chosen.id) : null;
 }
 
 function applyDriverFlowBatchPart(query, flowState) {
+  if (flowState.batchPartsLoading) throw new Error("Дождитесь загрузки пачек бланков");
+  if (flowState.batchPartsError) throw new Error(flowState.batchPartsError);
   const partId = getDriverFlowBatchPartId(flowState);
-  if (partId) query.set("batch_part_id", String(partId));
+  if (flowState.batchParts?.length && !partId) throw new Error("Выберите свою пачку бланков");
+  if (partId) {
+    query.set("batch_part_id", String(partId));
+    query.delete("auto_create");
+  }
 }
 
 // Пачки серии: партии того же типа и медцентра, которые разбиты на пачки.
 async function loadDriverFlowBatchParts(flowState) {
+  const loadVersion = (flowState.batchPartsLoadVersion || 0) + 1;
+  flowState.batchPartsLoadVersion = loadVersion;
   flowState.batchParts = [];
   flowState.batchPartId = null;
-  if (!flowState.selectedSeries || !flowState.blankType) return;
+  flowState.batchPartsError = "";
+  flowState.batchPartsLoading = true;
   try {
-    const query = new URLSearchParams({
-      blank_type: flowState.blankType,
-      center_id: String(flowState.centerId),
-    });
+    if (!flowState.selectedSeries || !flowState.blankType) return;
+    const query = new URLSearchParams({ blank_type: flowState.blankType, center_id: String(flowState.centerId) });
+    const lookupSeries = resolveNumberedCertificateLookupSeries(
+      flowState.selectedSeries, flowState.selectedCertificateType, flowState.seriesOptions,
+    ) || flowState.selectedSeries;
+    const seriesKey = getBlankSeriesMatchKey(lookupSeries);
+    const storageKey = getBlankBatchPartStorageKey(flowState);
     const batches = await apiRequest(`/blanks/batches?${query.toString()}`);
-    const seriesKey = getBlankSeriesMatchKey(flowState.selectedSeries);
+    if (flowState.batchPartsLoadVersion !== loadVersion) return;
     flowState.batchParts = (Array.isArray(batches) ? batches : [])
-      .filter((batch) => getBlankSeriesMatchKey(batch.series) === seriesKey)
-      .flatMap((batch) =>
-        (batch.parts || []).map((part) => ({
-          ...part,
-          series: normalizeBlankSeries(batch.series),
-          width: batch.number_width || 6,
-        })),
-      );
+      .filter((batch) =>
+        (flowState.blankType === BLANK_TYPE_LMK_MEDICAL_CERTIFICATE && ["лмк", "lmk"].includes(seriesKey)) ||
+        getBlankSeriesMatchKey(batch.series) === seriesKey,
+      )
+      .flatMap((batch) => (batch.parts || []).map((part) => ({
+        ...part, batchId: batch.id, series: normalizeBlankSeries(batch.series), width: batch.number_width || 6,
+      })));
+    try {
+      flowState.batchPartId = Number(storageKey && window.localStorage?.getItem(storageKey)) || null;
+    } catch (error) {
+      console.warn("Не удалось прочитать выбор пачки", error);
+    }
   } catch (error) {
-    console.warn("Не удалось загрузить пачки бланков", error);
+    if (flowState.batchPartsLoadVersion !== loadVersion) return;
+    flowState.batchPartsError = "Не удалось загрузить пачки бланков. Откройте окно печати заново.";
+    console.warn(flowState.batchPartsError, error);
+  } finally {
+    if (flowState.batchPartsLoadVersion === loadVersion) flowState.batchPartsLoading = false;
   }
 }
 
 function renderDriverFlowBatchPartOptions(flowState) {
   const selectedId = getDriverFlowBatchPartId(flowState);
-  return flowState.batchParts
+  return `<option value="" ${!selectedId ? "selected" : ""}>Выберите свою пачку</option>` + flowState.batchParts
     .map((part) => {
       const width = part.width || 6;
       const range = `${String(part.number_from).padStart(width, "0")}–${String(part.number_to).padStart(width, "0")}`;
-      const label = `Пачка ${part.part_no}: ${part.series}${range} (своб. ${Number(part.free_count || 0)})`;
+      const label = `Партия ${part.batchId}, пачка ${part.part_no}: ${part.series} ${range} (своб. ${Number(part.free_count || 0)})`;
       return `<option value="${Number(part.id)}" ${Number(part.id) === selectedId ? "selected" : ""}>${escapeHtml(label)}</option>`;
-    })
-    .join("");
+    }).join("");
 }
 
 // Номер, вписанный вручную: бланк берём только свободный из заведённой партии, выбор идёт в историю.
@@ -11007,6 +11049,7 @@ async function pickManualDriverBlank(flowState, number) {
     number,
   });
   if (isStrictDriverBlankSeries(lookupSeries, flowState.blankType)) query.set("strict_only", "true");
+  applyDriverFlowBatchPart(query, flowState);
   const form = await apiRequest(`/blanks/forms/exact?${query.toString()}`);
   return normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/${Number(form.id)}/manual-pick`, { method: "POST" }));
 }
@@ -11418,7 +11461,7 @@ async function openDriverPrintFlow(options = {}) {
 
   const renderFlow = () => {
     const blankParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
-    const findButtonDisabled = flowState.loading;
+    const findButtonDisabled = flowState.loading || flowState.batchPartsLoading;
     const visibleSeries = flowState.legacyCertificateFlow
       ? getNumberedCertificateDisplaySeries(flowState.selectedSeries, flowState.selectedCertificateType, client)
       : flowState.selectedSeries;
@@ -11428,11 +11471,10 @@ async function openDriverPrintFlow(options = {}) {
     const visibleCertificateType = flowState.selectedCertificateType || getDriverPrintCertificateType(flowState.selectedSeries);
     const certificatePrintDisabled = flowState.loading || !flowState.currentBlank?.id || !visibleCertificateType;
     const canReplaceBlank =
-      isOrdinaryDriverFlow ||
+      isOrdinaryDriverFlow || flowState.batchParts.length > 0 ||
       ["gims", "071", "lmk"].includes(String(visibleCertificateType || "").toLowerCase());
     const blankManagementDisabled = flowState.loading || !flowState.currentBlank?.id;
-    // Бланк ГИМС подбирается сам из заведённой партии: номер вручную там не вписывают.
-    const canEnterBlankNumber = canReplaceBlank && String(visibleCertificateType || "").toLowerCase() !== "gims";
+    const canEnterBlankNumber = canReplaceBlank;
 
     openActionModal(
       "Печать результатов:",
@@ -11444,20 +11486,20 @@ async function openDriverPrintFlow(options = {}) {
           <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
           <div class="driver-print-classic__lookup">
             <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" readonly />
-            <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(blankParts.number)}" ${canEnterBlankNumber ? 'placeholder="вручную"' : "readonly"} />
+            <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(flowState.manualNumberDraft ?? blankParts.number)}" ${canEnterBlankNumber && !flowState.loading ? 'placeholder="вручную"' : "readonly"} />
             <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
             ${
               canEnterBlankNumber
-                ? `<button type="button" class="driver-print-classic__button" id="driverPickManualNumber" ${findButtonDisabled ? "disabled" : ""} title="Вписать номер бланка вручную: он должен быть свободным из заведённой партии">Взять номер</button>`
+                ? `<button type="button" class="driver-print-classic__button" id="driverPickManualNumber" ${findButtonDisabled ? "disabled" : ""} title="Вписать номер бланка вручную: он должен быть свободным из заведённой партии">Проверить номер</button>`
                 : ""
             }
           </div>
 
           ${
-            canReplaceBlank && flowState.batchParts.length
+            flowState.batchParts.length
               ? `
                 <div class="driver-print-classic__caption">Пачка оператора:</div>
-                <select id="driverBatchPart" class="driver-print-classic__input">
+                <select id="driverBatchPart" class="driver-print-classic__input" ${findButtonDisabled ? "disabled" : ""}>
                   ${renderDriverFlowBatchPartOptions(flowState)}
                 </select>
               `
@@ -11494,7 +11536,7 @@ async function openDriverPrintFlow(options = {}) {
               `
           }
 
-          ${flowState.error ? `<div class="driver-print-classic__error">${escapeHtml(flowState.error)}</div>` : ""}
+          ${flowState.error || flowState.batchPartsError ? `<div class="driver-print-classic__error">${escapeHtml(flowState.error || flowState.batchPartsError)}</div>` : ""}
 
           <div class="driver-print-classic__actions driver-print-classic__actions--driver">
             ${
@@ -11514,6 +11556,7 @@ async function openDriverPrintFlow(options = {}) {
 
     const seriesInput = document.getElementById("driverBlankSeries");
     const selectSeries = (value) => {
+      if (flowState.loading) return;
       const normalizedSeries = normalizeBlankSeries(value);
       const nextCertificateType = getDriverPrintCertificateType(normalizedSeries);
       // Окно, открытое под одну справку (ГИМС, 071у), остаётся ею и для серии, чьё
@@ -11535,8 +11578,10 @@ async function openDriverPrintFlow(options = {}) {
       setStoredDriverPrintSeries(flowState.selectedSeries);
       flowState.currentBlank = null;
       flowState.error = "";
+      flowState.manualNumberDraft = null;
+      const loadingParts = loadDriverFlowBatchParts(flowState);
       renderFlow();
-      loadDriverFlowBatchParts(flowState).then(renderFlow);
+      loadingParts.then(renderFlow);
     };
     const openSeriesPicker = (event) => {
       event.preventDefault();
@@ -11564,6 +11609,7 @@ async function openDriverPrintFlow(options = {}) {
         flowState.seriesOptions,
       );
       setStoredDriverPrintSeries(lookupSeries || flowState.selectedSeries);
+      flowState.manualNumberDraft = null;
       renderFlow();
       try {
         const requestedSeries = lookupSeries || flowState.selectedSeries;
@@ -11574,7 +11620,7 @@ async function openDriverPrintFlow(options = {}) {
           });
           query.set("series", lookupSeries || "");
           applyDriverFlowBatchPart(query, flowState);
-          if (autoCreate) {
+          if (autoCreate && !getDriverFlowBatchPartId(flowState)) {
             query.set("auto_create", "true");
           } else if (isStrictDriverBlankSeries(requestedSeries, flowState.blankType)) {
             query.set("strict_only", "true");
@@ -11587,6 +11633,7 @@ async function openDriverPrintFlow(options = {}) {
         try {
           flowState.currentBlank = await fetchNextBlank(shouldAutoCreateImmediately);
         } catch (error) {
+          if (flowState.batchParts?.length) throw error;
           if (!canAutoCreateChairmanBlankSeries(requestedSeries)) {
             throw error;
           }
@@ -11621,6 +11668,8 @@ async function openDriverPrintFlow(options = {}) {
 
     document.getElementById("driverBatchPart")?.addEventListener("change", (event) => {
       flowState.batchPartId = Number(event.target.value) || null;
+      storeBlankBatchPart(flowState);
+      flowState.manualNumberDraft = null;
       flowState.currentBlank = null;
       flowState.error = "";
       renderFlow();
@@ -11628,6 +11677,7 @@ async function openDriverPrintFlow(options = {}) {
 
     // Номер, вписанный вручную, берём только свободный из заведённой партии; выбор идёт в историю.
     const pickManualBlankNumber = async () => {
+      if (flowState.loading) return;
       const number = String(document.getElementById("driverBlankNumber")?.value || "").trim();
       if (!number) {
         flowState.error = "Введите номер бланка";
@@ -11640,6 +11690,7 @@ async function openDriverPrintFlow(options = {}) {
       renderFlow();
       try {
         flowState.currentBlank = await pickManualDriverBlank(flowState, number);
+        flowState.manualNumberDraft = null;
         const nextParts = getDriverPrintBlankParts(flowState.currentBlank, flowState.selectedSeries);
         showToast(`Выбран бланк ${nextParts.fullNumber || nextParts.number}, номер записан в историю`);
       } catch (error) {
@@ -11651,8 +11702,13 @@ async function openDriverPrintFlow(options = {}) {
       }
     };
     document.getElementById("driverPickManualNumber")?.addEventListener("click", pickManualBlankNumber);
+    document.getElementById("driverBlankNumber")?.addEventListener("input", (event) => {
+      flowState.manualNumberDraft = event.target.value;
+      flowState.currentBlank = null;
+      document.querySelectorAll("[data-driver-print-variant], [data-driver-print-selected-certificate], #driverReleaseBlank, #driverReplaceSpoiledBlank").forEach((button) => { button.disabled = true; });
+    });
     document.getElementById("driverBlankNumber")?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") pickManualBlankNumber();
+      if (event.key === "Enter" && canEnterBlankNumber) pickManualBlankNumber();
     });
 
     document.getElementById("driverReleaseBlank")?.addEventListener("click", async () => {
@@ -11717,7 +11773,7 @@ async function openDriverPrintFlow(options = {}) {
           series: lookupSeries || "",
         });
         applyDriverFlowBatchPart(query, flowState);
-        if (autoCreate) {
+        if (autoCreate && !getDriverFlowBatchPartId(flowState)) {
           query.set("auto_create", "true");
         } else if (isStrictDriverBlankSeries(requestedSeries, flowState.blankType)) {
           query.set("strict_only", "true");
@@ -13832,6 +13888,9 @@ function bindContentEvents() {
         "";
       const centerName = getCenterNameForContext(visit?.centerId || client?.centerId, visit, client);
       const selectedPrintBlanks = new Map();
+      const chairmanBatchStates = new Map();
+      const chairmanManualDrafts = new Set();
+      let refreshChairmanBatchControls = () => {};
       const certificatePrintGroup = CHAIRMAN_CERTIFICATE_PRINT_GROUPS.get(getChairmanFormConfigForVisit(visit).type) || null;
       const certificateTemplateMenu = Boolean(certificatePrintGroup);
       let selectedCertificateType = certificatePrintGroup?.currentType || "";
@@ -13841,6 +13900,8 @@ function bindContentEvents() {
       const getSelectedCertificateSeries = () => selectedCertificateSeries;
       chairmanPrintBlankState = {
         blanks: selectedPrintBlanks,
+        manualDrafts: chairmanManualDrafts,
+        blankPicking: false,
         findBlank: async () => null,
         selectedSeries: certificateTemplateMenu ? selectedCertificateSeries : selectedBlankSeries,
       };
@@ -13895,9 +13956,11 @@ function bindContentEvents() {
             <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
             <div class="driver-print-classic__lookup">
               <input id="chairmanCertificateBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(getSelectedCertificateSeries())}" aria-label="Серия бланка" role="button" readonly />
-              <input id="chairmanCertificateBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(getSelectedCertificateSeries()))}" readonly />
+              <input id="chairmanCertificateBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(getSelectedCertificateSeries()))}" aria-label="Номер бланка" readonly />
               <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-certificate-find-blank>Найти номер</button>
+              <button type="button" class="driver-print-classic__button" data-chairman-manual-blank hidden>Проверить номер</button>
             </div>
+            <div id="chairmanBatchPartControls" hidden></div>
 
             <div class="chairman-print-results__row chairman-print-results__row--top">
               <button type="button" class="driver-print-classic__button" data-chairman-print-current-certificate>Печать справки</button>
@@ -13917,7 +13980,9 @@ function bindContentEvents() {
                 <input id="chairmanPrintBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(selectedBlankSeries)}" aria-label="Серия бланка ЛМК" role="button" readonly />
                 <input id="chairmanPrintBlankNumber" class="driver-print-classic__input" value="${escapeHtml(splitExistingBlankNumber(selectedBlankSeries))}" aria-label="Номер бланка ЛМК" inputmode="numeric" autocomplete="off" />
                 <button type="button" class="driver-print-classic__button driver-print-classic__button--find" data-chairman-print-find-blank>Найти номер</button>
+                <button type="button" class="driver-print-classic__button" data-chairman-manual-blank hidden>Проверить номер</button>
               </div>
+              <div id="chairmanBatchPartControls" hidden></div>
               <div class="driver-print-classic__blank-actions">
                 <button type="button" class="driver-print-classic__button" data-chairman-print-release-blank>Освободить номер</button>
                 <button type="button" class="driver-print-classic__button driver-print-classic__button--spoiled" data-chairman-print-spoil-blank>Бракованный бланк</button>
@@ -13946,6 +14011,7 @@ function bindContentEvents() {
       );
 
       const selectCertificateType = (certificateType) => {
+        if (chairmanPrintBlankState.blankPicking) return;
         if (!certificatePrintGroup?.items.some(([type]) => type === certificateType)) return;
         const defaultSeries = getChairmanCertificatePrintSeries(certificateType, client);
         if (!defaultSeries) return;
@@ -13961,10 +14027,15 @@ function bindContentEvents() {
         const seriesInput = document.getElementById("chairmanCertificateBlankSeries");
         const numberInput = document.getElementById("chairmanCertificateBlankNumber");
         if (seriesInput) seriesInput.value = series;
-        if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(series);
+        if (certificateTypeChanged) {
+          chairmanManualDrafts.delete(series);
+          if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(series);
+          void refreshChairmanBatchControls();
+        }
       };
 
       const selectCertificateSeries = (series) => {
+        if (chairmanPrintBlankState.blankPicking) return;
         const normalizedSeries = normalizeBlankSeries(series);
         if (!normalizedSeries) return;
         selectedCertificateSeries = normalizedSeries;
@@ -13975,9 +14046,12 @@ function bindContentEvents() {
         const blankParts = blank ? getDriverPrintBlankParts(blank, normalizedSeries) : null;
         if (seriesInput) seriesInput.value = normalizedSeries;
         if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
+        chairmanManualDrafts.delete(normalizedSeries);
+        void refreshChairmanBatchControls();
       };
 
       const selectBlankSeries = (series) => {
+        if (chairmanPrintBlankState.blankPicking) return;
         const normalizedSeries = normalizeBlankSeries(series);
         if (!normalizedSeries) return;
         selectedBlankSeries = normalizedSeries;
@@ -13989,8 +14063,88 @@ function bindContentEvents() {
         if (seriesInput) seriesInput.value = normalizedSeries;
         if (numberInput) numberInput.value = blankParts?.number || blankParts?.fullNumber || splitExistingBlankNumber(normalizedSeries);
         chairmanBlankNumberEdited = false;
+        chairmanManualDrafts.delete(normalizedSeries);
+        void refreshChairmanBatchControls();
       };
 
+      const getChairmanBatchState = async (series) => {
+        const key = normalizeBlankSeries(series);
+        if (!chairmanBatchStates.has(key)) {
+          const pending = (async () => {
+            const certificateType = getDriverPrintCertificateType(key);
+            const state = {
+              selectedSeries: key, selectedCertificateType: certificateType, seriesOptions: [],
+              centerId: await resolveCenterIdForVisit(visit, client),
+              blankType: resolveDriverPrintBlankType({ selectedSeries: key, selectedCertificateType: certificateType }),
+              batchParts: [], batchPartId: null,
+            };
+            await loadDriverFlowBatchParts(state);
+            return state;
+          })();
+          chairmanBatchStates.set(key, pending);
+        }
+        return chairmanBatchStates.get(key);
+      };
+      refreshChairmanBatchControls = async () => {
+        const series = chairmanPrintBlankState.selectedSeries;
+        const controls = document.getElementById("chairmanBatchPartControls");
+        if (!controls) return;
+        const input = document.getElementById(certificateTemplateMenu ? "chairmanCertificateBlankNumber" : "chairmanPrintBlankNumber");
+        const manualButton = actionModalContent?.querySelector("[data-chairman-manual-blank]");
+        if (input) input.readOnly = true;
+        if (manualButton) manualButton.hidden = true;
+        try {
+          const state = await getChairmanBatchState(series);
+          if (chairmanPrintBlankState.selectedSeries !== series || document.getElementById("chairmanBatchPartControls") !== controls) return;
+          const manualAllowed = isStockNumberedFlow(series, state.blankType) || state.batchParts.length > 0;
+          if (input) input.readOnly = !manualAllowed;
+          if (manualButton) manualButton.hidden = !manualAllowed;
+          controls.hidden = !state.batchParts.length && !state.batchPartsError;
+          controls.innerHTML = state.batchPartsError
+            ? `<div class="driver-print-classic__error">${escapeHtml(state.batchPartsError)}</div>`
+            : `<div class="driver-print-classic__caption">Пачка оператора:</div><select id="chairmanBatchPart" class="driver-print-classic__input" ${chairmanPrintBlankState.blankPicking ? "disabled" : ""}>${renderDriverFlowBatchPartOptions(state)}</select>`;
+          controls.querySelector("#chairmanBatchPart")?.addEventListener("change", (event) => {
+            state.batchPartId = Number(event.target.value) || null;
+            storeBlankBatchPart(state);
+            selectedPrintBlanks.delete(series);
+            chairmanManualDrafts.delete(series);
+            if (input) input.value = "";
+          });
+        } catch (error) {
+          showToast(humanizeApiError(error, "Не удалось загрузить пачки бланков"));
+        }
+      };
+      const chairmanNumberInput = document.getElementById(certificateTemplateMenu ? "chairmanCertificateBlankNumber" : "chairmanPrintBlankNumber");
+      const setChairmanBlankBusy = (busy) => {
+        if (chairmanPrintBlankState.blanks !== selectedPrintBlanks) return;
+        chairmanPrintBlankState.blankPicking = busy;
+        actionModalContent?.querySelectorAll("#chairmanBatchPart, #chairmanCertificateBlankSeries, #chairmanPrintBlankSeries, #chairmanCertificateBlankNumber, #chairmanPrintBlankNumber, [data-chairman-certificate-find-blank], [data-chairman-print-find-blank], [data-chairman-manual-blank]").forEach((control) => { control.disabled = busy; });
+      };
+      const pickManualChairmanBlank = async (event) => {
+        if (chairmanPrintBlankState.blankPicking) return;
+        if (!certificateTemplateMenu) { await pickChairmanManualBlank(); return; }
+        const series = chairmanPrintBlankState.selectedSeries;
+        const number = String(chairmanNumberInput?.value || "").trim();
+        if (!number) { showToast("Введите номер бланка"); return; }
+        setChairmanBlankBusy(true);
+        try {
+          const state = await getChairmanBatchState(series);
+          const partId = getDriverFlowBatchPartId(state);
+          const blank = await pickManualDriverBlank(state, number);
+          if (chairmanPrintBlankState.selectedSeries !== series || getDriverFlowBatchPartId(state) !== partId) return;
+          selectedPrintBlanks.set(series, blank);
+          chairmanManualDrafts.delete(series);
+          if (chairmanNumberInput) chairmanNumberInput.value = getDriverPrintBlankParts(blank, series).number;
+          showToast(`Бланк ${blank.full_number} проверен, выбор записан в историю`);
+        } catch (error) {
+          selectedPrintBlanks.delete(series);
+          showToast(humanizeApiError(error, "Номер не найден в заведённых партиях или уже занят"));
+        } finally {
+          setChairmanBlankBusy(false);
+        }
+      };
+      actionModalContent?.querySelector("[data-chairman-manual-blank]")?.addEventListener("click", pickManualChairmanBlank);
+      void refreshChairmanBatchControls();
       const resolveChairmanPrintBlank = async (series) => {
         const normalizedSeries = normalizeBlankSeries(series);
         const numberInput = document.getElementById("chairmanPrintBlankNumber");
@@ -14006,29 +14160,34 @@ function bindContentEvents() {
         if (!/^\d+$/.test(number)) throw new Error("Номер бланка должен содержать только цифры");
         if (!client || !visit) throw new Error("Сначала выберите клиента и обращение");
 
-        const centerId = await resolveCenterIdForVisit(visit, client);
-        const blank = await pickManualDriverBlank({
-          selectedSeries: normalizedSeries,
-          blankType: resolveDriverPrintBlankType({ selectedSeries: normalizedSeries }),
-          centerId,
-        }, number);
-        if (
-          document.getElementById("chairmanPrintBlankNumber") !== numberInput ||
-          String(numberInput?.value || "").trim() !== number ||
-          chairmanPrintBlankState.blanks !== selectedPrintBlanks ||
-          chairmanPrintBlankState.selectedSeries !== normalizedSeries
-        ) {
-          throw new Error("Номер или серия бланка изменены. Повторите выбор номера");
+        setChairmanBlankBusy(true);
+        try {
+          const state = await getChairmanBatchState(normalizedSeries);
+          const partId = getDriverFlowBatchPartId(state);
+          const blank = await pickManualDriverBlank(state, number);
+          if (
+            document.getElementById("chairmanPrintBlankNumber") !== numberInput ||
+            String(numberInput?.value || "").trim() !== number ||
+            chairmanPrintBlankState.blanks !== selectedPrintBlanks ||
+            chairmanPrintBlankState.selectedSeries !== normalizedSeries ||
+            getDriverFlowBatchPartId(state) !== partId
+          ) {
+            throw new Error("Номер или серия бланка изменены. Повторите выбор номера");
+          }
+          selectedPrintBlanks.set(normalizedSeries, blank);
+          const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
+          numberInput.value = blankParts.number || blankParts.fullNumber || "";
+          chairmanBlankNumberEdited = false;
+          chairmanManualDrafts.delete(normalizedSeries);
+          return blank;
+        } finally {
+          setChairmanBlankBusy(false);
         }
-        selectedPrintBlanks.set(normalizedSeries, blank);
-        const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
-        numberInput.value = blankParts.number || blankParts.fullNumber || "";
-        chairmanBlankNumberEdited = false;
-        return blank;
       };
       chairmanPrintBlankState.resolveBlank = resolveChairmanPrintBlank;
 
       const findChairmanBlank = async (series, button = null, options = {}) => {
+        if (chairmanPrintBlankState.blankPicking) return null;
         const normalizedSeries = normalizeBlankSeries(series);
         const input = options.updateInput === false
           ? null
@@ -14037,21 +14196,27 @@ function bindContentEvents() {
             : document.getElementById("chairmanPrintBlankNumber");
         const lookupInputValue = input?.value;
         const lookupBlank = selectedPrintBlanks.get(normalizedSeries);
-        const isCurrentLookup = () => certificateTemplateMenu || !input || (
-          document.getElementById("chairmanPrintBlankNumber") === input &&
-          input.value === lookupInputValue &&
-          chairmanPrintBlankState.blanks === selectedPrintBlanks &&
-          chairmanPrintBlankState.selectedSeries === normalizedSeries &&
-          selectedPrintBlanks.get(normalizedSeries) === lookupBlank
-        );
+        let lookupBatchState = null;
+        let lookupBatchPartId = null;
+        const isCurrentLookup = () => chairmanPrintBlankState.blanks === selectedPrintBlanks &&
+          (!lookupBatchState || getDriverFlowBatchPartId(lookupBatchState) === lookupBatchPartId) &&
+          (!input || (
+            document.getElementById(certificateTemplateMenu ? "chairmanCertificateBlankNumber" : "chairmanPrintBlankNumber") === input &&
+            input.value === lookupInputValue &&
+            chairmanPrintBlankState.selectedSeries === normalizedSeries &&
+            selectedPrintBlanks.get(normalizedSeries) === lookupBlank
+          ));
         if (!client || !visit) {
           showToast("Сначала выбери клиента и обращение");
           return null;
         }
 
-        if (button) button.disabled = true;
+        setChairmanBlankBusy(true);
         try {
-          const centerId = await resolveCenterIdForVisit(visit, client);
+          const batchState = await getChairmanBatchState(normalizedSeries);
+          lookupBatchState = batchState;
+          lookupBatchPartId = getDriverFlowBatchPartId(batchState);
+          const centerId = batchState.centerId;
           const certificateType = getDriverPrintCertificateType(normalizedSeries);
           const lookupSeries = isNumberedCertificatePrintType(certificateType)
             ? getNumberedCertificateLookupSeriesForType(certificateType)
@@ -14064,9 +14229,11 @@ function bindContentEvents() {
             center_id: String(centerId),
             series: lookupSeries,
           });
+          applyDriverFlowBatchPart(query, batchState);
           let blank = null;
           const blankType = query.get("blank_type");
           const shouldAutoCreateImmediately =
+            !batchState.batchParts.length &&
             !isPreenteredBlankSeries(normalizedSeries) &&
             !isStrictDriverBlankSeries(lookupSeries, blankType) &&
             !canAutoCreateChairmanBlankSeries(lookupSeries);
@@ -14075,6 +14242,7 @@ function bindContentEvents() {
             if (shouldAutoCreateImmediately) query.set("auto_create", "true");
             blank = normalizeDriverPrintBlank(await apiRequest(`/blanks/forms/next?${query.toString()}`));
           } catch (error) {
+            if (batchState.batchParts.length) throw error;
             if (!canAutoCreateChairmanBlankSeries(lookupSeries)) {
               throw error;
             }
@@ -14083,6 +14251,7 @@ function bindContentEvents() {
           }
           if (!isCurrentLookup()) return null;
           selectedPrintBlanks.set(normalizedSeries, blank);
+          chairmanManualDrafts.delete(normalizedSeries);
           const blankParts = getDriverPrintBlankParts(blank, normalizedSeries);
           const resolvedBlankNumber = blankParts.number || blankParts.fullNumber || "";
           if (input) input.value = resolvedBlankNumber;
@@ -14100,7 +14269,7 @@ function bindContentEvents() {
           }
           return null;
         } finally {
-          if (button) button.disabled = false;
+          setChairmanBlankBusy(false);
         }
       };
       chairmanPrintBlankState.findBlank = findChairmanBlank;
@@ -14116,14 +14285,15 @@ function bindContentEvents() {
           if (button) button.disabled = false;
         }
       };
-      const chairmanNumberInput = actionModalContent?.querySelector("#chairmanPrintBlankNumber");
       chairmanNumberInput?.addEventListener("input", () => {
         chairmanBlankNumberEdited = true;
+        chairmanManualDrafts.add(chairmanPrintBlankState.selectedSeries);
+        if (certificateTemplateMenu) selectedPrintBlanks.delete(chairmanPrintBlankState.selectedSeries);
       });
       chairmanNumberInput?.addEventListener("keydown", async (event) => {
-        if (event.key !== "Enter") return;
+        if (event.key !== "Enter" || chairmanNumberInput.readOnly) return;
         event.preventDefault();
-        await pickChairmanManualBlank();
+        await pickManualChairmanBlank(event);
       });
 
       actionModalContent?.querySelectorAll("[data-chairman-print-find-blank]").forEach((button) => {
@@ -14383,6 +14553,10 @@ function bindContentEvents() {
           const autoNumberedCertificate =
             Boolean(certificateType) && isNumberedCertificatePrintType(certificateType);
           if (requiredBlankSeries) {
+            if (chairmanPrintBlankState.blankPicking) throw new Error("Дождитесь проверки номера бланка");
+            if (printKind !== "lmk_title" && chairmanPrintBlankState.manualDrafts?.has(requiredBlankSeries)) {
+              throw new Error("Проверьте введённый номер кнопкой «Проверить номер»");
+            }
             let selectedBlank = chairmanPrintBlankState.blanks.get(requiredBlankSeries);
             if (printKind === "lmk_title" && chairmanPrintBlankState.resolveBlank) {
               selectedBlank = await chairmanPrintBlankState.resolveBlank(requiredBlankSeries);
