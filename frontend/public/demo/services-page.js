@@ -275,6 +275,7 @@ function openServiceModal(serviceId = null) {
     targetService.notes = String(formData.get("notes") || "").trim();
     targetService.isActive = String(formData.get("isActive")) === "true";
     targetService.doctorRoleIds = formData.getAll("doctorRoleIds").map((id) => Number(id));
+    normalizeSemd196ServiceGroup(targetService);
 
     if (editingService?.backendId && window.apiRequest) {
       try {

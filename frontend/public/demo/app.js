@@ -283,6 +283,16 @@ function isHiddenService(service) {
   return HIDDEN_SERVICE_LEGACY_IDS.has(legacyId);
 }
 
+function normalizeSemd196ServiceGroup(service) {
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id);
+  const name = String(service?.name || "").toLowerCase();
+  if (legacyId !== 43 && legacyId !== 44 && !/сэмд|сэмт|сэнд/u.test(name)) return;
+
+  const certificates = serviceGroups.find((group) => group.code === "legacy-group-7")
+    || serviceGroups.find((group) => String(group.name || "").trim().toLowerCase() === "справки");
+  if (certificates) service.groupId = certificates.id;
+}
+
 function initializeFallbackServiceCatalog() {
   const fallback = window.servicesData;
   if (!fallback || !Array.isArray(fallback.services)) return;
@@ -1457,6 +1467,9 @@ function markClientChanged(client, isCreated = false) {
 }
 
 function refreshServiceCatalog() {
+  // Старое сохранение браузера может вернуть СЭНД в ВУ даже при исправленном API.
+  structuredServices.forEach(normalizeSemd196ServiceGroup);
+  data.serverServices.forEach(normalizeSemd196ServiceGroup);
   const source = data.serverServicesLoaded ? data.serverServices : [];
   data.serviceCatalog = source
     .filter((service) => service.isActive !== false)
