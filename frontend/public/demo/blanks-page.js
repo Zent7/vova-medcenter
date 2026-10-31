@@ -314,6 +314,7 @@
                 <table>
                   <thead>
                     <tr>
+                      <th>Пачки оператора</th>
                       <th>Дата</th>
                       <th>Тип</th>
                       <th>Серия</th>
@@ -323,7 +324,6 @@
                       <th>Выдано</th>
                       <th>Испорч.</th>
                       <th>Аннул.</th>
-                      <th>Пачки</th>
                       <th>Комментарий</th>
                     </tr>
                   </thead>
@@ -332,6 +332,7 @@
                       .map(
                         (item) => `
                           <tr>
+                            <td>${renderBatchPartsCell(item)}</td>
                             <td>${esc(formatDate(item.received_at || item.created_at))}</td>
                             <td>${esc(getFormTypeName(item))}</td>
                             <td>${esc(item.series || "—")}</td>
@@ -341,7 +342,6 @@
                             <td>${Number(item.issued_count || 0)}</td>
                             <td>${Number(item.spoiled_count || 0)}</td>
                             <td>${Number(item.cancelled_count || 0)}</td>
-                            <td>${renderBatchPartsCell(item)}</td>
                             <td>${esc(item.comment || "—")}</td>
                           </tr>
                         `,
@@ -361,6 +361,7 @@
   function renderBatchPartsCell(item) {
     const parts = Array.isArray(item.parts) ? item.parts : [];
     if (!parts.length) {
+      if (!canSplitBatch(item)) return '<span class="muted">Без пачек</span>';
       return `<button type="button" class="ghost-button" data-blank-split="${Number(item.id)}">Разбить на пачки</button>`;
     }
     const width = item.number_width || 6;
@@ -372,6 +373,103 @@
         `,
       )
       .join("");
+  }
+
+  function canSplitBatch(item) {
+    return !item.is_paper_certificate && !String(item.comment || "").startsWith("Автонумерация") && !item.parts?.length;
+  }
+
+  function openBatchSplitForm(batchId = null) {
+    const batches = (window.data?.blanksBatches || []).filter(canSplitBatch);
+    if (!batches.length) {
+      window.showToast?.("Добавьте партию номерных бланков. Уже разбитую партию повторно разбить нельзя.");
+      return;
+    }
+    const selectedId = batches.some((batch) => Number(batch.id) === Number(batchId)) ? Number(batchId) : null;
+    const rangeLabel = (batch, from = batch.number_from, to = batch.number_to) => {
+      const width = batch.number_width || 6;
+      return `${batch.series || ""}${String(from).padStart(width, "0")}–${batch.series || ""}${String(to).padStart(width, "0")}`;
+    };
+    window.openActionModal("Разбить партию на пачки", `
+      <form id="blankBatchSplitForm" class="blank-split-form">
+        <p>Каждый оператор выбирает свою пачку при печати. Номера подбираются только внутри выбранной пачки.</p>
+        <label class="field"><span>Партия бланков</span>
+          <select name="batch_id" required>
+            <option value="">Выберите партию</option>
+            ${batches.map((batch) => `<option value="${Number(batch.id)}" ${Number(batch.id) === selectedId ? "selected" : ""}>${esc(getFormTypeName(batch))} · ${esc(rangeLabel(batch))}${batch.comment ? ` · ${esc(batch.comment)}` : ""}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field"><span>Номеров в одной пачке</span>
+          <input name="pack_size" type="number" min="1" step="1" value="500" inputmode="numeric" required />
+        </label>
+        <div data-split-preview class="blank-split-preview" aria-live="polite"></div>
+        <p class="muted">Разбить партию можно один раз. Уже выданные номера и история сохраняются.</p>
+        <div data-split-error class="form-error" role="alert" hidden></div>
+        <div class="visit-form__actions">
+          <button type="button" class="ghost-button" data-split-cancel>Отмена</button>
+          <button type="submit" class="primary-button">Разбить на пачки</button>
+        </div>
+      </form>`, "modal--blank-split");
+    const form = document.getElementById("blankBatchSplitForm");
+    if (!form) return;
+    const batchSelect = form.elements.batch_id;
+    const sizeInput = form.elements.pack_size;
+    const preview = form.querySelector("[data-split-preview]");
+    const errorBox = form.querySelector("[data-split-error]");
+    let saving = false;
+    const getSelection = () => ({
+      batch: batches.find((item) => Number(item.id) === Number(batchSelect.value)),
+      size: Number(sizeInput.value),
+    });
+    const updatePreview = () => {
+      const { batch, size } = getSelection();
+      preview.replaceChildren();
+      if (!batch || !Number.isSafeInteger(size) || size < 1) return;
+      const count = Math.ceil((batch.number_to - batch.number_from + 1) / size);
+      const lines = [`Количество пачек: ${count}`];
+      const indexes = count <= 4 ? Array.from({ length: count }, (_, i) => i) : [0, 1, 2, count - 1];
+      indexes.forEach((i) => {
+        if (i > 2 && count > 4) lines.push("…");
+        const from = batch.number_from + i * size;
+        lines.push(`Пачка ${i + 1}: ${rangeLabel(batch, from, Math.min(from + size - 1, batch.number_to))}`);
+      });
+      preview.textContent = lines.join("\n");
+    };
+    batchSelect.addEventListener("change", updatePreview);
+    sizeInput.addEventListener("input", updatePreview);
+    form.querySelector("[data-split-cancel]").addEventListener("click", () => window.closeActionModal());
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (saving) return;
+      const { batch, size } = getSelection();
+      if (!batch || !Number.isSafeInteger(size) || size < 1) {
+        errorBox.textContent = "Выберите партию и укажите целое положительное число номеров в пачке.";
+        errorBox.hidden = false;
+        return;
+      }
+      saving = true;
+      errorBox.hidden = true;
+      const controls = [...form.querySelectorAll("input, select, button")];
+      controls.forEach((control) => { control.disabled = true; });
+      try {
+        await window.apiRequest(`/blanks/batches/${Number(batch.id)}/parts`, {
+          method: "POST", body: JSON.stringify({ pack_size: size }),
+        });
+        if (document.getElementById("blankBatchSplitForm") === form) window.closeActionModal();
+        window.showToast?.("Партия разбита на пачки. При печати выберите свою пачку в списке «Пачка оператора».");
+        await loadBlanksData({ force: true });
+      } catch (error) {
+        errorBox.textContent = window.humanizeApiError
+          ? window.humanizeApiError(error, "Не удалось разбить партию на пачки")
+          : String(error?.message || error);
+        errorBox.hidden = false;
+      } finally {
+        saving = false;
+        controls.forEach((control) => { control.disabled = false; });
+      }
+    });
+    updatePreview();
+    (selectedId ? sizeInput : batchSelect).focus();
   }
 
   function getIssuedHistoryGroups() {
@@ -647,6 +745,7 @@
             <p class="muted">Добавляйте серии и диапазоны для выбранного медцентра. Выдача и статус ведутся по каждому номеру отдельно.</p>
           </div>
           <div class="blanks-page__actions">
+            <button type="button" class="primary-button" data-blanks-open-split ${!data.blanksLoaded ? "disabled" : ""}>Разбить на пачки</button>
             <button type="button" class="primary-button" data-blanks-add-numbers ${appState.blanksFormOpen ? "disabled" : ""}>
               ${appState.blanksFormOpen ? "Форма открыта" : "Добавить"}
             </button>
@@ -675,6 +774,8 @@
 
   function bindBlanksHandlers() {
     if (window.appState?.page !== "blanks") return;
+
+    document.querySelector("[data-blanks-open-split]")?.addEventListener("click", () => openBatchSplitForm());
 
     document.querySelectorAll("[data-blanks-tab]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -894,31 +995,7 @@
     });
 
     document.querySelectorAll("[data-blank-split]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const batchId = button.dataset.blankSplit;
-        const answer = window.prompt("По сколько номеров в пачке? Например, 500: каждый оператор возьмёт свою пачку", "500");
-        if (answer === null) return;
-        const packSize = Number(String(answer).trim());
-        if (!Number.isInteger(packSize) || packSize < 1) {
-          window.showToast?.("Укажите целое число номеров в пачке");
-          return;
-        }
-
-        try {
-          await window.apiRequest(`/blanks/batches/${encodeURIComponent(batchId)}/parts`, {
-            method: "POST",
-            body: JSON.stringify({ pack_size: packSize }),
-          });
-          window.showToast?.("Партия разбита на пачки");
-          await loadBlanksData({ force: true });
-        } catch (error) {
-          window.showToast?.(
-            window.humanizeApiError
-              ? window.humanizeApiError(error, "Не удалось разбить партию на пачки")
-              : String(error?.message || error || "Не удалось разбить партию на пачки"),
-          );
-        }
-      });
+      button.addEventListener("click", () => openBatchSplitForm(Number(button.dataset.blankSplit)));
     });
 
     document.querySelectorAll("[data-blank-spoil]").forEach((button) => {

@@ -11036,6 +11036,10 @@ function renderDriverFlowBatchPartOptions(flowState) {
     }).join("");
 }
 
+function renderBlankBatchPartHint() {
+  return '<p class="muted">Пачки ещё не созданы. В разделе «Бланки» нажмите «Разбить на пачки». После разбивки здесь появится список «Пачка оператора» с диапазонами номеров.</p>';
+}
+
 // Номер, вписанный вручную: бланк берём только свободный из заведённой партии, выбор идёт в историю.
 async function pickManualDriverBlank(flowState, number) {
   const lookupSeries =
@@ -11505,7 +11509,9 @@ async function openDriverPrintFlow(options = {}) {
                   ${renderDriverFlowBatchPartOptions(flowState)}
                 </select>
               `
-              : ""
+              : isStockNumberedFlow(flowState.selectedSeries, flowState.blankType) && !flowState.batchPartsError
+                ? renderBlankBatchPartHint()
+                : ""
           }
 
           ${
@@ -14101,10 +14107,12 @@ function bindContentEvents() {
           const manualAllowed = isStockNumberedFlow(series, state.blankType) || state.batchParts.length > 0;
           if (input) input.readOnly = !manualAllowed;
           if (manualButton) manualButton.hidden = !manualAllowed;
-          controls.hidden = !state.batchParts.length && !state.batchPartsError;
+          controls.hidden = !state.batchParts.length && !state.batchPartsError && !isStockNumberedFlow(series, state.blankType);
           controls.innerHTML = state.batchPartsError
             ? `<div class="driver-print-classic__error">${escapeHtml(state.batchPartsError)}</div>`
-            : `<div class="driver-print-classic__caption">Пачка оператора:</div><select id="chairmanBatchPart" class="driver-print-classic__input" ${chairmanPrintBlankState.blankPicking ? "disabled" : ""}>${renderDriverFlowBatchPartOptions(state)}</select>`;
+            : state.batchParts.length
+              ? `<div class="driver-print-classic__caption">Пачка оператора:</div><select id="chairmanBatchPart" class="driver-print-classic__input" ${chairmanPrintBlankState.blankPicking ? "disabled" : ""}>${renderDriverFlowBatchPartOptions(state)}</select>`
+              : renderBlankBatchPartHint();
           controls.querySelector("#chairmanBatchPart")?.addEventListener("change", (event) => {
             state.batchPartId = Number(event.target.value) || null;
             storeBlankBatchPart(state);
