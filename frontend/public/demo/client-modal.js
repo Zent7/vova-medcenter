@@ -576,7 +576,7 @@ function getVisibleClientServices(groupId) {
           String(candidate.groupId) === String(groupId) &&
           String(candidate.name || "").trim().toLowerCase() === "экг без расшифровки",
       );
-      return !normalizedName.includes("дубл") && !(hasDetailedEkgService && normalizedName === "экг");
+      return normalizedName !== "водительская после лишения" && normalizedName !== "ву после лишения" && !normalizedName.includes("дубл") && !(hasDetailedEkgService && normalizedName === "экг");
     })
     .slice();
 

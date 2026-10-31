@@ -40,7 +40,7 @@ function catalog({ driverId = 2, certificatesId = 7, services = [], serverServic
   return context;
 }
 
-test("actual driver chips do not label the service with backend ID 44 as СЭНД", () => {
+test("driver chooser omits the separate revocation service previously labeled СЭНД", () => {
   const services = [
     { id: 5, backendId: 5, legacySourceId: 8, name: "Медицинская комиссия", groupId: 3 },
     { id: 9, backendId: 9, legacySourceId: 7, name: "071У", groupId: 3 },
@@ -56,9 +56,12 @@ test("actual driver chips do not label the service with backend ID 44 as СЭН�
   context.appState.clientServiceGroupFilter = "3";
   const html = context.renderClientServiceSelector();
   assert.doesNotMatch(html, /СЭНД/);
-  assert.match(html, /ВУ после лишения/);
+  assert.doesNotMatch(html, /ВУ после лишения/);
   assert.match(html, /ВУ \(водительская\)/);
   assert.match(html, /071у/);
+  assert.doesNotMatch(html, /value="Водительская после лишения"/);
+  assert.equal(context.getVisibleClientServices(3).length, 2);
+  assert.equal(services.find((service) => service.id === 44).groupId, 3);
   context.appState.clientServiceGroupFilter = "8";
   assert.match(context.renderClientServiceSelector(), /СЭНД/);
 });
