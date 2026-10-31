@@ -32,7 +32,7 @@ const { isPreenteredBlankFlow, isStrictDriverBlankSeries, isStockNumberedFlow } 
 const DRIVER = "driver_medical_certificate";
 
 test("a driver series that names no certificate is a strict blank", () => {
-  for (const series of ["41", "40", "77", " 41 "]) {
+  for (const series of ["41", "40", "77", " 41 ", "", null]) {
     assert.equal(isStrictDriverBlankSeries(series, DRIVER), true, series);
   }
 });
@@ -46,7 +46,7 @@ test("certificate series keep their automatic numbers", () => {
 test("only the driver blank type is strict", () => {
   assert.equal(isStrictDriverBlankSeries("41", "gims_medical_certificate"), false);
   assert.equal(isStrictDriverBlankSeries("41", "lmk_medical_certificate"), false);
-  assert.equal(isStrictDriverBlankSeries("", DRIVER), false);
+  assert.equal(isStrictDriverBlankSeries("", DRIVER), true);
 });
 
 test("a strict driver series is taken from the entered batches and never auto-numbered", () => {

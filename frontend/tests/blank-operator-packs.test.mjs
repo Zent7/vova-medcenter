@@ -13,7 +13,7 @@ function harness(request = async () => []) {
   const appState = { auth: { userId: 10 } };
   const storage = new Map();
   const window = { localStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) } };
-  const helpers = new Function("appState", "window", "apiRequest", "resolveNumberedCertificateLookupSeries", "getBlankSeriesMatchKey", "normalizeBlankSeries", "normalizeDriverPrintBlank", "isStrictDriverBlankSeries", "escapeHtml", "BLANK_TYPE_LMK_MEDICAL_CERTIFICATE", `${helperSource}\nreturn { getBlankBatchPartStorageKey, storeBlankBatchPart, getDriverFlowBatchPartId, applyDriverFlowBatchPart, loadDriverFlowBatchParts, pickManualDriverBlank };`)(
+  const helpers = new Function("appState", "window", "apiRequest", "resolveNumberedCertificateLookupSeries", "getBlankSeriesMatchKey", "normalizeBlankSeries", "normalizeDriverPrintBlank", "isStrictDriverBlankSeries", "escapeHtml", "BLANK_TYPE_LMK_MEDICAL_CERTIFICATE", `${helperSource}\nreturn { getBlankBatchPartStorageKey, storeBlankBatchPart, getDriverFlowBatchPartId, applyDriverFlowBatchPart, loadDriverFlowBatchParts, pickManualDriverBlank, renderDriverFlowBatchControls };`)(
     appState, window, request, (series) => normalize(series), (series) => normalize(series).toLowerCase(), normalize, (form) => form, () => false, (value) => value, LMK,
   );
   return { ...helpers, appState, storage };
@@ -121,4 +121,33 @@ test("при неверном номере история успешного р�
   const h = harness(async (url) => { calls.push(url); throw new Error("Номер не найден в выбранной пачке"); });
   await assert.rejects(h.pickManualDriverBlank(state({ batchParts: batches()[0].parts, batchPartId: 12 }), "999999"), /не найден/);
   assert.equal(calls.length, 1);
+});
+
+test("пачки без серии загружаются для выбранного центра и не смешиваются с другими сериями", async () => {
+  const requests = [];
+  const h = harness(async (url) => {
+    requests.push(url);
+    return [{ id: 74, series: null, parts: [{ id: 2, part_no: 2, number_from: 6, number_to: 10, free_count: 5 }] }, ...batches()];
+  });
+  const flow = state({ centerId: 3, selectedSeries: "" });
+  await h.loadDriverFlowBatchParts(flow);
+  assert.equal(new URL(requests[0], "http://test").searchParams.get("center_id"), "3");
+  assert.deepEqual(flow.batchParts.map((part) => part.id), [2]);
+  flow.batchPartId = 2;
+  h.storeBlankBatchPart(flow);
+  const reopened = state({ centerId: 3, selectedSeries: "" });
+  await h.loadDriverFlowBatchParts(reopened);
+  assert.equal(h.getDriverFlowBatchPartId(reopened), 2);
+  const html = h.renderDriverFlowBatchControls(reopened);
+  assert.match(html, /Пачка оператора/);
+  assert.match(html, /без серии/);
+  assert.match(html, /000006–000010/);
+  assert.match(html, /Свободно: 5/);
+});
+
+test("пустой список пачек виден с пояснением, а не исчезает из окна печати", () => {
+  const html = harness().renderDriverFlowBatchControls(state());
+  assert.match(html, /aria-label="Пачка оператора"[^>]*disabled/);
+  assert.match(html, /Пачек для этой серии нет/);
+  assert.match(html, /Бланки.*Пачки/);
 });

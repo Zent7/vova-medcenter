@@ -723,9 +723,30 @@
     `;
   }
 
+  function renderPacksTab() {
+    const batches = (window.data?.blanksBatches || []).filter((batch) => batch.parts?.length);
+    if (!batches.length) {
+      return '<article class="card"><h3>Пачки бланков</h3><p class="muted">В этом медцентре пачек пока нет. Нажмите «Разбить на пачки», выберите партию и размер пачки.</p></article>';
+    }
+    return `<article class="card"><h3>Пачки бланков</h3>
+      <p class="muted">При печати выберите свою пачку в списке «Пачка оператора». Здесь показаны все пачки текущего медцентра, включая закончившиеся.</p>
+      <div class="blank-packs-list">${batches.flatMap((batch) => batch.parts.map((part) => {
+        const width = batch.number_width || 6;
+        const range = `${batch.series || ""}${String(part.number_from).padStart(width, "0")}–${batch.series || ""}${String(part.number_to).padStart(width, "0")}`;
+        return `<section class="blank-pack-card">
+          <strong>Пачка ${Number(part.part_no)} · ${esc(getFormTypeName(batch))}</strong>
+          <span>${esc(range)}</span>
+          <span class="muted">Партия ${Number(batch.id)} · ${batch.series ? `серия ${esc(batch.series)}` : "без серии"}</span>
+          <span>Свободно: <strong>${Number(part.free_count || 0)}</strong> · Выдано: ${Number(part.issued_count || 0)}</span>
+          ${batch.comment ? `<span class="muted">${esc(batch.comment)}</span>` : ""}
+        </section>`;
+      })).join("")}</div></article>`;
+  }
+
   function renderActiveTab() {
     const tab = window.appState?.blanksTab || "overview";
     if (tab === "batches") return renderBatchesTab();
+    if (tab === "packs") return renderPacksTab();
     if (tab === "forms") return renderFormsTab();
     if (tab === "history") return renderHistoryTab();
     return renderOverviewTab();
@@ -764,6 +785,7 @@
           <button type="button" class="tabs__item ${appState.blanksTab === "overview" ? "tabs__item--active" : ""}" data-blanks-tab="overview">Обзор</button>
           <button type="button" class="tabs__item ${appState.blanksTab === "history" ? "tabs__item--active" : ""}" data-blanks-tab="history">История выдачи</button>
           <button type="button" class="tabs__item ${appState.blanksTab === "batches" ? "tabs__item--active" : ""}" data-blanks-tab="batches">Партии</button>
+          <button type="button" class="tabs__item ${appState.blanksTab === "packs" ? "tabs__item--active" : ""}" data-blanks-tab="packs">Пачки</button>
           <button type="button" class="tabs__item ${appState.blanksTab === "forms" ? "tabs__item--active" : ""}" data-blanks-tab="forms">Номера бланков</button>
         </div>
         ${data.blanksError ? `<div class="form-error">${esc(data.blanksError)}</div>` : ""}

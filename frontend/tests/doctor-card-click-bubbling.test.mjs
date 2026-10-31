@@ -25,5 +25,5 @@ test("doctor button handler skips the card form, so deleting a doctor is not und
 });
 
 test("app.js cache token was bumped for the doctor button fix", () => {
-  assert.match(indexSource, /app\.js\?v=[\w-]*blank-packs-dialog-v1/);
+  assert.match(indexSource, /app\.js\?v=[\w-]*blank-packs-without-series-v2/);
 });

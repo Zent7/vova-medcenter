@@ -3244,7 +3244,10 @@ async function resolveClientVisitCenterId(client) {
 }
 
 function renderPrintCenterContext(centerName) {
-  return `<div class="driver-print-classic__center"><span>Работа в медцентре:</span><strong>${escapeHtml(centerName || getWorkspaceCenterName())}</strong></div>`;
+  const workspace = getWorkspaceCenterName();
+  const encounterCenter = centerName || workspace;
+  const mismatch = normalizeCenterLookupValue(encounterCenter) !== normalizeCenterLookupValue(workspace);
+  return `<div class="driver-print-classic__center"><span>Медцентр обращения:</span><strong>${escapeHtml(encounterCenter)}</strong></div>${mismatch ? `<p class="muted">Рабочий медцентр: ${escapeHtml(workspace)}. Выбрано обращение другого медцентра — его бланки и шаблоны используются при печати. Для печати в ${escapeHtml(workspace)} выберите обращение этого центра.</p>` : ""}`;
 }
 
 async function ensureCentersLoaded() {
@@ -10701,7 +10704,8 @@ function isPreenteredBlankFlow(series, blankType) {
 function isStrictDriverBlankSeries(series, blankType) {
   if (blankType !== BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE) return false;
   const normalized = normalizeBlankSeries(series);
-  if (!normalized) return false;
+  // Типографская партия может быть заведена без серии: это тоже строгие бланки.
+  if (!normalized) return true;
   return (
     !getDriverPrintCertificateType(normalized) &&
     !CERTIFICATE_PRINT_SERIES_OPTION_SET.has(normalized.toLowerCase()) &&
@@ -10754,7 +10758,10 @@ function getDriverPrintSeriesPickerOptions(seriesOptions = [], { includeSuggeste
   const ordered = includeSuggestedSeries ? [...CERTIFICATE_PRINT_SERIES_OPTIONS] : [];
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
-    if (!series) return;
+    if (!series) {
+      if (!includeSuggestedSeries) ordered.push("");
+      return;
+    }
     if (includeSuggestedSeries && !CERTIFICATE_PRINT_SERIES_OPTION_SET.has(series.toLowerCase())) return;
     ordered.push(series);
   });
@@ -10766,10 +10773,11 @@ function closeDriverPrintSeriesPicker() {
   document.querySelector("[data-driver-series-picker]")?.remove();
 }
 
-function openDriverPrintSeriesPicker({ value, options, onSelect, onlyListed = false }) {
+function openDriverPrintSeriesPicker({ value, options, onSelect, onlyListed = false, allowEmpty = false }) {
   closeDriverPrintSeriesPicker();
 
-  let selectedValue = normalizeBlankSeries(value) || options[0] || "";
+  let selectedValue = allowEmpty ? normalizeBlankSeries(value) : normalizeBlankSeries(value) || options[0] || "";
+  const displaySeries = (series) => series || "Без серии";
   const overlay = document.createElement("div");
   overlay.className = "driver-series-picker";
   overlay.dataset.driverSeriesPicker = "true";
@@ -10780,11 +10788,11 @@ function openDriverPrintSeriesPicker({ value, options, onSelect, onlyListed = fa
         <button type="button" class="driver-series-picker__close" data-driver-series-close aria-label="Закрыть">×</button>
       </div>
       <div class="driver-series-picker__top">
-        <input class="driver-series-picker__search" data-driver-series-search value="" placeholder="${escapeHtml(selectedValue)}" />
+        <input class="driver-series-picker__search" data-driver-series-search value="" placeholder="${escapeHtml(displaySeries(selectedValue))}" />
         <button type="button" class="driver-series-picker__ok" data-driver-series-ok>OK</button>
       </div>
       <div class="driver-series-picker__list" data-driver-series-list></div>
-      <div class="driver-series-picker__selected" data-driver-series-selected>${escapeHtml(selectedValue)}</div>
+      <div class="driver-series-picker__selected" data-driver-series-selected>${escapeHtml(displaySeries(selectedValue))}</div>
     </div>
   `;
 
@@ -10794,9 +10802,10 @@ function openDriverPrintSeriesPicker({ value, options, onSelect, onlyListed = fa
   const selectedNode = overlay.querySelector("[data-driver-series-selected]");
 
   const applySelection = () => {
-    const chosen = normalizeBlankSeries(selectedValue || searchInput?.value);
+    const raw = normalizeBlankSeries(selectedValue || searchInput?.value);
+    const chosen = allowEmpty && raw.toLowerCase() === "без серии" ? "" : raw;
     const listed = options.find((item) => item.toLowerCase() === chosen.toLowerCase());
-    if (onlyListed && !listed) {
+    if (onlyListed && listed === undefined) {
       if (selectedNode) selectedNode.textContent = "Выберите серию из списка заведённых бланков";
       return;
     }
@@ -10806,12 +10815,12 @@ function openDriverPrintSeriesPicker({ value, options, onSelect, onlyListed = fa
 
   const renderList = () => {
     const query = normalizeBlankSeries(searchInput?.value).toLowerCase();
-    const visibleOptions = options.filter((item) => !query || item.toLowerCase().includes(query));
+    const visibleOptions = options.filter((item) => !query || displaySeries(item).toLowerCase().includes(query));
     listNode.innerHTML = visibleOptions
       .map(
         (item) => `
           <button type="button" class="driver-series-picker__item${item.toLowerCase() === selectedValue.toLowerCase() ? " driver-series-picker__item--active" : ""}" data-driver-series-value="${escapeHtml(item)}">
-            ${escapeHtml(item)}
+            ${escapeHtml(displaySeries(item))}
           </button>
         `,
       )
@@ -10821,7 +10830,7 @@ function openDriverPrintSeriesPicker({ value, options, onSelect, onlyListed = fa
       button.addEventListener("click", () => {
         selectedValue = normalizeBlankSeries(button.dataset.driverSeriesValue);
         if (searchInput) searchInput.value = "";
-        if (selectedNode) selectedNode.textContent = selectedValue;
+        if (selectedNode) selectedNode.textContent = displaySeries(selectedValue);
         renderList();
       });
       button.addEventListener("dblclick", applySelection);
@@ -10994,7 +11003,7 @@ async function loadDriverFlowBatchParts(flowState) {
   flowState.batchPartsError = "";
   flowState.batchPartsLoading = true;
   try {
-    if (!flowState.selectedSeries || !flowState.blankType) return;
+    if (!flowState.blankType) return;
     const query = new URLSearchParams({ blank_type: flowState.blankType, center_id: String(flowState.centerId) });
     const lookupSeries = resolveNumberedCertificateLookupSeries(
       flowState.selectedSeries, flowState.selectedCertificateType, flowState.seriesOptions,
@@ -11031,13 +11040,26 @@ function renderDriverFlowBatchPartOptions(flowState) {
     .map((part) => {
       const width = part.width || 6;
       const range = `${String(part.number_from).padStart(width, "0")}–${String(part.number_to).padStart(width, "0")}`;
-      const label = `Партия ${part.batchId}, пачка ${part.part_no}: ${part.series} ${range} (своб. ${Number(part.free_count || 0)})`;
+      const label = `Пачка ${part.part_no}: ${range} · ${part.series || "без серии"} · свободно ${Number(part.free_count || 0)} · партия ${part.batchId}`;
       return `<option value="${Number(part.id)}" ${Number(part.id) === selectedId ? "selected" : ""}>${escapeHtml(label)}</option>`;
     }).join("");
 }
 
 function renderBlankBatchPartHint() {
-  return '<p class="muted">Пачки ещё не созданы. В разделе «Бланки» нажмите «Разбить на пачки». После разбивки здесь появится список «Пачка оператора» с диапазонами номеров.</p>';
+  return '<p class="muted">Для выбранных медцентра и серии пачек пока нет. Посмотреть созданные пачки можно в разделе «Бланки» → «Пачки». Чтобы создать новые, нажмите «Разбить на пачки».</p>';
+}
+
+function renderDriverFlowBatchControls(flowState, selectId = "driverBatchPart", disabled = false) {
+  const parts = flowState.batchParts || [];
+  const selected = parts.find((part) => Number(part.id) === getDriverFlowBatchPartId(flowState));
+  const summary = selected
+    ? `Пачка ${Number(selected.part_no)}: ${String(selected.number_from).padStart(selected.width || 6, "0")}–${String(selected.number_to).padStart(selected.width || 6, "0")}. Свободно: ${Number(selected.free_count || 0)}, выдано: ${Number(selected.issued_count || 0)}.`
+    : "Выберите свою пачку. Следующий номер будет взят только из её диапазона.";
+  return `<div class="driver-print-classic__caption">Пачка оператора:</div>
+    <select id="${selectId}" aria-label="Пачка оператора" class="driver-print-classic__input" ${disabled || !parts.length ? "disabled" : ""}>
+      ${parts.length ? renderDriverFlowBatchPartOptions(flowState) : '<option value="">Пачек для этой серии нет</option>'}
+    </select>
+    ${parts.length ? `<p class="muted" aria-live="polite">${escapeHtml(summary)}</p>` : renderBlankBatchPartHint()}`;
 }
 
 // Номер, вписанный вручную: бланк берём только свободный из заведённой партии, выбор идёт в историю.
@@ -11141,7 +11163,7 @@ async function openDriverPrintFlow(options = {}) {
   const seriesOptionMap = new Map();
   (Array.isArray(seriesOptions) ? seriesOptions : []).forEach((item) => {
     const series = normalizeBlankSeries(item?.series);
-    if (series) seriesOptionMap.set(series.toLowerCase(), item);
+    if (series || isOrdinaryDriverFlow || stockSeriesOnly) seriesOptionMap.set(series.toLowerCase(), item);
   });
   if (!stockSeriesOnly) {
     getDriverPrintSeriesPickerOptions(seriesOptions, { includeSuggestedSeries: !isOrdinaryDriverFlow }).forEach((series) => {
@@ -11491,7 +11513,7 @@ async function openDriverPrintFlow(options = {}) {
 
           <div class="driver-print-classic__caption">Укажите серию и номер бланка:</div>
           <div class="driver-print-classic__lookup">
-            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" readonly />
+            <input id="driverBlankSeries" class="driver-print-classic__input driver-print-classic__input--series" value="${escapeHtml(visibleSeries)}" placeholder="Без серии" aria-label="Серия бланка" readonly />
             <input id="driverBlankNumber" class="driver-print-classic__input" value="${escapeHtml(flowState.manualNumberDraft ?? blankParts.number)}" ${canEnterBlankNumber && !flowState.loading ? 'placeholder="вручную"' : "readonly"} />
             <button type="button" class="driver-print-classic__button driver-print-classic__button--find" id="driverFindBlank" ${findButtonDisabled ? "disabled" : ""}>Найти номер</button>
             ${
@@ -11502,16 +11524,9 @@ async function openDriverPrintFlow(options = {}) {
           </div>
 
           ${
-            flowState.batchParts.length
-              ? `
-                <div class="driver-print-classic__caption">Пачка оператора:</div>
-                <select id="driverBatchPart" class="driver-print-classic__input" ${findButtonDisabled ? "disabled" : ""}>
-                  ${renderDriverFlowBatchPartOptions(flowState)}
-                </select>
-              `
-              : isStockNumberedFlow(flowState.selectedSeries, flowState.blankType) && !flowState.batchPartsError
-                ? renderBlankBatchPartHint()
-                : ""
+            flowState.batchParts.length || isStockNumberedFlow(flowState.selectedSeries, flowState.blankType)
+              ? renderDriverFlowBatchControls(flowState, "driverBatchPart", findButtonDisabled)
+              : ""
           }
 
           ${
@@ -11597,10 +11612,11 @@ async function openDriverPrintFlow(options = {}) {
       openDriverPrintSeriesPicker({
         value: flowState.selectedSeries,
         options: getDriverPrintSeriesPickerOptions(flowState.seriesOptions, {
-          includeSuggestedSeries: !flowState.stockSeriesOnly,
+          includeSuggestedSeries: !flowState.stockSeriesOnly && !isOrdinaryDriverFlow,
         }),
         onSelect: selectSeries,
         onlyListed: flowState.stockSeriesOnly,
+        allowEmpty: flowState.seriesOptions.some((item) => !normalizeBlankSeries(item?.series)),
       });
     };
     seriesInput?.addEventListener("pointerdown", openSeriesPicker);
@@ -14110,9 +14126,7 @@ function bindContentEvents() {
           controls.hidden = !state.batchParts.length && !state.batchPartsError && !isStockNumberedFlow(series, state.blankType);
           controls.innerHTML = state.batchPartsError
             ? `<div class="driver-print-classic__error">${escapeHtml(state.batchPartsError)}</div>`
-            : state.batchParts.length
-              ? `<div class="driver-print-classic__caption">Пачка оператора:</div><select id="chairmanBatchPart" class="driver-print-classic__input" ${chairmanPrintBlankState.blankPicking ? "disabled" : ""}>${renderDriverFlowBatchPartOptions(state)}</select>`
-              : renderBlankBatchPartHint();
+            : renderDriverFlowBatchControls(state, "chairmanBatchPart", chairmanPrintBlankState.blankPicking);
           controls.querySelector("#chairmanBatchPart")?.addEventListener("change", (event) => {
             state.batchPartId = Number(event.target.value) || null;
             storeBlankBatchPart(state);

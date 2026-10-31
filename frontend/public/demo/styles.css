@@ -601,6 +601,22 @@ body[data-page="blanks"] .blanks-page__actions {
   display: none;
 }
 
+.blank-packs-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 12px;
+}
+
+.blank-pack-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .blank-split-form .visit-form__actions {
   flex-wrap: wrap;
   gap: 8px;

@@ -81,7 +81,7 @@ test("окно ГИМС предлагает серии заведённых б�
   assert.match(printFlowSource, /if \(!stockSeriesOnly\) \{\s*getDriverPrintSeriesPickerOptions\(seriesOptions/);
   assert.match(
     printFlowSource,
-    /getDriverPrintSeriesPickerOptions\(flowState\.seriesOptions, \{\s*includeSuggestedSeries: !flowState\.stockSeriesOnly,\s*\}\)/,
+    /getDriverPrintSeriesPickerOptions\(flowState\.seriesOptions, \{\s*includeSuggestedSeries: !flowState\.stockSeriesOnly && !isOrdinaryDriverFlow,\s*\}\)/,
   );
   assert.match(printFlowSource, /onlyListed: flowState\.stockSeriesOnly/);
 });
@@ -114,6 +114,10 @@ test("выбор серии в окне ГИМС принимает только
     "окно выбора серии",
   );
   assert.match(picker, /onlyListed = false/);
-  assert.match(picker, /if \(onlyListed && !listed\) \{/);
+  assert.match(picker, /if \(onlyListed && listed === undefined\) \{/);
   assert.match(picker, /onSelect\(listed \?\? chosen\)/);
+});
+
+test("пустая серия типографской партии сохраняется в списке серий", () => {
+  assert.deepEqual(rules.getDriverPrintSeriesPickerOptions([{ series: null }, { series: "40" }], { includeSuggestedSeries: false }), ["", "40"]);
 });
