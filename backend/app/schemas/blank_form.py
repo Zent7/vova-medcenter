@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class BlankTypeRead(BaseModel):
@@ -34,9 +34,21 @@ class BlankBatchCreate(BlankBatchBase):
     pass
 
 
+class BlankBatchPartRange(BaseModel):
+    number_from: int = Field(ge=0, strict=True)
+    number_to: int = Field(ge=0, strict=True)
+
+
 class BlankBatchPartSplitRequest(BaseModel):
-    # Сколько номеров в одной пачке (например, 500).
-    pack_size: int = Field(ge=1)
+    # pack_size оставлен для совместимости с ранее открытыми окнами печати.
+    pack_size: int | None = Field(default=None, ge=1)
+    parts: list[BlankBatchPartRange] | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_split_mode(self) -> "BlankBatchPartSplitRequest":
+        if (self.pack_size is None) == (self.parts is None):
+            raise ValueError("Укажите диапазоны пачек или размер пачки")
+        return self
 
 
 class BlankBatchPartRead(BaseModel):

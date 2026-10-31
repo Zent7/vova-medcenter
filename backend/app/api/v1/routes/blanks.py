@@ -151,7 +151,13 @@ def split_batch_endpoint(
     if batch is not None:
         _check_center_access(current_user, batch.center_id)
     try:
-        split_batch_into_parts(db, batch_id=batch_id, pack_size=payload.pack_size, user_id=_current_user_id(current_user))
+        split_batch_into_parts(
+            db,
+            batch_id=batch_id,
+            pack_size=payload.pack_size,
+            ranges=[(part.number_from, part.number_to) for part in payload.parts] if payload.parts is not None else None,
+            user_id=_current_user_id(current_user),
+        )
     except BlankPartsExistError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

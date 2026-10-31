@@ -407,10 +407,11 @@ def split_batch_into_parts(
     db: Session,
     *,
     batch_id: int,
-    pack_size: int,
+    pack_size: int | None = None,
+    ranges: list[tuple[int, int]] | None = None,
     user_id: int | None,
 ) -> list[BlankBatchPart]:
-    """Режет партию на пачки по pack_size номеров и относит к ним её бланки.
+    """Разбивает всю партию по заданным диапазонам или размеру пачки.
 
     Пачка — непрерывный диапазон: первый оператор берёт 1–500, второй 501–1000 и т.д.
     Разбить партию можно один раз: иначе пачки пересекутся с уже выданными номерами.
@@ -423,7 +424,9 @@ def split_batch_into_parts(
     ).scalar_one_or_none()
     if batch is None or batch.deleted_at is not None:
         raise BlankServiceError("Партия не найдена")
-    if pack_size < 1:
+    if (pack_size is None) == (ranges is None):
+        raise BlankRangeInvalidError("Укажите диапазоны пачек или размер пачки")
+    if pack_size is not None and pack_size < 1:
         raise BlankRangeInvalidError("Размер пачки должен быть больше нуля")
     already_split = db.execute(
         select(BlankBatchPart.id).where(BlankBatchPart.batch_id == batch.id).limit(1)
@@ -431,10 +434,32 @@ def split_batch_into_parts(
     if already_split is not None:
         raise BlankPartsExistError("Партия уже разбита на пачки")
 
+    range_specs = ranges
+    if range_specs is None:
+        assert pack_size is not None
+        range_specs = []
+        number_from = batch.number_from
+        while number_from <= batch.number_to:
+            number_to = min(number_from + pack_size - 1, batch.number_to)
+            range_specs.append((number_from, number_to))
+            number_from = number_to + 1
+
+    # Проверяем всю разбивку до первой записи: ошибочная пачка не должна
+    # оставлять в партии частично распределённые номера.
+    expected_from = batch.number_from
+    for number_from, number_to in range_specs:
+        if number_from < batch.number_from or number_to > batch.number_to:
+            raise BlankRangeInvalidError("Номера пачки должны находиться в диапазоне партии")
+        if number_from > number_to:
+            raise BlankRangeInvalidError("Первый номер пачки не может быть больше последнего")
+        if number_from != expected_from:
+            raise BlankRangeInvalidError("Расположите пачки по порядку, без пересечений и пропусков номеров")
+        expected_from = number_to + 1
+    if not range_specs or expected_from != batch.number_to + 1:
+        raise BlankRangeInvalidError("Распределите между пачками все номера партии")
+
     parts: list[BlankBatchPart] = []
-    number_from = batch.number_from
-    while number_from <= batch.number_to:
-        number_to = min(number_from + pack_size - 1, batch.number_to)
+    for number_from, number_to in range_specs:
         part = BlankBatchPart(
             batch_id=batch.id,
             part_no=len(parts) + 1,
@@ -453,7 +478,6 @@ def split_batch_into_parts(
             .values(batch_part_id=part.id)
         )
         parts.append(part)
-        number_from = number_to + 1
 
     write_audit_log(
         db,
@@ -462,7 +486,11 @@ def split_batch_into_parts(
         action="split_parts",
         user_id=user_id or 1,
         center_id=batch.center_id,
-        payload_json={"pack_size": pack_size, "parts": len(parts)},
+        payload_json={
+            "pack_size": pack_size,
+            "parts": len(parts),
+            "ranges": [{"number_from": start, "number_to": end} for start, end in range_specs],
+        },
     )
     return parts
 

@@ -379,6 +379,34 @@
     return !item.is_paper_certificate && !String(item.comment || "").startsWith("Автонумерация") && !item.parts?.length;
   }
 
+  function buildBalancedBlankRanges(batch, count) {
+    const total = batch.number_to - batch.number_from + 1;
+    if (!Number.isSafeInteger(count) || count < 1 || count > Math.min(total, 1000)) return [];
+    const size = Math.floor(total / count);
+    const remainder = total % count;
+    let from = batch.number_from;
+    return Array.from({ length: count }, (_, index) => {
+      const to = from + size + (index < remainder ? 1 : 0) - 1;
+      const range = { number_from: from, number_to: to };
+      from = to + 1;
+      return range;
+    });
+  }
+
+  function validateBlankSplitRanges(batch, ranges) {
+    if (!batch || !ranges.length) return "Выберите партию и количество пачек от 1 до числа номеров в партии (не больше 1000).";
+    let expectedFrom = batch.number_from;
+    for (const range of ranges) {
+      const { number_from: from, number_to: to } = range;
+      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)) return "Укажите целые номера «с» и «по» для каждой пачки.";
+      if (from < batch.number_from || to > batch.number_to) return "Номера пачки должны находиться в диапазоне партии.";
+      if (from > to) return "Первый номер пачки не может быть больше последнего.";
+      if (from !== expectedFrom) return "Расположите пачки по порядку, без пересечений и пропусков номеров.";
+      expectedFrom = to + 1;
+    }
+    return expectedFrom === batch.number_to + 1 ? "" : "Распределите между пачками все номера партии.";
+  }
+
   function openBatchSplitForm(batchId = null) {
     const batches = (window.data?.blanksBatches || []).filter(canSplitBatch);
     if (!batches.length) {
@@ -399,9 +427,11 @@
             ${batches.map((batch) => `<option value="${Number(batch.id)}" ${Number(batch.id) === selectedId ? "selected" : ""}>${esc(getFormTypeName(batch))} · ${esc(rangeLabel(batch))}${batch.comment ? ` · ${esc(batch.comment)}` : ""}</option>`).join("")}
           </select>
         </label>
-        <label class="field"><span>Номеров в одной пачке</span>
-          <input name="pack_size" type="number" min="1" step="1" value="500" inputmode="numeric" required />
+        <label class="field"><span>На сколько пачек разбить</span>
+          <input name="pack_count" type="number" min="1" max="1000" step="1" value="3" inputmode="numeric" required />
         </label>
+        <p class="muted">Программа предложит равные пачки. У каждой можно изменить первый и последний номер. Вводите только номера, без серии.</p>
+        <div data-split-ranges class="blank-split-ranges"></div>
         <div data-split-preview class="blank-split-preview" aria-live="polite"></div>
         <p class="muted">Разбить партию можно один раз. Уже выданные номера и история сохраняются.</p>
         <div data-split-error class="form-error" role="alert" hidden></div>
@@ -413,37 +443,70 @@
     const form = document.getElementById("blankBatchSplitForm");
     if (!form) return;
     const batchSelect = form.elements.batch_id;
-    const sizeInput = form.elements.pack_size;
+    const countInput = form.elements.pack_count;
+    const rangesHost = form.querySelector("[data-split-ranges]");
     const preview = form.querySelector("[data-split-preview]");
     const errorBox = form.querySelector("[data-split-error]");
     let saving = false;
+    let ranges = [];
     const getSelection = () => ({
       batch: batches.find((item) => Number(item.id) === Number(batchSelect.value)),
-      size: Number(sizeInput.value),
+      count: Number(countInput.value),
     });
     const updatePreview = () => {
-      const { batch, size } = getSelection();
+      const { batch } = getSelection();
       preview.replaceChildren();
-      if (!batch || !Number.isSafeInteger(size) || size < 1) return;
-      const count = Math.ceil((batch.number_to - batch.number_from + 1) / size);
-      const lines = [`Количество пачек: ${count}`];
-      const indexes = count <= 4 ? Array.from({ length: count }, (_, i) => i) : [0, 1, 2, count - 1];
+      if (!batch) return;
+      const error = validateBlankSplitRanges(batch, ranges);
+      if (error) { preview.textContent = error; return; }
+      const lines = [`Количество пачек: ${ranges.length}`];
+      const indexes = ranges.length <= 4 ? ranges.map((_, i) => i) : [0, 1, 2, ranges.length - 1];
       indexes.forEach((i) => {
-        if (i > 2 && count > 4) lines.push("…");
-        const from = batch.number_from + i * size;
-        lines.push(`Пачка ${i + 1}: ${rangeLabel(batch, from, Math.min(from + size - 1, batch.number_to))}`);
+        if (i > 2 && ranges.length > 4) lines.push("…");
+        lines.push(`Пачка ${i + 1}: ${rangeLabel(batch, ranges[i].number_from, ranges[i].number_to)}`);
       });
       preview.textContent = lines.join("\n");
     };
-    batchSelect.addEventListener("change", updatePreview);
-    sizeInput.addEventListener("input", updatePreview);
+    const regenerateRanges = () => {
+      const { batch, count } = getSelection();
+      ranges = batch ? buildBalancedBlankRanges(batch, count) : [];
+      rangesHost.innerHTML = ranges.map((range, index) => `
+        <fieldset class="blank-split-range">
+          <legend>Пачка ${index + 1}</legend>
+          <label class="field"><span>Номер с</span><input value="${String(range.number_from).padStart(batch.number_width || 6, "0")}" data-split-index="${index}" data-split-boundary="number_from" inputmode="numeric" pattern="[0-9]+" required /></label>
+          <label class="field"><span>Номер по</span><input value="${String(range.number_to).padStart(batch.number_width || 6, "0")}" data-split-index="${index}" data-split-boundary="number_to" inputmode="numeric" pattern="[0-9]+" required /></label>
+        </fieldset>`).join("");
+      errorBox.hidden = true;
+      updatePreview();
+    };
+    const updateBatch = () => {
+      const { batch, count } = getSelection();
+      if (batch) {
+        const max = Math.min(batch.number_to - batch.number_from + 1, 1000);
+        countInput.max = String(max);
+        if (count > max) countInput.value = String(max);
+      }
+      regenerateRanges();
+    };
+    batchSelect.addEventListener("change", updateBatch);
+    countInput.addEventListener("input", regenerateRanges);
+    rangesHost.addEventListener("input", (event) => {
+      const index = Number(event.target.dataset.splitIndex);
+      const boundary = event.target.dataset.splitBoundary;
+      if (!ranges[index] || !["number_from", "number_to"].includes(boundary)) return;
+      const value = event.target.value.trim();
+      ranges[index][boundary] = NUMBER_ONLY_RE.test(value) ? Number(value) : NaN;
+      errorBox.hidden = true;
+      updatePreview();
+    });
     form.querySelector("[data-split-cancel]").addEventListener("click", () => window.closeActionModal());
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (saving) return;
-      const { batch, size } = getSelection();
-      if (!batch || !Number.isSafeInteger(size) || size < 1) {
-        errorBox.textContent = "Выберите партию и укажите целое положительное число номеров в пачке.";
+      const { batch, count } = getSelection();
+      const error = validateBlankSplitRanges(batch, ranges);
+      if (error || ranges.length !== count) {
+        errorBox.textContent = error || "Количество диапазонов должно совпадать с количеством пачек.";
         errorBox.hidden = false;
         return;
       }
@@ -453,7 +516,7 @@
       controls.forEach((control) => { control.disabled = true; });
       try {
         await window.apiRequest(`/blanks/batches/${Number(batch.id)}/parts`, {
-          method: "POST", body: JSON.stringify({ pack_size: size }),
+          method: "POST", body: JSON.stringify({ parts: ranges }),
         });
         if (document.getElementById("blankBatchSplitForm") === form) window.closeActionModal();
         window.showToast?.("Партия разбита на пачки. При печати выберите свою пачку в списке «Пачка оператора».");
@@ -468,8 +531,8 @@
         controls.forEach((control) => { control.disabled = false; });
       }
     });
-    updatePreview();
-    (selectedId ? sizeInput : batchSelect).focus();
+    updateBatch();
+    (selectedId ? countInput : batchSelect).focus();
   }
 
   function getIssuedHistoryGroups() {

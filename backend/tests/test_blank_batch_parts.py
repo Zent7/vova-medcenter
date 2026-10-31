@@ -16,6 +16,7 @@ from app.models.blank_form import (  # noqa: E402
     BLANK_STATUS_ISSUED,
     BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE,
     BlankForm,
+    BlankBatchPart,
     BlankType,
 )
 from app.services.blank_forms import (  # noqa: E402
@@ -28,6 +29,9 @@ from app.services.blank_forms import (  # noqa: E402
     manual_pick_form,
     split_batch_into_parts,
 )
+from app.schemas.blank_form import BlankBatchPartSplitRequest  # noqa: E402
+from app.api.v1.routes.blanks import split_batch_endpoint  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 
 class BlankBatchPartsTests(unittest.TestCase):
@@ -82,6 +86,45 @@ class BlankBatchPartsTests(unittest.TestCase):
             [(part.number_from, part.number_to) for part in parts],
             [(1, 300), (301, 600), (601, 900), (901, 1000)],
         )
+
+    def test_three_custom_ranges_assign_all_forms_and_record_ranges_in_history(self):
+        ranges = [(1, 100), (101, 600), (601, 1000)]
+        parts = split_batch_into_parts(self.db, batch_id=self.batch.id, ranges=ranges, user_id=1)
+        self.db.commit()
+        self.assertEqual([(part.number_from, part.number_to) for part in parts], ranges)
+        counts = list_batch_parts_with_counts(self.db, [self.batch.id])[self.batch.id]
+        self.assertEqual([part["free_count"] for part in counts], [100, 500, 400])
+        self.assertEqual(self.db.query(BlankForm).filter(BlankForm.batch_part_id.is_(None)).count(), 0)
+        entry = self.db.execute(select(AuditLog).where(AuditLog.action == "split_parts")).scalar_one()
+        self.assertEqual(entry.payload_json["ranges"], [
+            {"number_from": start, "number_to": end} for start, end in ranges
+        ])
+        self.assertEqual(get_next_free_form(self.db, blank_type=BLANK_TYPE_DRIVER_MEDICAL_CERTIFICATE, batch_part_id=parts[2].id).number_value, 601)
+
+    def test_invalid_ranges_leave_no_partial_packs_or_assignments(self):
+        for ranges in [[], [(1, 500), (500, 1000)], [(1, 499), (501, 1000)], [(0, 500), (501, 1000)], [(1, 1001)], [(1, 999)], [(2, 1000)], [(10, 1)], [(501, 1000), (1, 500)]]:
+            with self.subTest(ranges=ranges), self.assertRaises(BlankRangeInvalidError):
+                split_batch_into_parts(self.db, batch_id=self.batch.id, ranges=ranges, user_id=1)
+            self.assertEqual(self.db.query(BlankBatchPart).count(), 0)
+            self.assertEqual(self.db.query(BlankForm).filter(BlankForm.batch_part_id.is_not(None)).count(), 0)
+
+    def test_api_request_accepts_one_split_mode_and_validates_integer_bounds(self):
+        self.assertEqual(BlankBatchPartSplitRequest(pack_size=500).pack_size, 500)
+        self.assertEqual(len(BlankBatchPartSplitRequest(parts=[{"number_from": 1, "number_to": 1000}]).parts), 1)
+        for payload in [{}, {"parts": []}, {"pack_size": 500, "parts": [{"number_from": 1, "number_to": 1000}]}, {"parts": [{"number_from": -1, "number_to": 1000}]}, {"parts": [{"number_from": 1.5, "number_to": 1000}]}]:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                BlankBatchPartSplitRequest(**payload)
+
+    def test_api_passes_all_three_custom_ranges_to_the_service(self):
+        payload = BlankBatchPartSplitRequest(parts=[
+            {"number_from": 1, "number_to": 200},
+            {"number_from": 201, "number_to": 700},
+            {"number_from": 701, "number_to": 1000},
+        ])
+        response = split_batch_endpoint(self.batch.id, payload, db=self.db, current_user=None)
+        self.assertEqual([(part.number_from, part.number_to, part.free_count) for part in response], [
+            (1, 200, 200), (201, 700, 500), (701, 1000, 300),
+        ])
 
     def test_batch_can_be_split_only_once(self):
         split_batch_into_parts(self.db, batch_id=self.batch.id, pack_size=500, user_id=1)
