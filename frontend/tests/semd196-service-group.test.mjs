@@ -29,6 +29,9 @@ function catalog({ driverId = 2, certificatesId = 7, services = [], serverServic
     escapeHtml: (value) => String(value ?? ""),
   });
   vm.runInContext([
+    appSource.slice(appSource.indexOf("const SERVICE_SERIES_OVERRIDES"), appSource.indexOf("function getStoredDriverPrintSeries")),
+    functionSource(appSource, "buildServiceSeriesAbbreviation"),
+    functionSource(appSource, "formatCertificate086SeriesForSex"),
     functionSource(appSource, "normalizeSemd196ServiceGroup"),
     functionSource(appSource, "refreshServiceCatalog"),
     functionSource(modalSource, "getVisibleClientServices"),
@@ -36,6 +39,35 @@ function catalog({ driverId = 2, certificatesId = 7, services = [], serverServic
   ].join("\n"), context);
   return context;
 }
+
+test("actual driver chips do not label the service with backend ID 44 as СЭНД", () => {
+  const services = [
+    { id: 5, backendId: 5, legacySourceId: 8, name: "Медицинская комиссия", groupId: 3 },
+    { id: 9, backendId: 9, legacySourceId: 7, name: "071У", groupId: 3 },
+    { id: 44, backendId: 44, legacySourceId: null, name: "Водительская после лишения", groupId: 3 },
+    { id: 41, backendId: 41, legacySourceId: 43, name: "Справка по форме СЭМД-196 без ФЛГ", groupId: 8 },
+  ];
+  const context = catalog({ driverId: 3, certificatesId: 8, services });
+  context.getClientModalSexKey = () => "male";
+  vm.runInContext([
+    functionSource(modalSource, "getActiveClientServiceGroups"),
+    functionSource(modalSource, "renderClientServiceSelector"),
+  ].join("\n"), context);
+  context.appState.clientServiceGroupFilter = "3";
+  const html = context.renderClientServiceSelector();
+  assert.doesNotMatch(html, /СЭНД/);
+  assert.match(html, /ВУ после лишения/);
+  assert.match(html, /ВУ \(водительская\)/);
+  assert.match(html, /071у/);
+  context.appState.clientServiceGroupFilter = "8";
+  assert.match(context.renderClientServiceSelector(), /СЭНД/);
+});
+
+test("custom services never use their database ID as a legacy abbreviation ID", () => {
+  const context = catalog();
+  assert.notEqual(context.buildServiceSeriesAbbreviation({ id: 43, name: "Новая услуга" }), "СЭНД");
+  assert.equal(context.buildServiceSeriesAbbreviation({ id: 100, legacy_source_id: 44, name: "Справка" }), "СЭНД");
+});
 
 test("cached СЭНД disappears from Услуги → ВУ and remains available in Справки", () => {
   const context = catalog({ services: [

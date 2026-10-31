@@ -10472,6 +10472,7 @@ const BLANK_TYPE_GUARD_MEDICAL_CERTIFICATE = "guard_medical_certificate";
 const BLANK_TYPE_LMK_MEDICAL_CERTIFICATE = "lmk_medical_certificate";
 
 const SERVICE_SERIES_OVERRIDES = new Map([
+  ["водительская после лишения", "ВУ после лишения"],
   ["071у", "071у"],
   ["070у", "070у"],
   ["072 у скк", "072 у СКК"],
@@ -10717,7 +10718,8 @@ function buildServiceSeriesAbbreviation(service, options = {}) {
   const name = String(service?.name || "").trim();
   const normalizedName = name.toLowerCase();
   if (!name) return "";
-  const legacyId = Number(service?.legacySourceId ?? service?.id);
+  // id — номер записи текущей БД, он может совпасть с ID другой старой услуги.
+  const legacyId = Number(service?.legacySourceId ?? service?.legacy_source_id);
   if (SERVICE_ABBREVIATION_BY_LEGACY_ID.has(legacyId)) {
     const abbreviation = SERVICE_ABBREVIATION_BY_LEGACY_ID.get(legacyId);
     return abbreviation === "086у" ? formatCertificate086SeriesForSex(options) : abbreviation;
