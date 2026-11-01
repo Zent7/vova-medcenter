@@ -484,6 +484,7 @@ const columnKeys = [
   "glasses",
   "note",
   "position",
+  "workPlace",
   "agent",
 ];
 
@@ -6453,6 +6454,7 @@ function buildExcelRows(clients) {
       note: client.note || "",
       encounterDate: client.encounterDate || "",
       position: client.profession || "",
+      workPlace: client.workPlace || "",
       agent: client.agent || "",
     };
   });
@@ -6816,6 +6818,7 @@ function renderSketchHome() {
     "Очки",
     "Примечания",
     "Должность",
+    "Место работы",
     "Агент",
   ];
   const tableLoading =
@@ -6858,7 +6861,7 @@ function renderSketchHome() {
             <div class="sketch-toolbar">
               <label class="field sketch-search">
                 <span></span>
-                <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="ФИО, номер справки, агент" autocapitalize="words" />
+                <input id="clientSearchInput" value="${escapeHtml(appState.clientSearch)}" placeholder="ФИО, номер справки, место работы, агент" autocapitalize="words" />
               </label>
               <div class="sketch-toolbar__actions">
                 <button class="primary-button" id="addClientButton" type="button" title="Создать новую карточку пациента">Новый клиент</button>
@@ -6964,6 +6967,7 @@ function renderSketchHome() {
                           ${renderExcelMarkCell(row.glasses)}
                           <span>${escapeHtml(row.note)}</span>
                           <span>${renderDashboardCopyCell(row.position, "должность", "Должность скопирована")}</span>
+                          <span>${renderDashboardCopyCell(row.workPlace, "место работы", "Место работы скопировано")}</span>
                           <span>${escapeHtml(row.agent)}</span>
                         </button>
                       `,
