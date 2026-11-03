@@ -6235,6 +6235,24 @@ body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
   text-overflow: ellipsis;
 }
 
+/* Метка «коп.» вертикально, как заголовки специалистов. Места под неё нет: она встаёт у правого
+   края при наведении и не сдвигает ни текст, ни строку. */
+.copyable-table-value {
+  position: relative;
+}
+
+.copyable-table-value i {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  padding: 2px 1px;
+  border-radius: 3px;
+  background: #ffffff;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
 .chart-note {
   margin-top: 16px;
   padding-top: 16px;
