@@ -1,8 +1,8 @@
-"""Учетные записи сотрудников, отчеты и касса доступны только админу.
+"""Учетные записи сотрудников и отчеты доступны только админу, касса — админу и оператору.
 
 Председатель заходит в программу постоянно, но ни добавлять пользователей, ни видеть
 отчеты и кассу он не должен. Тесты проверяют и саму проверку роли, и то, что ею
-закрыты все маршруты трех разделов: без этого новый маршрут остался бы открытым.
+закрыты все маршруты разделов: без этого новый маршрут остался бы открытым.
 
 XML-выгрузки открыты админу и председателю, врачу и оператору — нет.
 """
@@ -78,8 +78,8 @@ class AdminOnlyAccessTests(unittest.TestCase):
                     auth_routes.require_admin(current_user=self._user(db, login))
                 self.assertEqual(raised.exception.status_code, 403, login)
 
-    def test_every_staff_report_and_payment_route_requires_admin(self):
-        for module in (staff_routes, reports_routes, payments_routes):
+    def test_every_staff_and_report_route_requires_admin(self):
+        for module in (staff_routes, reports_routes):
             routes = [route for route in module.router.routes if isinstance(route, APIRoute)]
             self.assertTrue(routes, module.__name__)
             for route in routes:
@@ -88,6 +88,50 @@ class AdminOnlyAccessTests(unittest.TestCase):
                     _dependency_calls(route.dependant),
                     f"{module.__name__}: {sorted(route.methods)} {route.path} открыт не только админу",
                 )
+
+    def test_cash_is_open_to_admin_and_operator_only(self):
+        with self.Session() as db:
+            for login in ("admin", "operator"):
+                user = self._user(db, login)
+                self.assertEqual(payments_routes.require_cash_access(current_user=user).login, login)
+            for login in ("chairman", "doctor"):
+                with self.assertRaises(HTTPException) as raised:
+                    payments_routes.require_cash_access(current_user=self._user(db, login))
+                self.assertEqual(raised.exception.status_code, 403, login)
+
+        routes = [route for route in payments_routes.router.routes if isinstance(route, APIRoute)]
+        self.assertEqual(sorted(route.path for route in routes), ["", "/cash-report"])
+        for route in routes:
+            # Кассовый отчет — админу и оператору, сырой список платежей — только админу.
+            guard = payments_routes.require_cash_access if route.path == "/cash-report" else auth_routes.require_admin
+            self.assertIn(guard, _dependency_calls(route.dependant), f"{sorted(route.methods)} {route.path}")
+
+    def test_operator_sees_cash_only_of_own_centers(self):
+        with self.Session() as db:
+            main = Center(code="center-a", name="Центр А")
+            extra = Center(code="center-b", name="Центр Б")
+            foreign = Center(code="center-c", name="Центр В")
+            db.add_all([main, extra, foreign])
+            db.flush()
+            operator = self._user(db, "operator")
+            operator.center = main
+            operator.extra_centers = [extra]
+            db.flush()
+            admin = self._user(db, "admin")
+
+            self.assertEqual(payments_routes._cash_center_id(operator, None), main.id)
+            self.assertEqual(payments_routes._cash_center_id(operator, extra.id), extra.id)
+            with self.assertRaises(HTTPException) as raised:
+                payments_routes._cash_center_id(operator, foreign.id)
+            self.assertEqual(raised.exception.status_code, 403)
+
+            self.assertIsNone(payments_routes._cash_center_id(admin, None))
+            self.assertEqual(payments_routes._cash_center_id(admin, foreign.id), foreign.id)
+
+            # Сотруднику без медцентра касса не открывается, даже если центр не назван.
+            with self.assertRaises(HTTPException) as raised:
+                payments_routes._cash_center_id(self._user(db, "doctor"), None)
+            self.assertEqual(raised.exception.status_code, 403)
 
     def test_xml_exports_are_closed_to_doctor_and_operator(self):
         with self.Session() as db:

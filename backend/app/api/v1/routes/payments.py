@@ -3,11 +3,11 @@ from datetime import date
 from decimal import Decimal
 import json
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.v1.routes.auth import require_admin
+from app.api.v1.routes.auth import get_current_user, require_admin
 from app.db.session import get_db
 from app.models.center import Center
 from app.models.client import Client
@@ -15,9 +15,25 @@ from app.models.encounter import Encounter
 from app.models.encounter_service import EncounterService
 from app.models.payment import Payment
 from app.models.service import Service
+from app.models.user import User
 from app.schemas.payment import CashReportRowRead, CashReportServiceRead, PaymentRead
 
-router = APIRouter(dependencies=[Depends(require_admin)])
+CASH_ROLE_CODES = ("admin", "operator")
+
+
+def require_cash_access(current_user: User = Depends(get_current_user)) -> User:
+    role_code = current_user.role.code if current_user.role is not None else ""
+    if role_code not in CASH_ROLE_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Касса доступна только админу и оператору",
+        )
+    return current_user
+
+
+# Кассовый отчет открывают админ и оператор (оператор только по своим медцентрам, см.
+# _cash_center_id); сырой список платежей остается только у админа.
+router = APIRouter()
 
 
 def _client_full_name(client: Client) -> str:
@@ -114,19 +130,43 @@ def list_cash_report_rows(
     return result
 
 
+def _cash_center_id(current_user: User, requested_center_id: int | None) -> int | None:
+    """Медцентр, чью кассу открывает пользователь; None означает кассу всех центров.
+
+    Админ видит все центры. Оператор видит только свои (основной и дополнительные):
+    центр не назван — берется основной. Оператору без медцентра касса не открывается.
+    """
+    if current_user.sees_all_centers:
+        return requested_center_id
+    center_id = requested_center_id if requested_center_id is not None else current_user.pinned_center_id
+    if center_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Вам не назначен медцентр, касса недоступна",
+        )
+    if center_id not in {center.id for center in current_user.work_centers}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Касса другого медцентра доступна только админу",
+        )
+    return center_id
+
+
 @router.get("/cash-report", response_model=list[CashReportRowRead])
 def get_cash_report(
     date_from: date = Query(...),
     date_to: date = Query(...),
     center_id: int | None = Query(default=None),
+    current_user: User = Depends(require_cash_access),
     db: Session = Depends(get_db),
 ) -> list[CashReportRowRead]:
     if date_from > date_to:
         date_from, date_to = date_to, date_from
+    center_id = _cash_center_id(current_user, center_id)
     return list_cash_report_rows(date_from=date_from, date_to=date_to, center_id=center_id, db=db)
 
 
-@router.get("", response_model=list[PaymentRead])
+@router.get("", response_model=list[PaymentRead], dependencies=[Depends(require_admin)])
 def list_payments(
     encounter_id: int | None = Query(default=None),
     db: Session = Depends(get_db),

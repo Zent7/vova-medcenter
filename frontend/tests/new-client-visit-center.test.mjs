@@ -156,5 +156,5 @@ test("сохранённое обращение запоминает центр,
 });
 
 test("изменённый app.js подняли версию в index.html", () => {
-  assert.match(indexHtml, /\.\/app\.js\?v=[\w-]*main-workplace-column-v1/);
+  assert.match(indexHtml, /\.\/app\.js\?v=[\w-]*blanks-doctor-cash-operator-v1/);
 });

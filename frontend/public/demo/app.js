@@ -436,9 +436,9 @@ const navItems = [
   { id: "reports", label: "Отчеты", toast: "Открыт блок: Отчеты" },
 ];
 
-// Учетные записи сотрудников, отчеты и касса — только у админа. Председатель
-// заходит в программу постоянно, но этих разделов не видит; сервер закрывает те же
-// маршруты по роли, так что скрытого пункта меню для защиты недостаточно и не нужно.
+// Учетные записи сотрудников и отчеты — только у админа. Председатель заходит в программу
+// постоянно, но этих разделов не видит; сервер закрывает те же маршруты по роли, так что
+// скрытого пункта меню для защиты недостаточно и не нужно.
 function canManageEmployeeWorkspace() {
   return appState.auth.roleCode === "admin";
 }
@@ -447,17 +447,23 @@ function canAccessReportsWorkspace() {
   return appState.auth.roleCode === "admin";
 }
 
+// Оператор видит кассу только своих медцентров: сервер отдает ему только их (см. _cash_center_id).
 function canAccessCashWorkspace() {
-  return appState.auth.roleCode === "admin";
+  return ["admin", "operator"].includes(appState.auth.roleCode);
 }
 
-// «Бланки», «Шаблоны» и «XML» — служебные разделы: врач и оператор их не открывают.
-// Файлы шаблонов и XML-выгрузки сервер закрывает по той же паре ролей; список бланков
-// нужен печати справок, поэтому его API остаётся открытым, а закрыт только раздел.
-const SERVICE_WORKSPACE_PAGES = ["blanks", "templates", "xml"];
+// «Шаблоны» и «XML» — служебные разделы: врач и оператор их не открывают. Файлы шаблонов
+// и XML-выгрузки сервер закрывает по той же паре ролей.
+const SERVICE_WORKSPACE_PAGES = ["templates", "xml"];
 
 function canAccessServiceWorkspace() {
   return ["admin", "chairman"].includes(appState.auth.roleCode);
+}
+
+// «Бланки» открыты врачу. Очистку раздела оставили председателю (canClearBlanks в blanks-page.js),
+// сервер проверяет то же, см. require_blank_clear_access.
+function canAccessBlanksWorkspace() {
+  return ["admin", "chairman", "doctor"].includes(appState.auth.roleCode);
 }
 
 const columnKeys = [
@@ -6304,6 +6310,7 @@ function renderNav() {
   const visibleNavItems = navItems.filter((item) => {
     if (item.id === "reports") return canAccessReportsWorkspace();
     if (item.id === "cash") return canAccessCashWorkspace();
+    if (item.id === "blanks") return canAccessBlanksWorkspace();
     if (SERVICE_WORKSPACE_PAGES.includes(item.id)) return canAccessServiceWorkspace();
     return true;
   });
@@ -6336,7 +6343,7 @@ function renderNav() {
         resetDashboardClientSelection();
       }
       if (page === "cash" && !canAccessCashWorkspace()) {
-        showToast("Касса доступна только админу");
+        showToast("Касса доступна админу и оператору");
         return;
       }
       if (page === "cash") {
@@ -7279,7 +7286,7 @@ function renderEmployeePage() {
         <div class="summary-card">
           <div class="summary-card__label">Распределение ролей</div>
           <div class="summary-card__value">Только админ</div>
-          <div class="summary-card__meta">Учетные записи, отчеты и касса доступны только админу</div>
+          <div class="summary-card__meta">Учетные записи и отчеты доступны только админу, касса — админу и оператору</div>
         </div>
       </div>
 
@@ -7411,7 +7418,7 @@ function renderEmployeePage() {
           : appState.auth.accessToken
             ? `
               <div class="note">
-                Вы вошли как <strong>${escapeHtml(roleName)}</strong>. Учетные записи сотрудников, отчеты и касса
+                Вы вошли как <strong>${escapeHtml(roleName)}</strong>. Учетные записи сотрудников и отчеты
                 доступны только админу.
               </div>
             `
@@ -14710,6 +14717,7 @@ function renderApp() {
   if (
     (appState.page === "reports" && !canAccessReportsWorkspace()) ||
     (appState.page === "cash" && !canAccessCashWorkspace()) ||
+    (appState.page === "blanks" && !canAccessBlanksWorkspace()) ||
     (SERVICE_WORKSPACE_PAGES.includes(appState.page) && !canAccessServiceWorkspace())
   ) {
     appState.page = appState.auth.accessToken ? "dashboard" : "start";

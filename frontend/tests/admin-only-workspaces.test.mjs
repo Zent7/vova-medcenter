@@ -4,8 +4,8 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-// Учетные записи сотрудников, отчеты и касса — только у админа. Председатель
-// заходит в программу постоянно и не должен видеть эти разделы.
+// Учетные записи сотрудников и отчеты — только у админа, касса — у админа и оператора.
+// Председатель заходит в программу постоянно и не должен видеть эти разделы.
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(testDir, "../public/demo/app.js"), "utf8");
@@ -41,23 +41,50 @@ function accessFor(roleCode) {
   )({ auth: { roleCode } });
 }
 
-test("сотрудники, отчеты и касса доступны только админу", () => {
+function allowedFor(name, roleCode) {
+  return new Function("appState", `${extractFunction(name)}\nreturn ${name}();`)({ auth: { roleCode } });
+}
+
+test("сотрудники и отчеты доступны только админу, касса — админу и оператору", () => {
   assert.deepEqual(accessFor("admin"), { staff: true, reports: true, cash: true });
-  for (const roleCode of ["chairman", "doctor", "operator", ""]) {
+  assert.deepEqual(accessFor("operator"), { staff: false, reports: false, cash: true });
+  for (const roleCode of ["chairman", "doctor", ""]) {
     assert.deepEqual(accessFor(roleCode), { staff: false, reports: false, cash: false }, roleCode || "без роли");
   }
 });
 
-test("пункты меню «Касса» и «Отчеты» скрыты у тех, кому они не положены", () => {
+test("«Бланки» открыты врачу, председателю и админу, но не оператору", () => {
+  for (const roleCode of ["admin", "chairman", "doctor"]) {
+    assert.equal(allowedFor("canAccessBlanksWorkspace", roleCode), true, roleCode);
+  }
+  for (const roleCode of ["operator", ""]) {
+    assert.equal(allowedFor("canAccessBlanksWorkspace", roleCode), false, roleCode || "без роли");
+  }
+});
+
+test("«Шаблоны» и «XML» остаются у админа и председателя", () => {
+  for (const roleCode of ["admin", "chairman"]) {
+    assert.equal(allowedFor("canAccessServiceWorkspace", roleCode), true, roleCode);
+  }
+  for (const roleCode of ["doctor", "operator", ""]) {
+    assert.equal(allowedFor("canAccessServiceWorkspace", roleCode), false, roleCode || "без роли");
+  }
+  assert.match(appSource, /const SERVICE_WORKSPACE_PAGES = \["templates", "xml"\];/);
+});
+
+test("пункты меню «Касса», «Бланки» и «Отчеты» скрыты у тех, кому они не положены", () => {
   const filter = sourceBetween("const visibleNavItems = navItems.filter(", "navRoot.innerHTML", "фильтр меню");
   assert.match(filter, /item\.id === "reports"\) return canAccessReportsWorkspace\(\)/);
   assert.match(filter, /item\.id === "cash"\) return canAccessCashWorkspace\(\)/);
+  assert.match(filter, /item\.id === "blanks"\) return canAccessBlanksWorkspace\(\)/);
+  assert.match(filter, /SERVICE_WORKSPACE_PAGES\.includes\(item\.id\)\) return canAccessServiceWorkspace\(\)/);
 });
 
-test("открытая или восстановленная страница кассы и отчетов не показывается без прав", () => {
+test("открытая или восстановленная страница кассы, отчетов и бланков не показывается без прав", () => {
   const guard = sourceBetween("function renderApp() {", "document.body.dataset.page", "начало renderApp");
   assert.match(guard, /appState\.page === "reports" && !canAccessReportsWorkspace\(\)/);
   assert.match(guard, /appState\.page === "cash" && !canAccessCashWorkspace\(\)/);
+  assert.match(guard, /appState\.page === "blanks" && !canAccessBlanksWorkspace\(\)/);
   // Председателю на странице «Сотрудник» больше нечего делать: уводим на главную.
   assert.match(guard, /appState\.auth\.accessToken \? "dashboard" : "start"/);
 });

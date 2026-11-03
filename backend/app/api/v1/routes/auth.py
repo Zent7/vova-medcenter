@@ -64,8 +64,9 @@ def require_session_manager(current_user: User = Depends(get_current_user)) -> U
     return current_user
 
 
-# Учетные записи сотрудников, отчеты и касса — только у админа. Председатель ими
-# не пользуется: он работает с осмотрами и бланками.
+# Учетные записи сотрудников и отчеты — только у админа. Председатель ими не
+# пользуется: он работает с осмотрами и бланками. Касса открыта и оператору, см.
+# require_cash_access в payments.py.
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role.code != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Доступ разрешен только админу")
