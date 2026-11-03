@@ -76,7 +76,9 @@ def get_free_series(
     center_id: int | None = Query(default=None),
     strict_only: bool = Query(default=False),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> list[BlankSeriesRead]:
+    _check_center_access(current_user, center_id)
     items = list_free_series(db, blank_type=blank_type, center_id=center_id, strict_only=strict_only)
     return [BlankSeriesRead(**item) for item in items]
 
@@ -86,7 +88,9 @@ def get_batches(
     blank_type: str | None = Query(default=None),
     center_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> list[BlankBatchRead]:
+    _check_center_access(current_user, center_id)
     items = list_batches(db, blank_type=blank_type, center_id=center_id)
     parts_by_batch = list_batch_parts_with_counts(db, [batch.id for batch, _ in items])
     result: list[BlankBatchRead] = []
@@ -182,7 +186,9 @@ def get_forms(
     search: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> list[BlankFormRead]:
+    _check_center_access(current_user, center_id)
     items = list_forms(
         db,
         blank_type=blank_type,
@@ -205,7 +211,9 @@ def get_forms_page(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankFormsPageRead:
+    _check_center_access(current_user, center_id)
     items, total = list_forms_page(
         db,
         blank_type=blank_type,
@@ -236,13 +244,13 @@ def get_next_form(
     current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankFormRead:
     blank_type = resolve_blank_type_for_series(blank_type, series)
+    _check_center_access(current_user, center_id)
     if auto_create and (strict_only or batch_part_id is not None):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Для строгого бланка автонумерация не применяется: номер берётся из заведённой партии",
         )
     if auto_create:
-        _check_center_access(current_user, center_id)
         try:
             form = create_auto_number_form(
                 db,
@@ -291,8 +299,10 @@ def get_exact_form(
     strict_only: bool = Query(default=False),
     batch_part_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankFormRead:
     blank_type = resolve_blank_type_for_series(blank_type, series)
+    _check_center_access(current_user, center_id)
     try:
         form = get_form_by_printed_number(
             db,
@@ -407,7 +417,9 @@ def clear_blanks_endpoint(
 def get_stats(
     center_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
 ) -> BlankStatsResponse:
+    _check_center_access(current_user, center_id)
     return BlankStatsResponse(
         items=[BlankStatsItem(**row) for row in compute_stats(db, center_id=center_id)]
     )
