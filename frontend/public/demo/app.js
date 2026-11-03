@@ -189,6 +189,7 @@ const data = {
   staffLoading: false,
   staffError: "",
   staffCreateError: "",
+  staffListError: "",
   editingStaffCentersId: null,
   staffCentersError: "",
   lastCreatedStaffUser: null,
@@ -3411,6 +3412,7 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
   data.staffRoles = [];
   data.staffError = "";
   data.staffCreateError = "";
+  data.staffListError = "";
   data.editingStaffCentersId = null;
   data.staffCentersError = "";
   appState.page = "start";
@@ -3443,6 +3445,7 @@ async function loadStaffWorkspace() {
 
   data.staffLoading = true;
   data.staffError = "";
+  data.staffListError = "";
   renderApp();
 
   try {
@@ -3499,20 +3502,31 @@ async function updateDemoStaffCenters(userId, centerIds) {
 }
 
 async function deleteDemoStaffUser(userId, userName) {
+  data.staffListError = "";
   try {
-    await apiRequest(`/staff/${encodeURIComponent(userId)}`, {
+    const result = await apiRequest(`/staff/${encodeURIComponent(userId)}`, {
       method: "DELETE",
       headers: {},
     });
-    data.staffUsers = (data.staffUsers || []).filter((user) => Number(user.id) !== Number(userId));
-    if (Number(data.lastCreatedStaffUser?.id) === Number(userId)) {
-      data.lastCreatedStaffUser = null;
+    if (result?.deleted) {
+      data.staffUsers = (data.staffUsers || []).filter((user) => Number(user.id) !== Number(userId));
+      if (Number(data.lastCreatedStaffUser?.id) === Number(userId)) {
+        data.lastCreatedStaffUser = null;
+      }
+    } else {
+      // По учетной записи есть записи в программе: сервер ее отключил, а не удалил.
+      data.staffUsers = (data.staffUsers || []).map((user) =>
+        Number(user.id) === Number(userId) ? { ...user, is_active: false } : user,
+      );
     }
+    const message = result?.deleted
+      ? `Сотрудник ${userName || userId} удален`
+      : result?.message || `Сотрудник ${userName || userId} отключен`;
     persistDemoState();
     renderApp();
-    showToast(`Сотрудник ${userName || userId} удален`);
+    showToast(message);
   } catch (error) {
-    data.staffCreateError = humanizeApiError(error, "Не удалось удалить сотрудника");
+    data.staffListError = humanizeApiError(error, "Не удалось удалить сотрудника");
     renderApp();
   }
 }
@@ -7375,6 +7389,9 @@ function renderEmployeePage() {
                     : ""
                 }
                 ${
+                  data.staffListError ? `<div class="note employee-note employee-note--error">${escapeHtml(data.staffListError)}</div>` : ""
+                }
+                ${
                   data.staffLoading
                     ? `<div class="empty">Загружаем сотрудников...</div>`
                     : `
@@ -7387,7 +7404,7 @@ function renderEmployeePage() {
                                 <div class="actions">
                                   <span class="status ${user.is_active ? "ok" : "warn"}">${user.is_active ? "Активен" : "Отключен"}</span>
                                   ${user.all_centers ? "" : `<button class="ghost-button" type="button" data-edit-staff-centers="${escapeHtml(user.id)}">Центры</button>`}
-                                  ${user.role?.code !== "chairman" ? `<button class="ghost-button" type="button" data-delete-staff-user="${escapeHtml(user.id)}" data-delete-staff-name="${escapeHtml(user.full_name || user.login || "сотрудник")}">Удалить</button>` : ""}
+                                  ${user.is_active && user.role?.code !== "chairman" && Number(user.id) !== Number(appState.auth.userId) ? `<button class="ghost-button" type="button" data-delete-staff-user="${escapeHtml(user.id)}" data-delete-staff-name="${escapeHtml(user.full_name || user.login || "сотрудник")}">Удалить</button>` : ""}
                                 </div>
                               </div>
                               <div class="table-row__meta">${escapeHtml(user.login)} · ${escapeHtml(user.role?.name || "Без роли")} · ${escapeHtml(formatStaffCenterLabel(user))}</div>

@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.v1.routes.auth import require_admin
@@ -7,7 +8,13 @@ from app.core.security import generate_session_epoch, hash_password
 from app.db.session import get_db
 from app.models.center import Center
 from app.models.user import ALL_CENTERS_ROLE_CODE, Role, User
-from app.schemas.user_admin import RoleRead, StaffCentersUpdate, StaffUserCreate, StaffUserRead
+from app.schemas.user_admin import (
+    RoleRead,
+    StaffCentersUpdate,
+    StaffUserCreate,
+    StaffUserDeleteResponse,
+    StaffUserRead,
+)
 
 router = APIRouter()
 
@@ -112,12 +119,13 @@ def update_staff_centers(
     return StaffUserRead.model_validate(user)
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_id}", response_model=StaffUserDeleteResponse)
 def delete_staff_user(
     user_id: int,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
-) -> Response:
+) -> StaffUserDeleteResponse:
+    """Удаляет учетную запись; если по ней есть записи в программе, только отключает ее."""
     user = db.execute(
         select(User)
         .options(joinedload(User.role))
@@ -128,6 +136,20 @@ def delete_staff_user(
     if user.id == current_user.id or user.role.code == "chairman":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нельзя удалить председателя или свою учетную запись")
 
-    db.delete(user)
+    try:
+        db.delete(user)
+        db.flush()
+    except IntegrityError:
+        # На учетную запись ссылаются клиенты, документы, бланки или журнал аудита.
+        # Стереть ее нельзя, иначе пропадет история работы, поэтому только отключаем.
+        db.rollback()
+        user = db.get(User, user_id)
+        user.is_active = False
+        db.commit()
+        return StaffUserDeleteResponse(
+            deleted=False,
+            message="Учетную запись нельзя удалить: по ней есть записи в программе. Она отключена и больше не сможет войти.",
+        )
+
     db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return StaffUserDeleteResponse(deleted=True, message="Учетная запись удалена.")

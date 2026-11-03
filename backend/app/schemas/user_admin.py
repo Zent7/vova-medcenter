@@ -70,6 +70,12 @@ class StaffUserCreate(BaseModel):
         return normalized or None
 
 
+class StaffUserDeleteResponse(BaseModel):
+    # deleted=False: по учетной записи есть записи в программе, поэтому ее только отключили.
+    deleted: bool
+    message: str
+
+
 class StaffCentersUpdate(BaseModel):
     # Первый центр становится основным, остальные — дополнительными.
     center_ids: list[int]
