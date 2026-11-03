@@ -6161,7 +6161,8 @@ async function loadClientsFromBackend(searchValue) {
     if (encounterDateTo) params.set("encounter_date_to", encounterDateTo);
     getClientBaseCenterIds().forEach((centerId) => params.append("center_ids", String(centerId)));
     const url = `${API_BASE_URL}/dashboard/encounter-rows?${params.toString()}`;
-    const response = await fetch(url, { signal: abortController.signal });
+    const response = await fetch(url, { headers: getDemoAuthHeaders(), signal: abortController.signal });
+    if (response.status === 401) window.setTimeout(handleSessionEndedByServer, 0);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const clients = await response.json();
     if (requestId !== clientSearchRequestId) return;
@@ -14930,8 +14931,8 @@ document.getElementById("performLogin")?.addEventListener("click", async () => {
     markAuthActivity();
     loginModal?.classList.add("hidden");
     showToast(`Вход выполнен: ${appState.auth.userName || login}`);
-    // Клиентская база зависит от центров сотрудника.
-    void loadClientsFromBackend(appState.clientSearch);
+    // Клиентская база, услуги и шаблоны зависят от центров сотрудника и доступны только с входом.
+    void loadBackendWorkspaceData();
     if (canManageEmployeeWorkspace()) {
       appState.page = "employee";
       persistDemoState();
@@ -15024,6 +15025,8 @@ renderApp();
 // DOMContentLoaded гарантирует, что все скрипты страницы уже выполнены.
 function initRestoredPage() {
   if (appState.page !== "dashboard") renderApp();
+  // Без входа сервер ответит 401 на загрузку раздела: его данные появятся после входа.
+  if (!appState.auth?.accessToken) return;
   // Клиенты подгружаются ниже и на этот момент еще не пришли, поэтому
   // getSelectedBackendClientId() вернул бы null, а loadWorkflowData() ушел бы в API
   // без client_id — то есть за журналами, согласиями и картами всех пациентов сразу.
@@ -15038,5 +15041,11 @@ if (document.readyState === "loading") {
 } else {
   window.setTimeout(initRestoredPage, 0);
 }
-Promise.allSettled([loadClientsFromBackend(appState.clientSearch), loadServicesFromBackend(), loadDocumentTemplatesFromBackend()])
-  .then(() => restoreWorkplaceSelection());
+// Клиенты, услуги и шаблоны сервер отдает только с токеном. Без входа их не грузим:
+// после входа их грузит performLogin.
+function loadBackendWorkspaceData() {
+  return Promise.allSettled([loadClientsFromBackend(appState.clientSearch), loadServicesFromBackend(), loadDocumentTemplatesFromBackend()])
+    .then(() => restoreWorkplaceSelection());
+}
+
+if (appState.auth?.accessToken) loadBackendWorkspaceData();

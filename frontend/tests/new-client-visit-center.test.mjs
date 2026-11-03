@@ -156,5 +156,5 @@ test("сохранённое обращение запоминает центр,
 });
 
 test("изменённый app.js подняли версию в index.html", () => {
-  assert.match(indexHtml, /\.\/app\.js\?v=[\w-]*staff-delete-keeps-records-v1/);
+  assert.match(indexHtml, /\.\/app\.js\?v=[\w-]*login-required-v1/);
 });

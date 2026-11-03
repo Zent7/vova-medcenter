@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.v1.routes.auth import get_current_user, get_optional_current_user
+from app.api.v1.routes.auth import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.center import Center
@@ -50,6 +50,8 @@ from app.services.template_catalog import (
 )
 
 router = APIRouter()
+# Ссылки печати открываются по одноразовому токену из самой ссылки, входа не требуют.
+public_router = APIRouter()
 
 _TEMPLATE_FILE_ACCESS_ROLES = {"admin", "chairman"}
 
@@ -329,8 +331,8 @@ def reset_document_template(
     return _template_response(template, center_id)
 
 
-def _check_print_center_access(db: Session, current_user: User | None, encounter_id: int | None) -> None:
-    if current_user is None or current_user.sees_all_centers or encounter_id is None:
+def _check_print_center_access(db: Session, current_user: User, encounter_id: int | None) -> None:
+    if current_user.sees_all_centers or encounter_id is None:
         return
     encounter = db.get(Encounter, encounter_id)
     if encounter is not None and encounter.center_id not in {center.id for center in current_user.work_centers}:
@@ -341,7 +343,7 @@ def _check_print_center_access(db: Session, current_user: User | None, encounter
 def generate_document_file(
     payload: DocumentGenerateRequest,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentGenerateResponse:
     _check_print_center_access(db, current_user, payload.encounter_id)
     try:
@@ -354,7 +356,7 @@ def generate_document_file(
             blank_form_id=payload.blank_form_id,
             print_variant=payload.print_variant,
             template_center_id=payload.template_center_id,
-            user_id=current_user.id if current_user is not None else 1,
+            user_id=current_user.id,
         )
         db.commit()
         return result
@@ -373,7 +375,7 @@ def generate_document_file(
 def print_document_file(
     payload: DocumentGenerateRequest,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentPrintResponse:
     _check_print_center_access(db, current_user, payload.encounter_id)
     try:
@@ -386,7 +388,7 @@ def print_document_file(
             blank_form_id=payload.blank_form_id,
             print_variant=payload.print_variant,
             template_center_id=payload.template_center_id,
-            user_id=current_user.id if current_user is not None else 1,
+            user_id=current_user.id,
         )
         db.commit()
         return DocumentPrintResponse(
@@ -408,6 +410,7 @@ def print_document_file(
 def save_print_result(
     payload: DocumentPrintResultRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentPrintResultResponse:
     document = db.get(GeneratedDocument, payload.generated_document_id)
     if document is None:
@@ -427,7 +430,7 @@ def save_print_result(
             db,
             generated_document_id=document.id,
             reason=payload.reason,
-            user_id=1,
+            user_id=current_user.id,
         )
         db.commit()
         return DocumentPrintResultResponse(
@@ -508,7 +511,7 @@ def _serve_print_ticket(token: str, request: Request) -> Response:
     return file_response
 
 
-@router.api_route(
+@public_router.api_route(
     "/print-ticket/{token}/{file_name}",
     methods=["GET", "HEAD", "OPTIONS"],
     name="download_print_ticket_file_named",
@@ -517,7 +520,7 @@ def download_print_ticket_file_named(token: str, file_name: str, request: Reques
     return _serve_print_ticket(token, request)
 
 
-@router.api_route(
+@public_router.api_route(
     "/print-ticket/{token}",
     methods=["GET", "HEAD", "OPTIONS"],
     name="download_print_ticket_file",

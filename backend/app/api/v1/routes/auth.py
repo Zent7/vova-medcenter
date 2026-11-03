@@ -23,12 +23,6 @@ def build_access_token(user: User) -> str:
     return f"{TOKEN_PREFIX}{user.id}.{user.session_epoch}"
 
 
-def get_optional_current_user(authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> User | None:
-    if authorization is None:
-        return None
-    return get_current_user(authorization=authorization, db=db)
-
-
 def get_current_user(authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> User:
     if authorization is None or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Требуется авторизация")

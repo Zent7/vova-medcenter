@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.v1.routes.auth import get_current_user, get_optional_current_user
+from app.api.v1.routes.auth import get_current_user
 from app.db.session import get_db
 from app.models.blank_form import BlankBatch, BlankForm
 from app.models.center import Center
@@ -54,12 +54,8 @@ router = APIRouter()
 BLANK_CLEAR_ROLE_CODES = ("chairman",)
 
 
-def _current_user_id(current_user: User | None) -> int:
-    return current_user.id if current_user is not None else 1
-
-
-def _check_center_access(current_user: User | None, center_id: int | None) -> None:
-    if current_user is None or current_user.sees_all_centers:
+def _check_center_access(current_user: User, center_id: int | None) -> None:
+    if current_user.sees_all_centers:
         return
     if center_id not in {center.id for center in current_user.work_centers}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Бланки другого медцентра недоступны")
@@ -76,7 +72,7 @@ def get_free_series(
     center_id: int | None = Query(default=None),
     strict_only: bool = Query(default=False),
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[BlankSeriesRead]:
     _check_center_access(current_user, center_id)
     items = list_free_series(db, blank_type=blank_type, center_id=center_id, strict_only=strict_only)
@@ -88,7 +84,7 @@ def get_batches(
     blank_type: str | None = Query(default=None),
     center_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[BlankBatchRead]:
     _check_center_access(current_user, center_id)
     items = list_batches(db, blank_type=blank_type, center_id=center_id)
@@ -110,7 +106,7 @@ def get_batches(
 def create_batch_endpoint(
     payload: BlankBatchCreate,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankBatchRead:
     _check_center_access(current_user, payload.center_id)
     try:
@@ -123,7 +119,7 @@ def create_batch_endpoint(
             received_at=payload.received_at,
             comment=payload.comment,
             center_id=payload.center_id,
-            user_id=_current_user_id(current_user),
+            user_id=current_user.id,
         )
     except BlankRangeOverlapError as exc:
         db.rollback()
@@ -147,7 +143,7 @@ def split_batch_endpoint(
     batch_id: int,
     payload: BlankBatchPartSplitRequest,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[BlankBatchPartRead]:
     """Разбивает партию на пачки: каждый оператор берёт свою."""
 
@@ -160,7 +156,7 @@ def split_batch_endpoint(
             batch_id=batch_id,
             pack_size=payload.pack_size,
             ranges=[(part.number_from, part.number_to) for part in payload.parts] if payload.parts is not None else None,
-            user_id=_current_user_id(current_user),
+            user_id=current_user.id,
         )
     except BlankPartsExistError as exc:
         db.rollback()
@@ -186,7 +182,7 @@ def get_forms(
     search: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[BlankFormRead]:
     _check_center_access(current_user, center_id)
     items = list_forms(
@@ -211,7 +207,7 @@ def get_forms_page(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankFormsPageRead:
     _check_center_access(current_user, center_id)
     items, total = list_forms_page(
@@ -241,7 +237,7 @@ def get_next_form(
     strict_only: bool = Query(default=False),
     batch_part_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankFormRead:
     blank_type = resolve_blank_type_for_series(blank_type, series)
     _check_center_access(current_user, center_id)
@@ -257,7 +253,7 @@ def get_next_form(
                 blank_type=blank_type,
                 center_id=center_id,
                 series=series or "",
-                user_id=_current_user_id(current_user),
+                user_id=current_user.id,
             )
         except BlankRangeInvalidError as exc:
             db.rollback()
@@ -299,7 +295,7 @@ def get_exact_form(
     strict_only: bool = Query(default=False),
     batch_part_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankFormRead:
     blank_type = resolve_blank_type_for_series(blank_type, series)
     _check_center_access(current_user, center_id)
@@ -327,7 +323,7 @@ def get_exact_form(
 def manual_pick_endpoint(
     form_id: int,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankFormRead:
     """Фиксирует выбор номера, вписанного вручную, в истории."""
 
@@ -335,7 +331,7 @@ def manual_pick_endpoint(
     if candidate is not None:
         _check_center_access(current_user, candidate.center_id)
     try:
-        form = manual_pick_form(db, form_id=form_id, user_id=_current_user_id(current_user))
+        form = manual_pick_form(db, form_id=form_id, user_id=current_user.id)
     except BlankNotFreeError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -353,14 +349,14 @@ def spoil_form_endpoint(
     form_id: int,
     payload: BlankFormSpoilRequest | None = None,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankFormRead:
     candidate = db.get(BlankForm, form_id)
     if candidate is not None:
         _check_center_access(current_user, candidate.center_id)
     reason = payload.reason if payload is not None else None
     try:
-        form = spoil_form(db, form_id=form_id, reason=reason, user_id=_current_user_id(current_user))
+        form = spoil_form(db, form_id=form_id, reason=reason, user_id=current_user.id)
     except BlankServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -374,13 +370,13 @@ def spoil_form_endpoint(
 def release_form_endpoint(
     form_id: int,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankFormRead:
     candidate = db.get(BlankForm, form_id)
     if candidate is not None:
         _check_center_access(current_user, candidate.center_id)
     try:
-        form = release_form(db, form_id=form_id, user_id=_current_user_id(current_user))
+        form = release_form(db, form_id=form_id, user_id=current_user.id)
     except BlankServiceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -417,7 +413,7 @@ def clear_blanks_endpoint(
 def get_stats(
     center_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> BlankStatsResponse:
     _check_center_access(current_user, center_id)
     return BlankStatsResponse(

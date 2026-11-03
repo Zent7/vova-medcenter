@@ -2,6 +2,7 @@ from datetime import date, datetime
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -22,6 +23,8 @@ from app.models.blank_form import (  # noqa: E402
 from app.models.center import Center  # noqa: E402
 from app.models.client import Client  # noqa: E402
 from app.services.blank_forms import list_forms  # noqa: E402
+
+ADMIN = SimpleNamespace(id=1, sees_all_centers=True, work_centers=[])
 
 
 class BlankFormsPageTests(unittest.TestCase):
@@ -121,7 +124,7 @@ class BlankFormsPageTests(unittest.TestCase):
                 limit=50,
                 offset=0,
                 db=db,
-                current_user=None,
+                current_user=ADMIN,
             )
             self.assertEqual(page.total, 55)
             self.assertEqual(page.limit, 50)
@@ -144,7 +147,7 @@ class BlankFormsPageTests(unittest.TestCase):
                 limit=50,
                 offset=50,
                 db=db,
-                current_user=None,
+                current_user=ADMIN,
             )
             self.assertEqual(second_page.total, 55)
             self.assertEqual(len(second_page.items), 5)
@@ -162,7 +165,7 @@ class BlankFormsPageTests(unittest.TestCase):
                 limit=50,
                 offset=0,
                 db=db,
-                current_user=None,
+                current_user=ADMIN,
             )
             self.assertEqual(issued_page.total, 1)
             self.assertEqual(issued_page.items[0].client_full_name, "Иванов Иван")
@@ -175,7 +178,7 @@ class BlankFormsPageTests(unittest.TestCase):
                 limit=50,
                 offset=0,
                 db=db,
-                current_user=None,
+                current_user=ADMIN,
             )
             self.assertEqual(typed_page.total, 11)
             self.assertTrue(all(item.blank_type == NUMBERED_BLANK_TYPES[2][0] for item in typed_page.items))
@@ -188,7 +191,7 @@ class BlankFormsPageTests(unittest.TestCase):
                 limit=50,
                 offset=0,
                 db=db,
-                current_user=None,
+                current_user=ADMIN,
             )
             self.assertEqual(search_page.total, 1)
             self.assertEqual(search_page.items[0].blank_type, driver_type)
@@ -201,7 +204,7 @@ class BlankFormsPageTests(unittest.TestCase):
                 limit=100,
                 offset=0,
                 db=db,
-                current_user=None,
+                current_user=ADMIN,
             )
             self.assertEqual(all_centers_page.total, 56)
 
@@ -220,7 +223,7 @@ class BlankFormsPageTests(unittest.TestCase):
                 limit=50,
                 offset=0,
                 db=db,
-                current_user=None,
+                current_user=ADMIN,
             )
 
             self.assertEqual(len(items), batch.quantity)

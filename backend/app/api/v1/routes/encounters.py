@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.v1.routes.auth import get_optional_current_user
+from app.api.v1.routes.auth import get_current_user
 from app.db.session import get_db
 from app.models.center import Center
 from app.models.client import Client
@@ -30,10 +30,6 @@ from app.services.notifications import build_deletion_email_body, send_deletion_
 from app.services.system_user import get_system_user_id
 
 router = APIRouter()
-
-
-def actor_user_id(db: Session, current_user: User | None) -> int | None:
-    return current_user.id if current_user is not None else get_system_user_id(db)
 
 
 def sync_primary_payment(
@@ -290,7 +286,7 @@ def update_encounter(encounter_id: int, payload: EncounterUpdate, db: Session = 
 def delete_encounter(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> None:
     encounter = db.get(Encounter, encounter_id)
     if encounter is None or encounter.deleted_at is not None:
@@ -298,7 +294,7 @@ def delete_encounter(
 
     encounter.deleted_at = datetime.now(timezone.utc)
     deleted_at_iso = encounter.deleted_at.isoformat()
-    deleted_by_user_id = actor_user_id(db, current_user)
+    deleted_by_user_id = current_user.id
     db.commit()
     write_audit_log(
         db,
@@ -321,7 +317,7 @@ def delete_encounter(
             body=build_deletion_email_body(
                 entity_label="обращение",
                 entity_id=encounter.id,
-                deleted_by=current_user.full_name if current_user is not None else None,
+                deleted_by=current_user.full_name,
                 deleted_at=deleted_at_iso,
                 details={
                     "Клиент ID": encounter.client_id,
@@ -338,7 +334,7 @@ def delete_encounter(
 def restore_encounter(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> EncounterRead:
     encounter = db.get(Encounter, encounter_id)
     if encounter is None:
@@ -347,7 +343,7 @@ def restore_encounter(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Обращение не находится в удалённых")
 
     encounter.deleted_at = None
-    restored_by_user_id = actor_user_id(db, current_user)
+    restored_by_user_id = current_user.id
     db.commit()
     db.refresh(encounter)
     write_audit_log(

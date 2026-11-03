@@ -192,7 +192,8 @@ test("список клиентов просит у сервера только 
 
 test("при смене центра и входе список клиентов загружается заново", () => {
   assert.match(extractFrom(appSource, "switchWorkspaceCenter"), /loadClientsFromBackend\(/);
-  assert.match(appSource, /Клиентская база зависит от центров сотрудника[\s\S]{0,80}loadClientsFromBackend\(/);
+  assert.match(appSource, /Клиентская база, услуги и шаблоны зависят от центров сотрудника[\s\S]{0,80}loadBackendWorkspaceData\(\);/);
+  assert.match(appSource, /function loadBackendWorkspaceData\(\) \{[\s\S]{0,200}loadClientsFromBackend\(appState\.clientSearch\)/);
 });
 
 test("печать договора передаёт серверу центр, чей шаблон взять", () => {
@@ -266,7 +267,7 @@ test("админ в форме клиента выбирает любой цен
 });
 
 test("изменённые файлы подняли версию в index.html", () => {
-  for (const [file, version] of [["styles.css", "copy-label-vertical-v1"], ["app.js", "staff-delete-keeps-records-v1"], ["client-modal.js", "remove-revocation-chip-v1"]]) {
+  for (const [file, version] of [["styles.css", "copy-label-vertical-v1"], ["app.js", "login-required-v1"], ["client-modal.js", "remove-revocation-chip-v1"]]) {
     assert.match(indexHtml, new RegExp(`\\./${file.replace(".", "\\.")}\\?v=[\\w-]*${version}`));
   }
 });

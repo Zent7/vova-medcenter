@@ -250,7 +250,7 @@ class BlankCenterAccessTests(unittest.TestCase):
         self.assertGreaterEqual(len(with_center), 7)
         for route in with_center:
             self.assertIn(
-                auth_routes.get_optional_current_user,
+                auth_routes.get_current_user,
                 _dependency_calls(route.dependant),
                 f"GET {route.path} принимает center_id, но не проверяет его по сотруднику",
             )

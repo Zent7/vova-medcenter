@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -121,7 +122,7 @@ class BlankBatchPartsTests(unittest.TestCase):
             {"number_from": 201, "number_to": 700},
             {"number_from": 701, "number_to": 1000},
         ])
-        response = split_batch_endpoint(self.batch.id, payload, db=self.db, current_user=None)
+        response = split_batch_endpoint(self.batch.id, payload, db=self.db, current_user=SimpleNamespace(id=1, sees_all_centers=True, work_centers=[]))
         self.assertEqual([(part.number_from, part.number_to, part.free_count) for part in response], [
             (1, 200, 200), (201, 700, 500), (701, 1000, 300),
         ])

@@ -359,7 +359,7 @@ class ImportMatchesInsideTheCenterTests(ClientCentersTestCase):
                 center_ids=center_ids,
             ),
             db=self.db,
-            current_user=None,
+            current_user=SimpleNamespace(id=1, pinned_center_id=None, sees_all_centers=True, work_centers=[]),
         )
 
     def test_a_person_from_another_center_is_not_matched(self):

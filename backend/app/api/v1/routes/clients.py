@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.v1.routes.auth import get_optional_current_user
+from app.api.v1.routes.auth import get_current_user
 from app.db.session import get_db
 from app.models.blank_form import BlankForm
 from app.models.client import Client
@@ -81,10 +81,6 @@ def parse_search_date(value: str):
         except ValueError:
             return None
     return None
-
-
-def actor_user_id(db: Session, current_user: User | None) -> int | None:
-    return current_user.id if current_user is not None else get_system_user_id(db)
 
 
 def client_full_name(client: Client) -> str:
@@ -519,7 +515,7 @@ def get_client(client_id: int, db: Session = Depends(get_db)) -> ClientRead:
 def create_client(
     payload: ClientCreate,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> ClientRead:
     normalized_data = normalize_payload(payload)
     center_ids = resolve_center_ids(db, normalized_data.pop("center_ids", None), current_user)
@@ -637,7 +633,7 @@ def update_client_notes(client_id: int, payload: ClientNotesUpdate, db: Session 
 def delete_client(
     client_id: int,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> None:
     client = db.get(Client, client_id)
     if client is None or client.deleted_at is not None:
@@ -646,7 +642,7 @@ def delete_client(
     client.deleted_at = datetime.now(timezone.utc)
     full_name = client_full_name(client)
     deleted_at_iso = client.deleted_at.isoformat()
-    deleted_by_user_id = actor_user_id(db, current_user)
+    deleted_by_user_id = current_user.id
     write_audit_log(
         db,
         entity_type="client",
@@ -667,7 +663,7 @@ def delete_client(
             body=build_deletion_email_body(
                 entity_label="клиент",
                 entity_id=client.id,
-                deleted_by=current_user.full_name if current_user is not None else None,
+                deleted_by=current_user.full_name,
                 deleted_at=deleted_at_iso,
                 details={
                     "ФИО": full_name,
@@ -684,7 +680,7 @@ def delete_client(
 def restore_client(
     client_id: int,
     db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> ClientRead:
     client = db.get(Client, client_id)
     if client is None:
@@ -693,7 +689,7 @@ def restore_client(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Клиент не находится в удаленных")
 
     client.deleted_at = None
-    restored_by_user_id = actor_user_id(db, current_user)
+    restored_by_user_id = current_user.id
     db.commit()
     db.refresh(client)
     write_audit_log(
