@@ -1,4 +1,12 @@
+from datetime import time
+from decimal import Decimal
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
+
+
+# Смену админ выбирает вручную из этих пяти вариантов.
+SchedulePattern = Literal["2/2", "3/3", "4/4", "5/2", "6/1"]
 
 
 class RoleRead(BaseModel):
@@ -17,6 +25,24 @@ class StaffCenterRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class StaffScheduleRead(BaseModel):
+    pattern: str
+    shift_start: time
+    shift_end: time
+    hourly_rate: Decimal | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class StaffScheduleCreate(BaseModel):
+    pattern: SchedulePattern
+    # Время «со скольки — до скольки»; конец может быть раньше начала (ночная смена).
+    shift_start: time
+    shift_end: time
+    # Ставка за час в рублях, до копеек; можно не указывать.
+    hourly_rate: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+
+
 class StaffUserRead(BaseModel):
     id: int
     login: str
@@ -31,6 +57,8 @@ class StaffUserRead(BaseModel):
     all_centers: bool = Field(default=False, validation_alias="sees_all_centers")
     # Все центры, где сотрудник может работать, основной первым; у админа пусто.
     centers: list[StaffCenterRead] = Field(default_factory=list, validation_alias="work_centers")
+    # График смен; None, если его не задали.
+    schedule: StaffScheduleRead | None = None
 
     model_config = {"from_attributes": True}
 
@@ -46,6 +74,8 @@ class StaffUserCreate(BaseModel):
     # может прислать вкладка со старой версией страницы.
     center_ids: list[int] | None = None
     center_id: int | None = None
+    # График смен, если его задали кнопкой «График»; без него сотрудник создается без графика.
+    schedule: StaffScheduleCreate | None = None
 
     @field_validator("login", "password", "full_name", "role_code", mode="before")
     @classmethod

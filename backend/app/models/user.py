@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import datetime, time
+from decimal import Decimal
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Table, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.security import generate_session_epoch
@@ -44,6 +45,11 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     session_epoch: Mapped[str] = mapped_column(String(32), default=generate_session_epoch)
+    # График смен задаётся при создании учетной записи; у сотрудника без графика все поля пустые.
+    schedule_pattern: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    schedule_start: Mapped[time | None] = mapped_column(Time, nullable=True)
+    schedule_end: Mapped[time | None] = mapped_column(Time, nullable=True)
+    hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     center: Mapped["Center | None"] = relationship("Center")
     extra_centers: Mapped[list["Center"]] = relationship(
@@ -77,3 +83,15 @@ class User(TimestampMixin, Base):
         centers = [self.center] if self.center is not None else []
         centers += [center for center in self.extra_centers if center.id != self.center_id]
         return centers
+
+    @property
+    def schedule(self) -> dict | None:
+        """График сотрудника или None, если его не задали."""
+        if self.schedule_pattern is None:
+            return None
+        return {
+            "pattern": self.schedule_pattern,
+            "shift_start": self.schedule_start,
+            "shift_end": self.schedule_end,
+            "hourly_rate": self.hourly_rate,
+        }

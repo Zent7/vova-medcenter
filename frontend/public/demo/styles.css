@@ -6484,6 +6484,107 @@ body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
   border-color: rgba(157, 47, 47, 0.2);
 }
 
+/* Медцентры и кнопка «График» в одной строке; панель графика — на всю ширину формы. */
+.employee-centers-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+  min-width: 0;
+}
+
+.employee-centers-row > .employee-centers {
+  flex: 1 1 300px;
+}
+
+.employee-schedule-toggle {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  margin-left: auto;
+}
+
+.employee-schedule-toggle__summary {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.employee-schedule {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.employee-schedule legend {
+  padding: 0 4px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.employee-schedule__patterns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.employee-schedule__pattern {
+  position: relative;
+  cursor: pointer;
+}
+
+.employee-schedule__pattern input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.employee-schedule__pattern span {
+  display: inline-block;
+  min-width: 58px;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  text-align: center;
+  font-weight: 600;
+}
+
+.employee-schedule__pattern input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.employee-schedule__pattern input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.employee-schedule__times {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.employee-schedule__hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .employee-schedule__times {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .sketch-client-card--full {
   width: 100%;
 }

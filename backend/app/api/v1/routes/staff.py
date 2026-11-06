@@ -11,6 +11,7 @@ from app.models.user import ALL_CENTERS_ROLE_CODE, Role, User
 from app.schemas.user_admin import (
     RoleRead,
     StaffCentersUpdate,
+    StaffScheduleCreate,
     StaffUserCreate,
     StaffUserDeleteResponse,
     StaffUserRead,
@@ -34,6 +35,18 @@ def resolve_work_centers(db: Session, center_ids: list[int]) -> list[Center]:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Медцентр не найден")
         centers.append(center)
     return centers
+
+
+def schedule_columns(schedule: StaffScheduleCreate | None) -> dict:
+    """Колонки графика учетной записи; без графика все пустые."""
+    if schedule is None:
+        return {"schedule_pattern": None, "schedule_start": None, "schedule_end": None, "hourly_rate": None}
+    return {
+        "schedule_pattern": schedule.pattern,
+        "schedule_start": schedule.shift_start,
+        "schedule_end": schedule.shift_end,
+        "hourly_rate": schedule.hourly_rate,
+    }
 
 
 @router.get("/roles", response_model=list[RoleRead])
@@ -81,6 +94,7 @@ def create_staff(
         full_name=payload.full_name,
         email=payload.email,
         is_active=True,
+        **schedule_columns(payload.schedule),
     )
     db.add(user)
     db.commit()

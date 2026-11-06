@@ -249,6 +249,8 @@ const RESTORABLE_PAGES = new Set([
   "xml",
   "reports",
   "documents",
+  "schedule",
+  "status",
 ]);
 
 function isRestorablePage(page) {
@@ -435,6 +437,8 @@ const navItems = [
   { id: "cash", label: "Касса", toast: "Открыт блок: Касса" },
   { id: "xml", label: "XML", toast: "Открыт блок: XML" },
   { id: "reports", label: "Отчеты", toast: "Открыт блок: Отчеты" },
+  { id: "schedule", label: "График работы", toast: "Открыт раздел: График работы" },
+  { id: "status", label: "Статус", toast: "Открыт раздел: Статус" },
 ];
 
 // Учетные записи сотрудников и отчеты — только у админа. Председатель заходит в программу
@@ -6299,6 +6303,9 @@ function loadPageData(page) {
   if (page === "employee" && canManageEmployeeWorkspace() && !data.staffLoading) {
     loadStaffWorkspace();
   }
+  if (page === "schedule" && canManageEmployeeWorkspace() && !data.staffLoading) {
+    loadStaffWorkspace();
+  }
   if (page === "calendar" && !data.recallItemsLoaded && !data.recallItemsLoading) {
     loadRecallCalendar();
   }
@@ -6324,6 +6331,7 @@ function renderNav() {
   }
   const visibleNavItems = navItems.filter((item) => {
     if (item.id === "reports") return canAccessReportsWorkspace();
+    if (item.id === "schedule") return canManageEmployeeWorkspace();
     if (item.id === "cash") return canAccessCashWorkspace();
     if (item.id === "blanks") return canAccessBlanksWorkspace();
     if (SERVICE_WORKSPACE_PAGES.includes(item.id)) return canAccessServiceWorkspace();
@@ -7284,6 +7292,138 @@ function orderStaffCenterIds(checkedIds, mainCenterId = null) {
   return [...main, ...ids.filter((id) => !main.includes(id))];
 }
 
+// График работы: смены, время и ставка, которые задали при создании учетной записи.
+// Ставка — деньги сотрудника, поэтому раздел только для админа.
+function renderSchedulePage() {
+  if (!canManageEmployeeWorkspace()) {
+    return `
+      <section class="card">
+        <h3>График работы</h3>
+        <div class="note">Раздел доступен только админу.</div>
+      </section>
+    `;
+  }
+
+  const activeUsers = (data.staffUsers || []).filter((user) => user.is_active);
+  let body;
+  if (data.staffLoading) {
+    body = `<div class="empty">Загружаем график...</div>`;
+  } else if (!activeUsers.length) {
+    body = `<div class="empty">Сотрудники пока не найдены.</div>`;
+  } else {
+    const rows = activeUsers
+      .map((user) => {
+        const schedule = user.schedule;
+        const shift = schedule ? escapeHtml(schedule.pattern) : `<span class="muted">не задан</span>`;
+        const hours = schedule
+          ? `${escapeHtml(formatStaffTime(schedule.shift_start))}–${escapeHtml(formatStaffTime(schedule.shift_end))}`
+          : "—";
+        const rate =
+          schedule && schedule.hourly_rate != null ? `${escapeHtml(formatStaffRate(schedule.hourly_rate))} ₽` : "—";
+        return `
+          <tr>
+            <td>${escapeHtml(user.full_name || user.login)}</td>
+            <td>${escapeHtml(user.role?.name || "Без роли")}</td>
+            <td>${escapeHtml(formatStaffCenterLabel(user))}</td>
+            <td>${shift}</td>
+            <td>${hours}</td>
+            <td>${rate}</td>
+          </tr>
+        `;
+      })
+      .join("");
+    body = `
+      <div class="data-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Сотрудник</th>
+              <th>Роль</th>
+              <th>Медцентр</th>
+              <th>Смена</th>
+              <th>Время</th>
+              <th>Ставка в час</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  return `
+    <section class="card">
+      <h3>График работы</h3>
+      <p class="muted">Смены, время и ставка часа сотрудников. Задаются кнопкой «График» на странице «Сотрудник» при создании учетной записи.</p>
+      ${data.staffError ? `<div class="note employee-note employee-note--error">${escapeHtml(data.staffError)}</div>` : ""}
+      ${body}
+    </section>
+  `;
+}
+
+// Раздел «Статус» пока без содержания: что на нем показывать, еще не решено.
+function renderStatusPage() {
+  return `
+    <section class="card">
+      <h3>Статус</h3>
+      <div class="empty">Раздел создан, содержимое пока не задано.</div>
+    </section>
+  `;
+}
+
+function formatStaffTime(value) {
+  return String(value || "").slice(0, 5);
+}
+
+function formatStaffRate(value) {
+  return Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+}
+
+// Сводка графика по полям формы, пока их заполняют.
+function describeStaffScheduleDraft(form) {
+  const pattern = String(form.elements.schedule_pattern?.value || "");
+  const start = String(form.elements.schedule_start?.value || "");
+  const end = String(form.elements.schedule_end?.value || "");
+  const rate = String(form.elements.hourly_rate?.value || "").trim();
+  if (!pattern && !start && !end && !rate) return "График не задан";
+  return [
+    pattern || "смена не выбрана",
+    start && end ? `${start}–${end}` : "время не задано",
+    rate ? `${rate.replace(",", ".")} ₽/ч` : "ставка не задана",
+  ].join(" · ");
+}
+
+// График заполняют вручную: смена, «со скольки – до скольки» и ставка часа (по желанию).
+// Ничего не заполнено — графика нет; заполнено частично — сообщаем, чего не хватает.
+function readStaffScheduleFromForm(form) {
+  const pattern = String(form.elements.schedule_pattern?.value || "").trim();
+  const start = String(form.elements.schedule_start?.value || "").trim();
+  const end = String(form.elements.schedule_end?.value || "").trim();
+  const rawRate = String(form.elements.hourly_rate?.value || "").trim().replace(",", ".");
+  if (!pattern && !start && !end && !rawRate) return { schedule: null };
+  if (!pattern) return { error: "Выберите смену: 2/2, 3/3, 4/4, 5/2 или 6/1." };
+  if (!start || !end) return { error: "Укажите, со скольки и до скольки работает сотрудник." };
+  let hourlyRate = null;
+  if (rawRate) {
+    if (!/^\d+(\.\d{1,2})?$/.test(rawRate)) {
+      return { error: "Ставка — число рублей за час, не больше двух знаков после запятой." };
+    }
+    hourlyRate = Number(rawRate);
+  }
+  return { schedule: { pattern, shift_start: start, shift_end: end, hourly_rate: hourlyRate } };
+}
+
+// Панель графика открывается сама, если при отправке в ней что-то не так.
+function showStaffScheduleError(message) {
+  document.getElementById("employeeSchedule")?.classList.remove("hidden");
+  document.getElementById("employeeScheduleToggle")?.setAttribute("aria-expanded", "true");
+  const note = document.getElementById("employeeScheduleError");
+  if (note) {
+    note.textContent = message;
+    note.classList.remove("hidden");
+  }
+}
+
 function renderEmployeePage() {
   const canManageStaff = canManageEmployeeWorkspace();
   const canEndAllSessions = ["chairman", "admin"].includes(appState.auth.roleCode);
@@ -7356,10 +7496,49 @@ function renderEmployeePage() {
                       ${(data.staffRoles || []).map((role) => `<option value="${escapeHtml(role.code)}">${escapeHtml(role.name)}</option>`).join("")}
                     </select>
                   </label>
-                  <fieldset class="employee-centers field--wide" id="employeeCenterField">
-                    <legend>Медцентры, в которых работает</legend>
-                    <div class="employee-centers__list">${renderStaffCenterCheckboxes()}</div>
-                    <div class="employee-centers__hint">Можно отметить несколько. Начинает работу сотрудник с первого отмеченного центра.</div>
+                  <div class="employee-centers-row field--wide">
+                    <fieldset class="employee-centers" id="employeeCenterField">
+                      <legend>Медцентры, в которых работает</legend>
+                      <div class="employee-centers__list">${renderStaffCenterCheckboxes()}</div>
+                      <div class="employee-centers__hint">Можно отметить несколько. Начинает работу сотрудник с первого отмеченного центра.</div>
+                    </fieldset>
+                    <div class="employee-schedule-toggle">
+                      <button class="ghost-button" type="button" id="employeeScheduleToggle" aria-expanded="false" aria-controls="employeeSchedule">График</button>
+                      <div class="employee-schedule-toggle__summary" id="employeeScheduleSummary">График не задан</div>
+                    </div>
+                  </div>
+                  <fieldset class="employee-schedule field--wide hidden" id="employeeSchedule">
+                    <legend>График работы</legend>
+                    <div class="employee-schedule__patterns" role="radiogroup" aria-label="Смена">
+                      ${["2/2", "3/3", "4/4", "5/2", "6/1"]
+                        .map(
+                          (pattern) => `
+                            <label class="employee-schedule__pattern">
+                              <input type="radio" name="schedule_pattern" value="${pattern}" />
+                              <span>${pattern}</span>
+                            </label>`,
+                        )
+                        .join("")}
+                    </div>
+                    <div class="employee-schedule__times">
+                      <label class="field">
+                        <span>Со скольки</span>
+                        <input type="time" name="schedule_start" />
+                      </label>
+                      <label class="field">
+                        <span>До скольки</span>
+                        <input type="time" name="schedule_end" />
+                      </label>
+                      <label class="field">
+                        <span>Ставка, ₽ в час</span>
+                        <input type="text" name="hourly_rate" inputmode="decimal" placeholder="например, 350" />
+                      </label>
+                    </div>
+                    <div class="employee-schedule__hint">Смену выбирают вручную. Время может идти через полночь, например с 20:00 до 08:00.</div>
+                    <div class="note employee-note employee-note--error hidden" id="employeeScheduleError"></div>
+                    <div class="actions">
+                      <button class="ghost-button" type="button" id="employeeScheduleClear">Очистить график</button>
+                    </div>
                   </fieldset>
                   <div class="employee-centers field--wide hidden" id="employeeAllCentersNote">
                     <div class="note">Админ видит все медцентры и переключается между ними.</div>
@@ -12394,6 +12573,8 @@ function renderContent() {
   if (appState.page === "cash") return renderCashPage();
   if (appState.page === "reports") return renderReportsPage();
   if (appState.page === "employee") return renderEmployeePage();
+  if (appState.page === "schedule") return renderSchedulePage();
+  if (appState.page === "status") return renderStatusPage();
 
   const item = navItems.find((navItem) => navItem.id === appState.page);
   return renderStubPage(item?.label || "Раздел");
@@ -13393,10 +13574,40 @@ function bindContentEvents() {
     centerBoxes.forEach((box) => box.addEventListener("change", syncEmployeeCenterField));
     syncEmployeeCenterField();
 
+    // График: кнопка открывает панель, сводка обновляется на ходу, сама форма не перерисовывается.
+    const scheduleToggle = document.getElementById("employeeScheduleToggle");
+    const schedulePanel = document.getElementById("employeeSchedule");
+    const scheduleSummary = document.getElementById("employeeScheduleSummary");
+    const scheduleNote = document.getElementById("employeeScheduleError");
+    scheduleToggle?.addEventListener("click", () => {
+      const nowHidden = schedulePanel?.classList.toggle("hidden");
+      scheduleToggle.setAttribute("aria-expanded", String(!nowHidden));
+    });
+    const refreshScheduleSummary = () => {
+      if (scheduleSummary) scheduleSummary.textContent = describeStaffScheduleDraft(employeeCreateForm);
+      scheduleNote?.classList.add("hidden");
+    };
+    schedulePanel?.addEventListener("input", refreshScheduleSummary);
+    schedulePanel?.addEventListener("change", refreshScheduleSummary);
+    document.getElementById("employeeScheduleClear")?.addEventListener("click", () => {
+      schedulePanel?.querySelectorAll('input[name="schedule_pattern"]').forEach((radio) => {
+        radio.checked = false;
+      });
+      employeeCreateForm.elements.schedule_start.value = "";
+      employeeCreateForm.elements.schedule_end.value = "";
+      employeeCreateForm.elements.hourly_rate.value = "";
+      refreshScheduleSummary();
+    });
+
     employeeCreateForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const formData = new FormData(employeeCreateForm);
       const roleCode = String(formData.get("role_code") || "").trim();
+      const staffSchedule = readStaffScheduleFromForm(employeeCreateForm);
+      if (staffSchedule.error) {
+        showStaffScheduleError(staffSchedule.error);
+        return;
+      }
       await createDemoStaffUser({
         full_name: String(formData.get("full_name") || "").trim(),
         login: String(formData.get("login") || "").trim(),
@@ -13404,6 +13615,7 @@ function bindContentEvents() {
         email: String(formData.get("email") || "").trim(),
         role_code: roleCode,
         center_ids: roleCode === "admin" ? [] : orderStaffCenterIds(formData.getAll("center_ids")),
+        schedule: staffSchedule.schedule,
       });
     });
   }
@@ -14734,6 +14946,7 @@ function renderApp() {
   }
   if (
     (appState.page === "reports" && !canAccessReportsWorkspace()) ||
+    (appState.page === "schedule" && !canManageEmployeeWorkspace()) ||
     (appState.page === "cash" && !canAccessCashWorkspace()) ||
     (appState.page === "blanks" && !canAccessBlanksWorkspace()) ||
     (SERVICE_WORKSPACE_PAGES.includes(appState.page) && !canAccessServiceWorkspace())
