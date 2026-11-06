@@ -267,7 +267,7 @@ test("админ в форме клиента выбирает любой цен
 });
 
 test("изменённые файлы подняли версию в index.html", () => {
-  for (const [file, version] of [["styles.css", "staff-schedule-edit-v1"], ["app.js", "staff-schedule-edit-v1"], ["client-modal.js", "remove-revocation-chip-v1"]]) {
+  for (const [file, version] of [["styles.css", "work-schedule-v1"], ["app.js", "work-schedule-v1"], ["client-modal.js", "remove-revocation-chip-v1"]]) {
     assert.match(indexHtml, new RegExp(`\\./${file.replace(".", "\\.")}\\?v=[\\w-]*${version}`));
   }
 });

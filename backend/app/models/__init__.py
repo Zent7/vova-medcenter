@@ -17,6 +17,7 @@ from app.models.patient_consent import PatientConsent
 from app.models.payment import Payment
 from app.models.recall import Recall
 from app.models.service import DoctorRole, Service, ServiceCategory, ServiceDoctorRole
+from app.models.staff_schedule_day import StaffScheduleDay
 from app.models.template_phrase import TemplatePhrase
 from app.models.user import Role, User
 from app.models.visit_type import VisitType, VisitTypeService
@@ -49,6 +50,7 @@ __all__ = [
     "ServiceCategory",
     "ServiceDoctorRole",
     "SpoiledCertificateBlank",
+    "StaffScheduleDay",
     "TemplatePhrase",
     "User",
     "VisitType",

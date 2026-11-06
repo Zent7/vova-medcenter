@@ -6985,3 +6985,537 @@ body[data-page="dashboard"] .dashboard-table-head-scroll {
   margin-top: 18px !important;
   font-size: 13px;
 }
+
+/* График работы: таблица месяца, окно дня и статистика. Цвет строки — медцентр (--ws-color). */
+.ws {
+  --ws-plan: #9aa5b1;
+  --ws-fact: #d64545;
+  display: grid;
+  gap: 14px;
+}
+
+.ws__head h3 {
+  margin: 0 0 4px;
+}
+
+.ws__head p {
+  margin: 0;
+}
+
+.ws__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ws__legend-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ws__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ws__chip::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ws-color, var(--muted));
+}
+
+.ws__key {
+  padding: 2px 8px;
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(23, 48, 74, 0.06);
+}
+
+.ws__key--shift {
+  background: #eef4fb;
+}
+
+.ws__key--dayoff {
+  background: #f1ecf9;
+}
+
+.ws__key--sick {
+  background: #fbe9e7;
+}
+
+.ws__key--vacation {
+  background: #e6f5ec;
+}
+
+.ws__key--fact {
+  background: transparent;
+  color: var(--ws-fact);
+}
+
+.ws__hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ws__banner,
+.ws__selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+.ws__banner {
+  justify-content: space-between;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.ws__selection {
+  background: var(--accent-soft);
+}
+
+.ws__selection-name {
+  margin-right: auto;
+}
+
+.ws__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-strong);
+}
+
+.ws__table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.ws__table th,
+.ws__table td {
+  padding: 4px 3px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.ws__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f5f8fb;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ws__day.is-weekend {
+  background-color: #eceff4;
+}
+
+.ws__day-no {
+  color: var(--text);
+}
+
+.ws__name {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 190px;
+  max-width: 230px;
+  padding: 6px 8px;
+  border-left: 4px solid var(--ws-color, transparent);
+  background: var(--panel-strong);
+  text-align: left;
+  white-space: normal;
+}
+
+.ws__table thead .ws__name {
+  z-index: 3;
+  border-left: 0;
+  background: #f5f8fb;
+}
+
+.ws__name-text {
+  display: block;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.ws__name-meta {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ws__name[data-ws-name] {
+  cursor: pointer;
+}
+
+.ws__row.is-selected .ws__name {
+  background: var(--accent-soft);
+}
+
+.ws__row.is-inactive {
+  opacity: 0.6;
+}
+
+.ws__cell {
+  width: 34px;
+  min-width: 34px;
+  height: 46px;
+}
+
+.ws__cell[data-ws-cell] {
+  cursor: pointer;
+}
+
+.ws__cell[data-ws-cell]:hover,
+.ws__cell[data-ws-cell]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ws__cell--shift {
+  background-color: #eef4fb;
+  box-shadow: inset 0 3px 0 var(--ws-color, var(--accent));
+}
+
+.ws__cell--dayoff {
+  background-color: #f1ecf9;
+  color: #5b3d8a;
+}
+
+.ws__cell--sick {
+  background-color: #fbe9e7;
+  color: #9d2f2f;
+}
+
+.ws__cell--vacation {
+  background-color: #e6f5ec;
+  color: #1f6b43;
+}
+
+.ws__cell.is-empty.is-weekend {
+  background-color: #f4f6f9;
+}
+
+.ws__cell-time {
+  display: block;
+  font-weight: 600;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.ws__cell-no {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.ws__cell-code {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ws__cell.is-fact-changed {
+  position: relative;
+}
+
+.ws__cell.is-fact-changed::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ws-fact);
+}
+
+.ws__empty {
+  padding: 26px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.ws__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ws__months {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.ws__month {
+  min-width: 170px;
+  text-align: center;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.ws__tools,
+.ws__stats-actions,
+.ws__form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ws__stats {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel-strong);
+}
+
+.ws__stats-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.ws__stats-head h4,
+.ws__fact-form h4 {
+  margin: 0 0 4px;
+}
+
+.ws__legend-chart {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ws-legend-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.ws-legend-dot.is-plan {
+  background: var(--ws-plan);
+}
+
+.ws-legend-dot.is-fact {
+  background: var(--ws-fact);
+}
+
+.ws__chart {
+  overflow-x: auto;
+}
+
+.ws-chart {
+  display: block;
+  width: 100%;
+  min-width: 560px;
+  height: auto;
+}
+
+.ws-chart__grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.ws-chart__tick,
+.ws-chart__day {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.ws-chart__plan {
+  fill: var(--ws-plan);
+}
+
+.ws-chart__fact {
+  fill: var(--ws-fact);
+}
+
+.ws__summary {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.ws__summary th,
+.ws__summary td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+
+.ws__summary th:first-child {
+  text-align: left;
+}
+
+.ws__summary thead th {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ws__fact-form {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.ws__fact-form input[type="time"] {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  font: inherit;
+}
+
+#actionModal.modal--schedule-day .modal__backdrop {
+  background: transparent;
+}
+
+#actionModal.modal--schedule-day .modal__card {
+  width: min(420px, calc(100% - 32px));
+  top: 50%;
+  margin: 0 auto;
+  transform: translateY(-50%);
+  border-radius: 10px;
+  border: 1px solid #9aa3ad;
+  background: linear-gradient(180deg, #eef2f5 0%, #d9dee3 100%);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.28), 0 1px 0 #ffffff inset;
+  overflow: hidden;
+}
+
+#actionModal.modal--schedule-day .modal__header {
+  min-height: 34px;
+  padding: 7px 10px 5px 12px;
+  border-bottom: 1px solid #b8c0c8;
+  background: linear-gradient(180deg, #f8fafc 0%, #d7dde4 100%);
+}
+
+#actionModal.modal--schedule-day .modal__header h2 {
+  margin: 0;
+  color: #1f2933;
+  font: 700 14px/1.2 "Arial Cyr", Arial, sans-serif;
+}
+
+#actionModal.modal--schedule-day .icon-button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #aeb6bf;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #ffffff 0%, #d9dee4 100%);
+  color: #2f3a45;
+  font: 700 19px/19px "Arial Cyr", Arial, sans-serif;
+}
+
+.ws-day-form {
+  display: grid;
+  gap: 12px;
+  padding: 12px 14px 14px;
+}
+
+.ws-day-form__date {
+  margin: 0;
+  color: #1f2933;
+  font-weight: 700;
+}
+
+.ws-day-form__kinds {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ws-day-form__kind {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: #1f2933;
+  font-size: 14px;
+}
+
+.ws-day-form__times {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ws-day-form__times label {
+  display: grid;
+  gap: 4px;
+  color: #374151;
+  font-size: 13px;
+}
+
+.ws-day-form__times input {
+  padding: 7px 8px;
+  border: 1px solid #aeb6bf;
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+}
+
+.ws-day-form__hint {
+  margin: 0;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.ws-day-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .ws__name {
+    min-width: 150px;
+    max-width: 170px;
+  }
+
+  .ws__month {
+    min-width: 140px;
+  }
+
+  .ws-day-form__times {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

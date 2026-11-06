@@ -27,6 +27,7 @@ from app.api.v1.routes.staff import router as staff_router
 from app.api.v1.routes.service_categories import router as service_categories_router
 from app.api.v1.routes.template_phrases import router as template_phrases_router
 from app.api.v1.routes.visit_types import router as visit_types_router
+from app.api.v1.routes.work_schedule import router as work_schedule_router
 from app.api.v1.routes.xml_exports import router as xml_exports_router
 
 # Все разделы ниже работают только с токеном сотрудника: без него сервер отвечает 401.
@@ -34,6 +35,7 @@ from app.api.v1.routes.xml_exports import router as xml_exports_router
 protected_router = APIRouter(dependencies=[Depends(get_current_user)])
 protected_router.include_router(audit_logs_router, prefix="/audit-logs", tags=["audit-logs"])
 protected_router.include_router(staff_router, prefix="/staff", tags=["staff"])
+protected_router.include_router(work_schedule_router, prefix="/work-schedule", tags=["work-schedule"])
 protected_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 protected_router.include_router(imports_router, prefix="/imports", tags=["imports"])
 protected_router.include_router(clients_router, prefix="/clients", tags=["clients"])

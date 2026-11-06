@@ -1,7 +1,7 @@
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Table, Time
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Numeric, String, Table, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.security import generate_session_epoch
@@ -50,6 +50,8 @@ class User(TimestampMixin, Base):
     schedule_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     schedule_end: Mapped[time | None] = mapped_column(Time, nullable=True)
     hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # Первая смена цикла: с этого дня график по шаблону считается без пропусков.
+    schedule_anchor_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     center: Mapped["Center | None"] = relationship("Center")
     extra_centers: Mapped[list["Center"]] = relationship(

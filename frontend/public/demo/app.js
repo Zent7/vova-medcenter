@@ -449,6 +449,12 @@ function canManageEmployeeWorkspace() {
   return appState.auth.roleCode === "admin";
 }
 
+// График работы: таблицу видят админ, врач и оператор; правит, считает статистику и ставки только админ.
+// Пускает в таблицу сервер по тем же ролям (VIEWER_ROLE_CODES в work_schedule.py).
+function canViewWorkSchedule() {
+  return ["admin", "operator", "doctor"].includes(appState.auth.roleCode);
+}
+
 function canAccessReportsWorkspace() {
   return appState.auth.roleCode === "admin";
 }
@@ -3421,6 +3427,7 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
   data.editingStaffCentersId = null;
   data.staffCentersError = "";
   data.editingStaffScheduleId = null;
+  resetWorkSchedule();
   appState.page = "start";
   appState.doctorExamModal = {
     isOpen: false,
@@ -6326,8 +6333,8 @@ function loadPageData(page) {
   if (page === "employee" && canManageEmployeeWorkspace() && !data.staffLoading) {
     loadStaffWorkspace();
   }
-  if (page === "schedule" && canManageEmployeeWorkspace() && !data.staffLoading) {
-    loadStaffWorkspace();
+  if (page === "schedule" && canViewWorkSchedule() && !wsState.loading) {
+    loadWorkSchedule();
   }
   if (page === "calendar" && !data.recallItemsLoaded && !data.recallItemsLoading) {
     loadRecallCalendar();
@@ -6354,7 +6361,7 @@ function renderNav() {
   }
   const visibleNavItems = navItems.filter((item) => {
     if (item.id === "reports") return canAccessReportsWorkspace();
-    if (item.id === "schedule") return canManageEmployeeWorkspace();
+    if (item.id === "schedule") return canViewWorkSchedule();
     if (item.id === "cash") return canAccessCashWorkspace();
     if (item.id === "blanks") return canAccessBlanksWorkspace();
     if (SERVICE_WORKSPACE_PAGES.includes(item.id)) return canAccessServiceWorkspace();
@@ -7315,75 +7322,6 @@ function orderStaffCenterIds(checkedIds, mainCenterId = null) {
   return [...main, ...ids.filter((id) => !main.includes(id))];
 }
 
-// График работы: смены, время и ставка, которые задали при создании учетной записи.
-// Ставка — деньги сотрудника, поэтому раздел только для админа.
-function renderSchedulePage() {
-  if (!canManageEmployeeWorkspace()) {
-    return `
-      <section class="card">
-        <h3>График работы</h3>
-        <div class="note">Раздел доступен только админу.</div>
-      </section>
-    `;
-  }
-
-  const activeUsers = (data.staffUsers || []).filter((user) => user.is_active);
-  let body;
-  if (data.staffLoading) {
-    body = `<div class="empty">Загружаем график...</div>`;
-  } else if (!activeUsers.length) {
-    body = `<div class="empty">Сотрудники пока не найдены.</div>`;
-  } else {
-    const rows = activeUsers
-      .map((user) => {
-        const schedule = user.schedule;
-        const shift = schedule ? escapeHtml(schedule.pattern) : `<span class="muted">не задан</span>`;
-        const hours = schedule
-          ? `${escapeHtml(formatStaffTime(schedule.shift_start))}–${escapeHtml(formatStaffTime(schedule.shift_end))}`
-          : "—";
-        const rate =
-          schedule && schedule.hourly_rate != null ? `${escapeHtml(formatStaffRate(schedule.hourly_rate))} ₽` : "—";
-        return `
-          <tr>
-            <td>${escapeHtml(user.full_name || user.login)}</td>
-            <td>${escapeHtml(user.role?.name || "Без роли")}</td>
-            <td>${escapeHtml(formatStaffCenterLabel(user))}</td>
-            <td>${shift}</td>
-            <td>${hours}</td>
-            <td>${rate}</td>
-          </tr>
-        `;
-      })
-      .join("");
-    body = `
-      <div class="data-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Сотрудник</th>
-              <th>Роль</th>
-              <th>Медцентр</th>
-              <th>Смена</th>
-              <th>Время</th>
-              <th>Ставка в час</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `;
-  }
-
-  return `
-    <section class="card">
-      <h3>График работы</h3>
-      <p class="muted">Смены, время и ставка часа сотрудников. Задаются и меняются кнопкой «График» на странице «Сотрудник».</p>
-      ${data.staffError ? `<div class="note employee-note employee-note--error">${escapeHtml(data.staffError)}</div>` : ""}
-      ${body}
-    </section>
-  `;
-}
-
 // Раздел «Статус» пока без содержания: что на нем показывать, еще не решено.
 function renderStatusPage() {
   return `
@@ -7396,10 +7334,6 @@ function renderStatusPage() {
 
 function formatStaffTime(value) {
   return String(value || "").slice(0, 5);
-}
-
-function formatStaffRate(value) {
-  return Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
 }
 
 // Сводка графика по полям формы, пока их заполняют.
@@ -12651,7 +12585,7 @@ function renderContent() {
   if (appState.page === "cash") return renderCashPage();
   if (appState.page === "reports") return renderReportsPage();
   if (appState.page === "employee") return renderEmployeePage();
-  if (appState.page === "schedule") return renderSchedulePage();
+  if (appState.page === "schedule") return renderWorkScheduleContent();
   if (appState.page === "status") return renderStatusPage();
 
   const item = navItems.find((navItem) => navItem.id === appState.page);
@@ -13171,6 +13105,7 @@ function renderAppKeepingOperatorVisitPosition(form) {
 
 function bindContentEvents() {
   attachNativeDatePickers(contentRoot);
+  bindWorkScheduleEvents();
 
   document.querySelector("[data-start-login]")?.addEventListener("click", () => {
     loginModal?.classList.remove("hidden");
@@ -15064,7 +14999,7 @@ function renderApp() {
   }
   if (
     (appState.page === "reports" && !canAccessReportsWorkspace()) ||
-    (appState.page === "schedule" && !canManageEmployeeWorkspace()) ||
+    (appState.page === "schedule" && !canViewWorkSchedule()) ||
     (appState.page === "cash" && !canAccessCashWorkspace()) ||
     (appState.page === "blanks" && !canAccessBlanksWorkspace()) ||
     (SERVICE_WORKSPACE_PAGES.includes(appState.page) && !canAccessServiceWorkspace())
