@@ -8,7 +8,7 @@
 """
 
 from calendar import monthrange
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.models.center import Center
 from app.models.staff_schedule_day import StaffScheduleDay
 from app.models.user import Role, User
+from app.services.audit import write_audit_log
 
 # Порядок в таблице: сначала операторы, потом врачи; админ попадает в таблицу, только если ему задан график.
 SCHEDULE_ROLE_ORDER = ("operator", "doctor", "chairman", "admin")
@@ -308,7 +309,7 @@ def fill_pattern_shifts(db: Session, user: User, first: date, last: date) -> int
     return created
 
 
-def generate_month(db: Session, year: int, month: int) -> dict:
+def generate_month(db: Session, year: int, month: int, *, actor_id: int | None = None) -> dict:
     """«Создать график»: заполняет месяц для всех, у кого выбран шаблон и есть первая смена.
 
     Ручной график и уже занятые дни не трогает, поэтому повторное нажатие ничего не ломает.
@@ -322,7 +323,16 @@ def generate_month(db: Session, year: int, month: int) -> dict:
         if user.schedule_anchor_date is None:
             missing.append(user.full_name or user.login)
             continue
-        created += fill_pattern_shifts(db, user, first, last)
+        added = fill_pattern_shifts(db, user, first, last)
+        if added:
+            audit_schedule_change(
+                db,
+                staff=user,
+                actor_id=actor_id,
+                action="month_generate",
+                payload={"year": year, "month": month, "created": added},
+            )
+        created += added
     db.commit()
     return {"created": created, "users_without_start": sorted(missing)}
 
@@ -430,3 +440,74 @@ def put_facts(db: Session, user: User, items: list[dict]) -> int:
         row.fact_start_time = item["start_time"]
         row.fact_end_time = item["end_time"]
     return len(items)
+
+
+# Журнал аудита графика: правка графика или ставки пишется в ту же транзакцию, что и сама правка,
+# поэтому без записи в журнал правка не сохранится. entity — сотрудник, в payload — было и стало.
+AUDIT_ENTITY = "staff_schedule"
+
+
+def audit_schedule_change(db: Session, *, staff: User, actor_id: int | None, action: str, payload: dict) -> None:
+    write_audit_log(
+        db,
+        entity_type=AUDIT_ENTITY,
+        entity_id=staff.id,
+        action=action,
+        user_id=actor_id,
+        center_id=staff.center_id,
+        payload_json=payload,
+    )
+
+
+def rate_for_audit(rate: Decimal | None) -> float | None:
+    """Ставка в журнале числом: Decimal в JSON не сохраняется."""
+    return float(rate) if rate is not None else None
+
+
+def _day_state(row: StaffScheduleDay | None) -> dict | None:
+    if row is None:
+        return None
+    return {
+        "kind": row.kind,
+        "start": format_time(row.start_time),
+        "end": format_time(row.end_time),
+        "fact_start": format_time(row.fact_start_time),
+        "fact_end": format_time(row.fact_end_time),
+    }
+
+
+def day_state(db: Session, user: User, work_date: date) -> dict | None:
+    """День сотрудника в том виде, в каком он попадает в журнал; None — записи нет."""
+    row = db.execute(
+        select(StaffScheduleDay).where(StaffScheduleDay.user_id == user.id, StaffScheduleDay.work_date == work_date)
+    ).scalar_one_or_none()
+    return _day_state(row)
+
+
+def kinds_in_period(db: Session, user: User, days: list[date]) -> dict[str, int]:
+    """Сколько дней периода уже заняты чем (shift, dayoff, sick, vacation); без записи — empty."""
+    kinds = Counter(
+        db.execute(
+            select(StaffScheduleDay.kind).where(
+                StaffScheduleDay.user_id == user.id,
+                StaffScheduleDay.work_date.between(days[0], days[-1]),
+            )
+        ).scalars()
+    )
+    counts = dict(kinds)
+    counts["empty"] = len(days) - sum(kinds.values())
+    return counts
+
+
+def _fact_text(row: StaffScheduleDay) -> str | None:
+    if row.fact_start_time is None or row.fact_end_time is None:
+        return None
+    return f"{format_time(row.fact_start_time)}-{format_time(row.fact_end_time)}"
+
+
+def facts_state(db: Session, user: User, dates: list[date]) -> dict[date, str | None]:
+    """Факт по дням: «09:30-18:00» или None, когда отработано по плану."""
+    rows = db.execute(
+        select(StaffScheduleDay).where(StaffScheduleDay.user_id == user.id, StaffScheduleDay.work_date.in_(dates))
+    ).scalars()
+    return {row.work_date: _fact_text(row) for row in rows}

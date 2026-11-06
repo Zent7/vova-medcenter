@@ -88,7 +88,7 @@ def generate_month(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleGenerateRead:
-    result = service.generate_month(db, payload.year, payload.month)
+    result = service.generate_month(db, payload.year, payload.month, actor_id=admin.id)
     if result["created"]:
         lines = [f"Месяц: {payload.month:02d}.{payload.year}", f"Создано смен: {result['created']}"]
         if result["users_without_start"]:
@@ -114,7 +114,18 @@ def update_day(
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
     service.check_day_update(payload.kind, payload.start_time, payload.end_time)
+    before = service.day_state(db, user, work_date)
     service.put_day(db, user, work_date, payload.kind, payload.start_time, payload.end_time)
+    db.flush()
+    after = service.day_state(db, user, work_date)
+    if before != after:
+        service.audit_schedule_change(
+            db,
+            staff=user,
+            actor_id=admin.id,
+            action="day_update",
+            payload={"date": work_date.isoformat(), "before": before, "after": after},
+        )
     db.commit()
     _notify_schedule(
         background_tasks,
@@ -139,7 +150,16 @@ def clear_day(
     db: Session = Depends(get_db),
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
+    before = service.day_state(db, user, work_date)
     changed = service.clear_day(db, user, work_date)
+    if changed:
+        service.audit_schedule_change(
+            db,
+            staff=user,
+            actor_id=admin.id,
+            action="day_clear",
+            payload={"date": work_date.isoformat(), "before": before, "after": None},
+        )
     db.commit()
     if changed:
         _notify_schedule(
@@ -163,7 +183,24 @@ def add_absence(
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
     days = service.check_absence_period(payload.date_from, payload.date_to)
+    before = service.kinds_in_period(db, user, days)
     changed = service.put_absence(db, user, days, payload.kind)
+    # Дни, которые уже стоят в этом виде, не меняются: если стоят все, в журнал ничего не пишем.
+    already_kind_days = before.get(payload.kind, 0)
+    if already_kind_days != len(days):
+        service.audit_schedule_change(
+            db,
+            staff=user,
+            actor_id=admin.id,
+            action="absence_add",
+            payload={
+                "from": days[0].isoformat(),
+                "to": days[-1].isoformat(),
+                "kind": payload.kind,
+                "days": len(days) - already_kind_days,
+                "before": before,
+            },
+        )
     db.commit()
     if changed:
         _notify_schedule(
@@ -189,7 +226,19 @@ def start_first_shift(
     db: Session = Depends(get_db),
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
+    anchor_before = user.schedule_anchor_date
     created = service.restart_pattern(db, user, payload.work_date)
+    service.audit_schedule_change(
+        db,
+        staff=user,
+        actor_id=admin.id,
+        action="first_shift",
+        payload={
+            "work_date": payload.work_date.isoformat(),
+            "anchor_before": anchor_before.isoformat() if anchor_before else None,
+            "created": created,
+        },
+    )
     db.commit()
     _notify_schedule(
         background_tasks,
@@ -216,7 +265,18 @@ def update_facts(
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
     items = [item.model_dump() for item in payload.items]
+    fact_dates = list(dict.fromkeys(item["work_date"] for item in items))
+    facts_before = service.facts_state(db, user, fact_dates)
     changed = service.put_facts(db, user, items)
+    db.flush()
+    facts_after = service.facts_state(db, user, fact_dates)
+    fact_changes = [
+        {"date": work_date.isoformat(), "before": facts_before.get(work_date), "after": facts_after.get(work_date)}
+        for work_date in fact_dates
+        if facts_before.get(work_date) != facts_after.get(work_date)
+    ]
+    if fact_changes:
+        service.audit_schedule_change(db, staff=user, actor_id=admin.id, action="facts_update", payload={"items": fact_changes})
     db.commit()
     if changed:
         lines = [

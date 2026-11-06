@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.v1.routes.auth import require_admin
 from app.db.session import get_db
 from app.models.audit_log import AuditLog
 from app.models.user import User
 from app.schemas.audit_log import AuditLogRead
 
-router = APIRouter()
+# Журнал аудита видит только админ: в нем ставки и правки графика сотрудников.
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("", response_model=list[AuditLogRead])

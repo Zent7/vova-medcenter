@@ -20,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app.models  # noqa: E402,F401
+from app.api.v1.routes import audit_logs as audit_logs_routes  # noqa: E402
 from app.api.v1.routes import auth as auth_routes  # noqa: E402
 from app.api.v1.routes import payments as payments_routes  # noqa: E402
 from app.api.v1.routes import reports as reports_routes  # noqa: E402
@@ -88,6 +89,17 @@ class AdminOnlyAccessTests(unittest.TestCase):
                     _dependency_calls(route.dependant),
                     f"{module.__name__}: {sorted(route.methods)} {route.path} открыт не только админу",
                 )
+
+    def test_audit_log_is_closed_to_everyone_but_admin(self):
+        # В журнале ставки и правки графика сотрудников: врач и оператор его не читают.
+        routes = [route for route in audit_logs_routes.router.routes if isinstance(route, APIRoute)]
+        self.assertTrue(routes)
+        for route in routes:
+            self.assertIn(
+                auth_routes.require_admin,
+                _dependency_calls(route.dependant),
+                f"{sorted(route.methods)} {route.path} открыт не только админу",
+            )
 
     def test_cash_is_open_to_admin_and_operator_only(self):
         with self.Session() as db:

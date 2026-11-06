@@ -21,6 +21,7 @@ from app.schemas.user_admin import (
     StaffUserRead,
 )
 from app.services.notifications import notify_change
+from app.services.work_schedule import audit_schedule_change, rate_for_audit
 
 router = APIRouter()
 
@@ -110,6 +111,19 @@ def create_staff(
         **schedule_columns(payload.schedule),
     )
     db.add(user)
+    db.flush()
+    if payload.schedule is not None:
+        audit_schedule_change(
+            db,
+            staff=user,
+            actor_id=current_user.id,
+            action="schedule_create",
+            payload={
+                "staff": user.full_name or user.login,
+                "schedule": describe_schedule(user.schedule_pattern, user.schedule_start, user.schedule_end),
+                "hourly_rate": rate_for_audit(user.hourly_rate),
+            },
+        )
     db.commit()
     db.refresh(user)
     db.refresh(user, attribute_names=["role"])
@@ -175,8 +189,33 @@ def update_staff_schedule(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден")
 
     before = (user.schedule_pattern, user.schedule_start, user.schedule_end)
+    rate_before = user.hourly_rate
     for column, value in schedule_columns(payload.schedule).items():
         setattr(user, column, value)
+    if before != (user.schedule_pattern, user.schedule_start, user.schedule_end):
+        audit_schedule_change(
+            db,
+            staff=user,
+            actor_id=admin.id,
+            action="schedule_update",
+            payload={
+                "staff": user.full_name or user.login,
+                "before": describe_schedule(*before),
+                "after": describe_schedule(user.schedule_pattern, user.schedule_start, user.schedule_end),
+            },
+        )
+    if rate_before != user.hourly_rate:
+        audit_schedule_change(
+            db,
+            staff=user,
+            actor_id=admin.id,
+            action="rate_update",
+            payload={
+                "staff": user.full_name or user.login,
+                "before": rate_for_audit(rate_before),
+                "after": rate_for_audit(user.hourly_rate),
+            },
+        )
     db.commit()
     db.refresh(user)
     after = (user.schedule_pattern, user.schedule_start, user.schedule_end)
