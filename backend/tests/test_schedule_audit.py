@@ -14,7 +14,7 @@ import sys
 import unittest
 
 from fastapi import BackgroundTasks, HTTPException
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 
@@ -357,6 +357,111 @@ class ScheduleAuditTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0].user_name, "Евгений")
             self.assertEqual(rows[0].payload_json, {"staff": "Борис Врачов", "before": 300.0, "after": 320.0})
+            self.assertEqual(rows[0].entity_name, "Борис Врачов")
+
+            # В записи про день имени сотрудника нет: его берем из учетки.
+            self._update_day(db, date(2026, 11, 5), "dayoff")
+            day = audit_routes.list_audit_logs(
+                entity_type="staff_schedule", entity_id=self.boris_id, action="day_update", limit=10, db=db
+            )
+            self.assertEqual(day[0].entity_name, "Борис Врачов")
+
+
+class StaffDeleteAuditTests(unittest.TestCase):
+    """Стирание учетки с графиком или ставкой попадает в журнал; отключение вместо стирания — нет."""
+
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:")
+
+        @event.listens_for(self.engine, "connect")
+        def enable_foreign_keys(dbapi_connection, _record):
+            # Как в PostgreSQL: без этого SQLite стер бы учетку, на которую ссылаются дни графика.
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine)
+        with self.Session() as db:
+            admin_role = Role(code="admin", name="admin")
+            doctor_role = Role(code="doctor", name="doctor")
+            db.add_all([admin_role, doctor_role])
+            db.flush()
+            db.add(
+                User(
+                    role_id=admin_role.id,
+                    login="admin",
+                    password_hash=hash_password("admin123"),
+                    full_name="Евгений",
+                    is_active=True,
+                )
+            )
+            for login, full_name, scheduled in (
+                ("clean", "Без записей", True),
+                ("plain", "Без графика", False),
+                ("worked", "С записями", True),
+            ):
+                db.add(
+                    User(
+                        role_id=doctor_role.id,
+                        login=login,
+                        password_hash=hash_password("secret123"),
+                        full_name=full_name,
+                        is_active=True,
+                        schedule_pattern="2/2" if scheduled else None,
+                        schedule_start=time(9) if scheduled else None,
+                        schedule_end=time(20) if scheduled else None,
+                        hourly_rate=Decimal("300") if scheduled else None,
+                    )
+                )
+            db.commit()
+
+    def tearDown(self):
+        self.engine.dispose()
+
+    def _user(self, db, login):
+        return db.execute(select(User).where(User.login == login)).scalar_one()
+
+    def _staff_delete_entries(self, db):
+        return list(db.execute(select(AuditLog).where(AuditLog.action == "staff_delete")).scalars())
+
+    def test_deleted_account_is_logged_with_its_schedule_and_rate(self):
+        with self.Session() as db:
+            admin_id = self._user(db, "admin").id
+            clean_id = self._user(db, "clean").id
+
+            result = staff_routes.delete_staff_user(user_id=clean_id, current_user=self._user(db, "admin"), db=db)
+
+            self.assertTrue(result.deleted)
+            (entry,) = self._staff_delete_entries(db)
+            self.assertEqual(entry.entity_id, clean_id)
+            self.assertEqual(entry.user_id, admin_id)
+            self.assertEqual(
+                entry.payload_json,
+                {"staff": "Без записей", "schedule": "2/2, 09:00-20:00", "hourly_rate": 300.0},
+            )
+
+    def test_deleted_account_without_schedule_is_not_logged(self):
+        with self.Session() as db:
+            plain_id = self._user(db, "plain").id
+
+            result = staff_routes.delete_staff_user(user_id=plain_id, current_user=self._user(db, "admin"), db=db)
+
+            self.assertTrue(result.deleted)
+            self.assertEqual(self._staff_delete_entries(db), [])
+
+    def test_account_kept_as_disabled_is_not_logged_as_deleted(self):
+        with self.Session() as db:
+            worked = self._user(db, "worked")
+            service.put_day(db, worked, date(2026, 11, 5), "dayoff", None, None)
+            db.commit()
+            worked_id = worked.id
+
+            result = staff_routes.delete_staff_user(user_id=worked_id, current_user=self._user(db, "admin"), db=db)
+
+            self.assertFalse(result.deleted)
+            self.assertFalse(db.get(User, worked_id).is_active)
+            self.assertEqual(self._staff_delete_entries(db), [])
 
 
 if __name__ == "__main__":

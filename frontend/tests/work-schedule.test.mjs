@@ -273,8 +273,8 @@ test("app.js: выход сбрасывает график, перерисовк
 
 test("index.html: модуль графика грузится до app.js, токен у app.js, модуля и стилей один", () => {
   assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*work-status-v1"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*work-status-v1"><\/script>/);
-  assert.match(indexSource, /styles\.css\?v=[\w-]*work-status-v1/);
+  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
+  assert.match(indexSource, /styles\.css\?v=[\w-]*audit-journal-v1/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("app.js?v="), "модуль раньше app.js");
 });
 

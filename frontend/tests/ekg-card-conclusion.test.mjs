@@ -38,7 +38,7 @@ test("заключение ЭКГ больше не переписывается
 
 test("index.html грузит карточку ЭКГ с новым токеном кэша", () => {
   assert.match(indexSource, /service-cards\.js\?v=20261024-ekg-bottom-to-top-v1/);
-  assert.match(indexSource, /app\.js\?v=[\w-]*work-status-v1/);
+  assert.match(indexSource, /app\.js\?v=[\w-]*audit-journal-v1/);
 });
 
 test("пустое заключение карточки ЭКГ заполняется стандартным текстом, справка спорта не меняется", () => {

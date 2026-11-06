@@ -250,6 +250,7 @@ const RESTORABLE_PAGES = new Set([
   "cash",
   "xml",
   "reports",
+  "journal",
   "documents",
   "schedule",
   "status",
@@ -439,6 +440,7 @@ const navItems = [
   { id: "cash", label: "Касса", toast: "Открыт блок: Касса" },
   { id: "xml", label: "XML", toast: "Открыт блок: XML" },
   { id: "reports", label: "Отчеты", toast: "Открыт блок: Отчеты" },
+  { id: "journal", label: "Журнал", toast: "Открыт раздел: Журнал" },
   { id: "schedule", label: "График работы", toast: "Открыт раздел: График работы" },
   { id: "status", label: "Статус", toast: "Открыт раздел: Статус" },
 ];
@@ -3431,6 +3433,7 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
   data.editingStaffEmailId = null;
   resetWorkSchedule();
   resetWorkStatus();
+  resetAuditJournal();
   appState.page = "start";
   appState.doctorExamModal = {
     isOpen: false,
@@ -6367,6 +6370,9 @@ function loadPageData(page) {
   if (page === "reports" && canAccessReportsWorkspace() && !data.reportLoading) {
     loadReportsSummary();
   }
+  if (page === "journal" && canViewAuditJournal() && !ajState.loading) {
+    loadAuditJournal();
+  }
   if (page === "cash" && canAccessCashWorkspace() && !data.cashLoading) {
     loadCashReport();
   }
@@ -6386,6 +6392,7 @@ function renderNav() {
   }
   const visibleNavItems = navItems.filter((item) => {
     if (item.id === "reports") return canAccessReportsWorkspace();
+    if (item.id === "journal") return canViewAuditJournal();
     if (item.id === "schedule") return canViewWorkSchedule();
     if (item.id === "cash") return canAccessCashWorkspace();
     if (item.id === "blanks") return canAccessBlanksWorkspace();
@@ -6430,6 +6437,10 @@ function renderNav() {
       }
       if (page === "reports" && !canAccessReportsWorkspace()) {
         showToast("Отчеты доступны только админу");
+        return;
+      }
+      if (page === "journal" && !canViewAuditJournal()) {
+        showToast("Журнал доступен только админу");
         return;
       }
       if (page === "chart") {
@@ -12634,6 +12645,7 @@ function renderContent() {
   if (appState.page === "employee") return renderEmployeePage();
   if (appState.page === "schedule") return renderWorkScheduleContent();
   if (appState.page === "status") return renderStatusContent();
+  if (appState.page === "journal") return renderJournalContent();
 
   const item = navItems.find((navItem) => navItem.id === appState.page);
   return renderStubPage(item?.label || "Раздел");
@@ -13154,6 +13166,7 @@ function bindContentEvents() {
   attachNativeDatePickers(contentRoot);
   bindWorkScheduleEvents();
   bindWorkStatusEvents();
+  bindAuditJournalEvents();
 
   document.querySelector("[data-start-login]")?.addEventListener("click", () => {
     loginModal?.classList.remove("hidden");
@@ -15080,6 +15093,7 @@ function renderApp() {
   }
   if (
     (appState.page === "reports" && !canAccessReportsWorkspace()) ||
+    (appState.page === "journal" && !canViewAuditJournal()) ||
     (appState.page === "schedule" && !canViewWorkSchedule()) ||
     (appState.page === "cash" && !canAccessCashWorkspace()) ||
     (appState.page === "blanks" && !canAccessBlanksWorkspace()) ||

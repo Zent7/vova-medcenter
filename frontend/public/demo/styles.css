@@ -7477,6 +7477,36 @@ body[data-page="dashboard"] .dashboard-table-head-scroll {
   color: var(--muted);
 }
 
+/* Журнал изменений графика (audit-journal.js) */
+.aj__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.aj__head .ghost-button {
+  flex: 0 0 auto;
+}
+
+.aj__count {
+  margin: 10px 0 0;
+}
+
+.aj__table {
+  margin-top: 12px;
+}
+
+.aj__table table {
+  min-width: 720px;
+}
+
+.aj__table td .muted {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
 .wst__key::before {
   content: "";
   display: inline-block;

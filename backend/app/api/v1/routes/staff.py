@@ -20,8 +20,9 @@ from app.schemas.user_admin import (
     StaffUserDeleteResponse,
     StaffUserRead,
 )
+from app.services.audit import write_audit_log
 from app.services.notifications import notify_change
-from app.services.work_schedule import audit_schedule_change, rate_for_audit
+from app.services.work_schedule import AUDIT_ENTITY, audit_schedule_change, rate_for_audit
 
 router = APIRouter()
 
@@ -273,6 +274,17 @@ def delete_staff_user(
     if user.id == current_user.id or user.role.code == "chairman":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нельзя удалить председателя или свою учетную запись")
 
+    # Учетка с графиком или ставкой уйдет вместе с ними: запоминаем, что пропадает, и пишем в журнал
+    # только если удаление прошло. При отключении (записи в программе) график остается на месте.
+    lost_schedule = None
+    if user.schedule_pattern is not None or user.hourly_rate is not None:
+        lost_schedule = {
+            "staff": user.full_name or user.login,
+            "schedule": describe_schedule(user.schedule_pattern, user.schedule_start, user.schedule_end),
+            "hourly_rate": rate_for_audit(user.hourly_rate),
+        }
+    staff_id, staff_center_id = user.id, user.center_id
+
     try:
         db.delete(user)
         db.flush()
@@ -288,5 +300,15 @@ def delete_staff_user(
             message="Учетную запись нельзя удалить: по ней есть записи в программе. Она отключена и больше не сможет войти.",
         )
 
+    if lost_schedule is not None:
+        write_audit_log(
+            db,
+            entity_type=AUDIT_ENTITY,
+            entity_id=staff_id,
+            action="staff_delete",
+            user_id=current_user.id,
+            center_id=staff_center_id,
+            payload_json=lost_schedule,
+        )
     db.commit()
     return StaffUserDeleteResponse(deleted=True, message="Учетная запись удалена.")
