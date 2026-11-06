@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -86,7 +86,7 @@ class StaffCenterScopeTests(unittest.TestCase):
     def _create(self, db, **overrides):
         values = {"login": "new", "password": "temp12345", "full_name": "Новый", "role_code": "doctor"}
         values.update(overrides)
-        return staff_routes.create_staff(payload=StaffUserCreate(**values), current_user=self._admin(db), db=db)
+        return staff_routes.create_staff(payload=StaffUserCreate(**values), background_tasks=BackgroundTasks(), current_user=self._admin(db), db=db)
 
     def test_doctor_is_pinned_to_the_chosen_center(self):
         with self.Session() as db:

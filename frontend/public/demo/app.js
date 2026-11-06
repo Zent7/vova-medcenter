@@ -193,6 +193,7 @@ const data = {
   editingStaffCentersId: null,
   staffCentersError: "",
   editingStaffScheduleId: null,
+  editingStaffEmailId: null,
   lastCreatedStaffUser: null,
   reportSummary: null,
   reportLoading: false,
@@ -3427,7 +3428,9 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
   data.editingStaffCentersId = null;
   data.staffCentersError = "";
   data.editingStaffScheduleId = null;
+  data.editingStaffEmailId = null;
   resetWorkSchedule();
+  resetWorkStatus();
   appState.page = "start";
   appState.doctorExamModal = {
     isOpen: false,
@@ -3532,6 +3535,25 @@ async function updateDemoStaffSchedule(userId, schedule) {
     return "";
   } catch (error) {
     return humanizeApiError(error, "Не удалось сохранить график");
+  }
+}
+
+// Почта для уведомлений админа; пустая строка ее убирает. Ошибку возвращает, форма остается с вводом.
+async function updateDemoStaffEmail(userId, email) {
+  try {
+    const updatedUser = await apiRequest(`/staff/${encodeURIComponent(userId)}/email`, {
+      method: "PUT",
+      body: JSON.stringify({ email: email || null }),
+      headers: {},
+    });
+    data.staffUsers = (data.staffUsers || []).map((user) => (Number(user.id) === Number(userId) ? updatedUser : user));
+    data.editingStaffEmailId = null;
+    persistDemoState();
+    renderApp();
+    showToast(email ? "Почта для уведомлений сохранена" : "Почта для уведомлений убрана");
+    return "";
+  } catch (error) {
+    return humanizeApiError(error, "Не удалось сохранить почту");
   }
 }
 
@@ -6336,6 +6358,9 @@ function loadPageData(page) {
   if (page === "schedule" && canViewWorkSchedule() && !wsState.loading) {
     loadWorkSchedule();
   }
+  if (page === "status") {
+    loadWorkStatus();
+  }
   if (page === "calendar" && !data.recallItemsLoaded && !data.recallItemsLoading) {
     loadRecallCalendar();
   }
@@ -7322,16 +7347,6 @@ function orderStaffCenterIds(checkedIds, mainCenterId = null) {
   return [...main, ...ids.filter((id) => !main.includes(id))];
 }
 
-// Раздел «Статус» пока без содержания: что на нем показывать, еще не решено.
-function renderStatusPage() {
-  return `
-    <section class="card">
-      <h3>Статус</h3>
-      <div class="empty">Раздел создан, содержимое пока не задано.</div>
-    </section>
-  `;
-}
-
 function formatStaffTime(value) {
   return String(value || "").slice(0, 5);
 }
@@ -7450,6 +7465,31 @@ function clearStaffScheduleFields(form) {
 
 function showStaffScheduleEditError(form, message) {
   const note = form.querySelector("[data-staff-schedule-error]");
+  if (!note) return;
+  note.textContent = message;
+  note.classList.remove("hidden");
+}
+
+// Почта для уведомлений админа: форма открывается кнопкой «Почта» в его строке.
+function renderStaffEmailEditForm(user) {
+  return `
+    <form class="employee-centers-edit" data-staff-email-form="${escapeHtml(user.id)}">
+      <label class="employee-email">
+        <span>Почта для уведомлений</span>
+        <input type="email" name="email" value="${escapeHtml(user.email || "")}" maxlength="255" placeholder="name@example.com" />
+      </label>
+      <div class="employee-centers__hint">На эту почту приходят уведомления: изменения графика работы и ФИО клиентов. Пустое поле убирает почту.</div>
+      <div class="note employee-note employee-note--error hidden" data-staff-email-error></div>
+      <div class="actions">
+        <button class="primary-button" type="submit">Сохранить</button>
+        <button class="ghost-button" type="button" data-cancel-staff-email>Отмена</button>
+      </div>
+    </form>
+  `;
+}
+
+function showStaffEmailEditError(form, message) {
+  const note = form.querySelector("[data-staff-email-error]");
   if (!note) return;
   note.textContent = message;
   note.classList.remove("hidden");
@@ -7590,11 +7630,13 @@ function renderEmployeePage() {
                                 <div class="actions">
                                   <span class="status ${user.is_active ? "ok" : "warn"}">${user.is_active ? "Активен" : "Отключен"}</span>
                                   <button class="ghost-button" type="button" data-edit-staff-schedule="${escapeHtml(user.id)}">График</button>
+                                  ${user.role?.code === "admin" ? `<button class="ghost-button" type="button" data-edit-staff-email="${escapeHtml(user.id)}" title="Почта, на которую приходят уведомления">Почта</button>` : ""}
                                   ${user.all_centers ? "" : `<button class="ghost-button" type="button" data-edit-staff-centers="${escapeHtml(user.id)}">Центры</button>`}
                                   ${user.is_active && user.role?.code !== "chairman" && Number(user.id) !== Number(appState.auth.userId) ? `<button class="ghost-button" type="button" data-delete-staff-user="${escapeHtml(user.id)}" data-delete-staff-name="${escapeHtml(user.full_name || user.login || "сотрудник")}">Удалить</button>` : ""}
                                 </div>
                               </div>
                               <div class="table-row__meta">${escapeHtml(user.login)} · ${escapeHtml(user.role?.name || "Без роли")} · ${escapeHtml(formatStaffCenterLabel(user))}</div>
+                              ${user.role?.code === "admin" ? `<div class="table-row__meta">Почта для уведомлений: ${escapeHtml(user.email || "не указана")}</div>` : ""}
                               ${
                                 Number(data.editingStaffCentersId) === Number(user.id)
                                   ? `
@@ -7613,6 +7655,11 @@ function renderEmployeePage() {
                               ${
                                 Number(data.editingStaffScheduleId) === Number(user.id)
                                   ? renderStaffScheduleEditForm(user)
+                                  : ""
+                              }
+                              ${
+                                Number(data.editingStaffEmailId) === Number(user.id)
+                                  ? renderStaffEmailEditForm(user)
                                   : ""
                               }
                             </div>
@@ -12586,7 +12633,7 @@ function renderContent() {
   if (appState.page === "reports") return renderReportsPage();
   if (appState.page === "employee") return renderEmployeePage();
   if (appState.page === "schedule") return renderWorkScheduleContent();
-  if (appState.page === "status") return renderStatusPage();
+  if (appState.page === "status") return renderStatusContent();
 
   const item = navItems.find((navItem) => navItem.id === appState.page);
   return renderStubPage(item?.label || "Раздел");
@@ -13106,6 +13153,7 @@ function renderAppKeepingOperatorVisitPosition(form) {
 function bindContentEvents() {
   attachNativeDatePickers(contentRoot);
   bindWorkScheduleEvents();
+  bindWorkStatusEvents();
 
   document.querySelector("[data-start-login]")?.addEventListener("click", () => {
     loginModal?.classList.remove("hidden");
@@ -13701,6 +13749,39 @@ function bindContentEvents() {
       if (error) {
         if (submitButton) submitButton.disabled = false;
         showStaffScheduleEditError(form, error);
+      }
+    });
+  });
+
+  // Почта для уведомлений админа: форма открывается кнопкой «Почта» в его строке.
+  contentRoot.querySelectorAll("[data-edit-staff-email]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = Number(button.dataset.editStaffEmail || 0);
+      data.editingStaffEmailId = Number(data.editingStaffEmailId) === userId ? null : userId;
+      renderApp();
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-cancel-staff-email]").forEach((button) => {
+    button.addEventListener("click", () => {
+      data.editingStaffEmailId = null;
+      renderApp();
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-staff-email-form]").forEach((form) => {
+    form.addEventListener("input", () => form.querySelector("[data-staff-email-error]")?.classList.add("hidden"));
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const userId = Number(form.dataset.staffEmailForm || 0);
+      if (!userId) return;
+      const email = String(new FormData(form).get("email") || "").trim();
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (submitButton) submitButton.disabled = true;
+      const error = await updateDemoStaffEmail(userId, email);
+      if (error) {
+        if (submitButton) submitButton.disabled = false;
+        showStaffEmailEditError(form, error);
       }
     });
   });

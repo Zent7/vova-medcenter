@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 
 # Смену админ выбирает вручную из этих пяти вариантов.
@@ -115,3 +116,23 @@ class StaffScheduleUpdate(BaseModel):
     # График существующего сотрудника; null снимает его целиком. Поле обязательно, чтобы
     # пустой запрос не стер график молча.
     schedule: StaffScheduleCreate | None
+
+
+class StaffEmailUpdate(BaseModel):
+    # Почта сотрудника: на нее приходят уведомления админам. Пустое значение ее убирает.
+    email: str | None = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+        local, sep, domain = normalized.partition("@")
+        valid = bool(local) and bool(sep) and "." in domain.strip(".") and "@" not in domain and " " not in normalized
+        if not valid or len(normalized) > 255:
+            # PydanticCustomError, а не ValueError: у ValueError Pydantic добавляет префикс «Value error, » в текст ошибки.
+            raise PydanticCustomError("staff_email_format", "Укажите почту в формате name@example.com")
+        return normalized

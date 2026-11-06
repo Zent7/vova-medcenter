@@ -151,6 +151,7 @@ test("ячейка дня: смена показывает время и ном�
   const shift = wsCellContent({ kind: "shift", start_time: "08:00:00", end_time: "20:00:00", shift_no: 3 });
   assert.match(shift, /08:00/);
   assert.match(shift, /20:00/);
+  assert.match(shift, /08:00-20:00/, "время смены одной строкой: 08:00-20:00");
   assert.match(shift, /смена 3/);
   assert.match(wsCellContent({ kind: "dayoff" }), /Отг/);
   assert.match(wsCellContent({ kind: "sick" }), /Бол/);
@@ -271,9 +272,9 @@ test("app.js: выход сбрасывает график, перерисовк
 });
 
 test("index.html: модуль графика грузится до app.js, токен у app.js, модуля и стилей один", () => {
-  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*work-schedule-v1"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*work-schedule-v1"><\/script>/);
-  assert.match(indexSource, /styles\.css\?v=[\w-]*work-schedule-v1/);
+  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*work-status-v1"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*work-status-v1"><\/script>/);
+  assert.match(indexSource, /styles\.css\?v=[\w-]*work-status-v1/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("app.js?v="), "модуль раньше app.js");
 });
 

@@ -250,7 +250,7 @@ function wsCellContent(day) {
   if (!day) return "";
   if (day.kind === "shift") {
     const number = day.shift_no ? `<span class="ws__cell-no">смена ${Number(day.shift_no)}</span>` : "";
-    return `<span class="ws__cell-time">${wsEscape(wsTime(day.start_time))}</span><span class="ws__cell-time">${wsEscape(wsTime(day.end_time))}</span>${number}`;
+    return `<span class="ws__cell-time">${wsEscape(wsTime(day.start_time))}-${wsEscape(wsTime(day.end_time))}</span>${number}`;
   }
   return `<span class="ws__cell-code">${wsEscape(WS_KIND_CODES[day.kind] || "")}</span>`;
 }

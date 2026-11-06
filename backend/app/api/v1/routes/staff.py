@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import time
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -11,12 +13,14 @@ from app.models.user import ALL_CENTERS_ROLE_CODE, Role, User
 from app.schemas.user_admin import (
     RoleRead,
     StaffCentersUpdate,
+    StaffEmailUpdate,
     StaffScheduleCreate,
     StaffScheduleUpdate,
     StaffUserCreate,
     StaffUserDeleteResponse,
     StaffUserRead,
 )
+from app.services.notifications import notify_change
 
 router = APIRouter()
 
@@ -50,6 +54,13 @@ def schedule_columns(schedule: StaffScheduleCreate | None) -> dict:
     }
 
 
+def describe_schedule(pattern: str | None, start: time | None, end: time | None) -> str:
+    """Строка графика для письма: «2/2, 09:00-20:00» или «без графика»."""
+    if pattern is None or start is None or end is None:
+        return "без графика"
+    return f"{pattern}, {start:%H:%M}-{end:%H:%M}"
+
+
 @router.get("/roles", response_model=list[RoleRead])
 def list_staff_roles(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[RoleRead]:
     roles = db.execute(select(Role).where(Role.code.in_(ASSIGNABLE_ROLE_CODES))).scalars().all()
@@ -73,6 +84,7 @@ def list_staff(_: User = Depends(require_admin), db: Session = Depends(get_db)) 
 @router.post("", response_model=StaffUserRead, status_code=status.HTTP_201_CREATED)
 def create_staff(
     payload: StaffUserCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> StaffUserRead:
@@ -101,6 +113,17 @@ def create_staff(
     db.commit()
     db.refresh(user)
     db.refresh(user, attribute_names=["role"])
+    if payload.schedule is not None:
+        notify_change(
+            background_tasks,
+            db,
+            title="Создан график работы",
+            actor=current_user.full_name or current_user.login,
+            lines=[
+                f"Сотрудник: {user.full_name or user.login}",
+                f"График: {describe_schedule(user.schedule_pattern, user.schedule_start, user.schedule_end)}",
+            ],
+        )
     return StaffUserRead.model_validate(user)
 
 
@@ -138,7 +161,8 @@ def update_staff_centers(
 def update_staff_schedule(
     user_id: int,
     payload: StaffScheduleUpdate,
-    _: User = Depends(require_admin),
+    background_tasks: BackgroundTasks,
+    admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> StaffUserRead:
     """Задаёт или меняет график существующего сотрудника; schedule=null снимает его целиком."""
@@ -150,8 +174,44 @@ def update_staff_schedule(
     if user is None or user.role.code not in STAFF_ROLE_CODES:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден")
 
+    before = (user.schedule_pattern, user.schedule_start, user.schedule_end)
     for column, value in schedule_columns(payload.schedule).items():
         setattr(user, column, value)
+    db.commit()
+    db.refresh(user)
+    after = (user.schedule_pattern, user.schedule_start, user.schedule_end)
+    if before != after:
+        notify_change(
+            background_tasks,
+            db,
+            title="Изменено время работы",
+            actor=admin.full_name or admin.login,
+            lines=[
+                f"Сотрудник: {user.full_name or user.login}",
+                f"Было: {describe_schedule(*before)}",
+                f"Стало: {describe_schedule(*after)}",
+            ],
+        )
+    return StaffUserRead.model_validate(user)
+
+
+@router.put("/{user_id}/email", response_model=StaffUserRead)
+def update_staff_email(
+    user_id: int,
+    payload: StaffEmailUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StaffUserRead:
+    """Почта сотрудника: на нее приходят уведомления админам; пустое значение ее убирает."""
+    user = db.execute(
+        select(User)
+        .options(joinedload(User.role), joinedload(User.center), selectinload(User.extra_centers))
+        .where(User.id == user_id)
+    ).scalar_one_or_none()
+    if user is None or user.role.code not in STAFF_ROLE_CODES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден")
+
+    user.email = payload.email
     db.commit()
     db.refresh(user)
     return StaffUserRead.model_validate(user)

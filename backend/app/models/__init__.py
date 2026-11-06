@@ -21,6 +21,7 @@ from app.models.staff_schedule_day import StaffScheduleDay
 from app.models.template_phrase import TemplatePhrase
 from app.models.user import Role, User
 from app.models.visit_type import VisitType, VisitTypeService
+from app.models.work_time_entry import WorkTimeEntry
 
 __all__ = [
     "AuditLog",
@@ -55,4 +56,5 @@ __all__ = [
     "User",
     "VisitType",
     "VisitTypeService",
+    "WorkTimeEntry",
 ]

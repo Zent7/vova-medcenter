@@ -18,7 +18,7 @@ import unittest
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
@@ -220,7 +220,7 @@ class UpdateClientCentersTests(ClientCentersTestCase):
     def test_centers_are_replaced_by_the_new_list(self):
         created = self.create("Петров", [1])
 
-        updated = update_client(created.id, update_payload("Петров", center_ids=[1, 2]), db=self.db)
+        updated = update_client(created.id, update_payload("Петров", center_ids=[1, 2]), background_tasks=BackgroundTasks(), current_user=None, db=self.db)
 
         self.assertEqual(updated.center_ids, [1, 2])
         self.assertEqual(self.list_names([2]), ["Петров"])
@@ -228,7 +228,7 @@ class UpdateClientCentersTests(ClientCentersTestCase):
     def test_an_edit_without_centers_leaves_them_alone(self):
         created = self.create("Петров", [1, 3])
 
-        updated = update_client(created.id, update_payload("Петров", phone="+7 900 000-00-00"), db=self.db)
+        updated = update_client(created.id, update_payload("Петров", phone="+7 900 000-00-00"), background_tasks=BackgroundTasks(), current_user=None, db=self.db)
 
         self.assertEqual(updated.center_ids, [1, 3])
         self.assertEqual(updated.phone, "+7 900 000-00-00")
@@ -237,7 +237,7 @@ class UpdateClientCentersTests(ClientCentersTestCase):
         created = self.create("Петров", [1])
 
         with self.assertRaises(HTTPException) as caught:
-            update_client(created.id, update_payload("Петров", center_ids=[]), db=self.db)
+            update_client(created.id, update_payload("Петров", center_ids=[]), background_tasks=BackgroundTasks(), current_user=None, db=self.db)
 
         self.assertEqual(caught.exception.status_code, 400)
         self.assertEqual(self.db.get(Client, created.id).center_ids, [1])
@@ -247,7 +247,7 @@ class UpdateClientCentersTests(ClientCentersTestCase):
         created = self.create("Иванов", [1])
 
         with self.assertRaises(HTTPException) as caught:
-            update_client(created.id, update_payload("Иванов", center_ids=[2]), db=self.db)
+            update_client(created.id, update_payload("Иванов", center_ids=[2]), background_tasks=BackgroundTasks(), current_user=None, db=self.db)
 
         self.assertEqual(caught.exception.status_code, 409)
 
@@ -255,7 +255,7 @@ class UpdateClientCentersTests(ClientCentersTestCase):
         self.create("Иванов", [2])
         created = self.create("Иванов", [1])
 
-        updated = update_client(created.id, update_payload("Иванов", phone="+7 900 111-11-11"), db=self.db)
+        updated = update_client(created.id, update_payload("Иванов", phone="+7 900 111-11-11"), background_tasks=BackgroundTasks(), current_user=None, db=self.db)
 
         self.assertEqual(updated.phone, "+7 900 111-11-11")
 

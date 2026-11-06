@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -19,7 +19,7 @@ from app.schemas.client import ClientCreate, ClientNotesUpdate, ClientRead, Clie
 from app.services.audit import write_audit_log
 from app.services.client_centers import client_in_centers_condition, resolve_center_ids, set_client_centers
 from app.services.duplicates import build_duplicate_check_keys
-from app.services.notifications import build_deletion_email_body, send_deletion_notification
+from app.services.notifications import build_deletion_email_body, notify_change, send_deletion_notification
 from app.services.system_user import get_system_user_id
 
 router = APIRouter()
@@ -558,8 +558,19 @@ def create_client(
     return ClientRead.model_validate(client)
 
 
+def client_name_parts(client: Client) -> tuple[str, str, str]:
+    """ФИО клиента без пробелов по краям; пустое отчество — пустая строка, как и пустое имя."""
+    return tuple((value or "").strip() for value in (client.last_name, client.first_name, client.middle_name))
+
+
 @router.put("/{client_id}", response_model=ClientRead)
-def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(get_db)) -> ClientRead:
+def update_client(
+    client_id: int,
+    payload: ClientUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ClientRead:
     client = db.get(Client, client_id)
     if client is None or client.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Клиент не найден")
@@ -583,6 +594,7 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
     # Callers send only the legacy keys they edit, or null when their copy of the
     # client lacks the payload; the imported keys that documents read must stay.
     legacy_payload = normalized_data.pop("legacy_payload_json", None)
+    name_before = client_name_parts(client)
     for key, value in normalized_data.items():
         setattr(client, key, value)
     if legacy_payload:
@@ -602,6 +614,17 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
         payload_json={"full_name": f"{client.last_name} {client.first_name}"},
     )
     db.commit()
+    name_after = client_name_parts(client)
+    if name_after != name_before:
+        before_text = " ".join(part for part in name_before if part)
+        after_text = " ".join(part for part in name_after if part)
+        notify_change(
+            background_tasks,
+            db,
+            title="Изменено ФИО клиента",
+            actor=current_user.full_name or current_user.login,
+            lines=[f"Клиент: id {client.id}", f"Было: {before_text}", f"Стало: {after_text}"],
+        )
     return ClientRead.model_validate(client)
 
 

@@ -7182,9 +7182,9 @@ body[data-page="dashboard"] .dashboard-table-head-scroll {
 }
 
 .ws__cell {
-  width: 34px;
-  min-width: 34px;
-  height: 46px;
+  width: 88px;
+  min-width: 88px;
+  height: 52px;
 }
 
 .ws__cell[data-ws-cell] {
@@ -7223,8 +7223,10 @@ body[data-page="dashboard"] .dashboard-table-head-scroll {
 
 .ws__cell-time {
   display: block;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.25;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
@@ -7364,6 +7366,153 @@ body[data-page="dashboard"] .dashboard-table-head-scroll {
 
 .ws-chart__fact {
   fill: var(--ws-fact);
+}
+
+/* Статус «На работу / С работы» (work-status.js). */
+.wst__head h3 {
+  margin: 0 0 4px;
+}
+
+.wst__head p {
+  margin: 0;
+}
+
+.wst__now {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 18px 0 8px;
+}
+
+.wst__toggle {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 260px;
+  min-height: 120px;
+  padding: 18px 28px;
+  border: 0;
+  border-radius: 22px;
+  background: #2f6fdb;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(47, 111, 219, 0.25);
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wst__toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wst__toggle.is-on {
+  background: #2f9e44;
+  box-shadow: 0 0 0 6px rgba(47, 158, 68, 0.22), 0 6px 22px rgba(47, 158, 68, 0.45);
+}
+
+.wst__toggle-time {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.wst__hint {
+  max-width: 420px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.wst__month {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 10px;
+}
+
+.wst__totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.wst__totals strong {
+  color: var(--text);
+}
+
+.wst__chart {
+  padding: 10px;
+}
+
+.wst-chart__vacation {
+  fill: #5c7cfa;
+  opacity: 0.16;
+}
+
+.wst-chart__plan {
+  fill: #c3c9d3;
+}
+
+.wst-chart__fact {
+  fill: #f08c00;
+}
+
+.wst-chart__over {
+  fill: #2f9e44;
+}
+
+.wst__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.wst__key::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border-radius: 3px;
+  vertical-align: -1px;
+  background: var(--key-color, #c3c9d3);
+}
+
+.wst__key--plan {
+  --key-color: #c3c9d3;
+}
+
+.wst__key--fact {
+  --key-color: #f08c00;
+}
+
+.wst__key--over {
+  --key-color: #2f9e44;
+}
+
+.wst__key--vacation {
+  --key-color: #5c7cfa;
+}
+
+.employee-email {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.employee-email input {
+  max-width: 340px;
 }
 
 .ws__summary {

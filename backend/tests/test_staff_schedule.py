@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -77,7 +77,7 @@ class StaffScheduleTests(unittest.TestCase):
 
     def _create(self, db, login="new", **overrides):
         payload = StaffUserCreate(**staff_payload(login=login, center_ids=[self.center_id], **overrides))
-        return staff_routes.create_staff(payload=payload, current_user=self._admin(db), db=db)
+        return staff_routes.create_staff(payload=payload, background_tasks=BackgroundTasks(), current_user=self._admin(db), db=db)
 
     def test_schedule_is_saved_and_returned(self):
         with self.Session() as db:
@@ -152,7 +152,7 @@ class StaffScheduleTests(unittest.TestCase):
     def _update_schedule(self, db, login, schedule_values):
         user = db.execute(select(User).where(User.login == login)).scalar_one()
         payload = StaffScheduleUpdate(schedule=schedule_values)
-        return staff_routes.update_staff_schedule(user_id=user.id, payload=payload, _=self._admin(db), db=db)
+        return staff_routes.update_staff_schedule(user_id=user.id, payload=payload, background_tasks=BackgroundTasks(), admin=self._admin(db), db=db)
 
     def test_admin_sets_schedule_of_existing_employee(self):
         with self.Session() as db:
@@ -232,7 +232,8 @@ class StaffScheduleTests(unittest.TestCase):
                     staff_routes.update_staff_schedule(
                         user_id=user_id,
                         payload=StaffScheduleUpdate(schedule=schedule()),
-                        _=self._admin(db),
+                        background_tasks=BackgroundTasks(),
+                        admin=self._admin(db),
                         db=db,
                     )
                 self.assertEqual(raised.exception.status_code, 404)

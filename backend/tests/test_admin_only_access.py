@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.routing import APIRoute
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -161,7 +161,7 @@ class AdminOnlyAccessTests(unittest.TestCase):
                 login="new", password="temp12345", full_name="Новый", role_code="doctor", center_id=center.id
             )
             admin = self._user(db, "admin")
-            created = staff_routes.create_staff(payload=payload, current_user=admin, db=db)
+            created = staff_routes.create_staff(payload=payload, background_tasks=BackgroundTasks(), current_user=admin, db=db)
             self.assertEqual(created.login, "new")
 
             staff_routes.delete_staff_user(user_id=created.id, current_user=admin, db=db)

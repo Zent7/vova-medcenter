@@ -6,6 +6,7 @@ import sys
 import unittest
 from pathlib import Path
 
+from fastapi import BackgroundTasks
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -85,7 +86,7 @@ class ClientUpdateKeepsFieldsTests(unittest.TestCase):
         return self.db.get(Client, self.client_id)
 
     def test_card_save_keeps_the_fields_it_does_not_send(self) -> None:
-        update_client(self.client_id, ClientUpdate(**CARD_FIELDS), self.db)
+        update_client(self.client_id, ClientUpdate(**CARD_FIELDS), background_tasks=BackgroundTasks(), current_user=None, db=self.db)
 
         client = self.stored()
         self.assertEqual(client.phone, "+7 900 111-22-33")
@@ -114,7 +115,9 @@ class ClientUpdateKeepsFieldsTests(unittest.TestCase):
         update_client(
             self.client_id,
             ClientUpdate(**{**CARD_FIELDS, "mkb10": None, "legacy_payload_json": None}),
-            self.db,
+            background_tasks=BackgroundTasks(),
+            current_user=None,
+            db=self.db,
         )
 
         client = self.stored()
