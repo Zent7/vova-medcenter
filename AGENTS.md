@@ -133,7 +133,7 @@ Findings come back as `- [Pn] <title> — <absolute path>:<lines>`, P0 highest. 
 - `app/services/` — business logic; route handlers call services, not ORM directly
 - `app/api/v1/routes/` — one module per resource, all mounted in `app/api/router.py` under `/api/v1`
 
-**Auth**: Simple SHA-256 password hash (no JWT). Token is opaque and stored in localStorage on the frontend. Auth routes are in `app/api/v1/routes/auth.py`.
+**Auth**: Passwords are hashed with argon2id (`app/core/security.py`). Legacy unsalted SHA-256 hashes still verify and are rewritten to argon2id on the next successful login (`needs_rehash`); there is no separate migration. No JWT: the token is `demo-token-<user_id>.<session_epoch>`, stored in localStorage on the frontend, and has no time expiry (sessions end only through "Выйти у всех"). Auth routes are in `app/api/v1/routes/auth.py`.
 
 **Key env vars** (see `.env.example`):
 - `DATABASE_URL` — full SQLAlchemy URL

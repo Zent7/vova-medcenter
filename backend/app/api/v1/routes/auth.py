@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.security import generate_session_epoch, verify_password
+from app.core.security import (
+    generate_session_epoch,
+    hash_password,
+    needs_rehash,
+    spend_password_check_time,
+    verify_password,
+)
 from app.db.session import SessionLocal, get_db
 from app.models.user import User
 from app.schemas.auth import LoginRequest, LoginResponse, LogoutAllResponse
@@ -71,8 +77,14 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
 def login(payload: LoginRequest) -> LoginResponse:
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.login == payload.login, User.is_active.is_(True))).scalar_one_or_none()
-        if user is None or not verify_password(payload.password, user.password_hash):
+        if user is None:
+            spend_password_check_time(payload.password)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
+        if not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
+        if needs_rehash(user.password_hash):
+            # Старый хеш SHA-256 переписываем на argon2 при первом же успешном входе.
+            user.password_hash = hash_password(payload.password)
 
         if not user.session_epoch:
             user.session_epoch = generate_session_epoch()
