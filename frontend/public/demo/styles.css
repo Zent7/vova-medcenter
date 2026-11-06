@@ -6509,6 +6509,11 @@ body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
   color: var(--muted);
 }
 
+/* Панель графика у уже созданного сотрудника: отступ от строки, как у формы «Центры». */
+.employee-schedule-edit {
+  margin-top: 12px;
+}
+
 .employee-schedule {
   display: grid;
   gap: 12px;

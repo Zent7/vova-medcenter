@@ -12,6 +12,7 @@ from app.schemas.user_admin import (
     RoleRead,
     StaffCentersUpdate,
     StaffScheduleCreate,
+    StaffScheduleUpdate,
     StaffUserCreate,
     StaffUserDeleteResponse,
     StaffUserRead,
@@ -130,6 +131,29 @@ def update_staff_centers(
         user.session_epoch = generate_session_epoch()
         db.commit()
         db.refresh(user)
+    return StaffUserRead.model_validate(user)
+
+
+@router.put("/{user_id}/schedule", response_model=StaffUserRead)
+def update_staff_schedule(
+    user_id: int,
+    payload: StaffScheduleUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StaffUserRead:
+    """Задаёт или меняет график существующего сотрудника; schedule=null снимает его целиком."""
+    user = db.execute(
+        select(User)
+        .options(joinedload(User.role), joinedload(User.center), selectinload(User.extra_centers))
+        .where(User.id == user_id)
+    ).scalar_one_or_none()
+    if user is None or user.role.code not in STAFF_ROLE_CODES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден")
+
+    for column, value in schedule_columns(payload.schedule).items():
+        setattr(user, column, value)
+    db.commit()
+    db.refresh(user)
     return StaffUserRead.model_validate(user)
 
 

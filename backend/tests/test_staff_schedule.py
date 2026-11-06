@@ -1,6 +1,7 @@
 """График сотрудника: смена, время «со скольки – до скольки» и ставка часа.
 
-Задаётся при создании учетной записи и возвращается в списке сотрудников. Смену можно
+Задаётся при создании учетной записи, потом меняется кнопкой «График» у существующего
+сотрудника (`PUT /staff/{id}/schedule`) и возвращается в списке сотрудников. Смену можно
 выбрать только из пяти вариантов, время и ставка проверяются. Без графика все поля пустые.
 """
 
@@ -10,6 +11,7 @@ from pathlib import Path
 import sys
 import unittest
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -23,7 +25,7 @@ from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models.center import Center  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
-from app.schemas.user_admin import StaffUserCreate  # noqa: E402
+from app.schemas.user_admin import StaffScheduleUpdate, StaffUserCreate  # noqa: E402
 
 
 def staff_payload(**overrides) -> dict:
@@ -146,6 +148,94 @@ class StaffScheduleTests(unittest.TestCase):
         for rate in ("-1", "350.555"):
             with self.subTest(rate=rate), self.assertRaises(ValidationError):
                 StaffUserCreate(**staff_payload(schedule=schedule(hourly_rate=rate)))
+
+    def _update_schedule(self, db, login, schedule_values):
+        user = db.execute(select(User).where(User.login == login)).scalar_one()
+        payload = StaffScheduleUpdate(schedule=schedule_values)
+        return staff_routes.update_staff_schedule(user_id=user.id, payload=payload, _=self._admin(db), db=db)
+
+    def test_admin_sets_schedule_of_existing_employee(self):
+        with self.Session() as db:
+            self._create(db, login="plain")
+
+            updated = self._update_schedule(
+                db, "plain", schedule(pattern="3/3", shift_start="07:30", shift_end="19:30", hourly_rate="420")
+            )
+
+            self.assertEqual(updated.schedule.pattern, "3/3")
+            self.assertEqual(updated.schedule.shift_start, time(7, 30))
+            self.assertEqual(updated.schedule.shift_end, time(19, 30))
+            self.assertEqual(updated.schedule.hourly_rate, Decimal("420"))
+            stored = db.execute(select(User).where(User.login == "plain")).scalar_one()
+            self.assertEqual(stored.schedule_pattern, "3/3")
+            # Меняется только график: ФИО и медцентр остаются прежними.
+            self.assertEqual(stored.full_name, "Новый сотрудник")
+            self.assertEqual(stored.center_id, self.center_id)
+            listed = {user.login: user for user in staff_routes.list_staff(_=self._admin(db), db=db)}
+            self.assertEqual(listed["plain"].schedule.pattern, "3/3")
+
+    def test_admin_changes_existing_schedule(self):
+        with self.Session() as db:
+            self._create(db, login="shifted", schedule=schedule(pattern="2/2", hourly_rate="350"))
+
+            updated = self._update_schedule(
+                db, "shifted", schedule(pattern="5/2", shift_start="22:00", shift_end="06:00", hourly_rate=None)
+            )
+
+            self.assertEqual(updated.schedule.pattern, "5/2")
+            self.assertEqual(updated.schedule.shift_start, time(22, 0))
+            self.assertEqual(updated.schedule.shift_end, time(6, 0))
+            # Ставку в новом графике не указали, значит прежняя не остается.
+            self.assertIsNone(updated.schedule.hourly_rate)
+            stored = db.execute(select(User).where(User.login == "shifted")).scalar_one()
+            self.assertIsNone(stored.hourly_rate)
+
+    def test_empty_schedule_clears_it(self):
+        with self.Session() as db:
+            self._create(db, login="shifted", schedule=schedule())
+
+            updated = self._update_schedule(db, "shifted", None)
+
+            self.assertIsNone(updated.schedule)
+            stored = db.execute(select(User).where(User.login == "shifted")).scalar_one()
+            self.assertIsNone(stored.schedule_pattern)
+            self.assertIsNone(stored.schedule_start)
+            self.assertIsNone(stored.schedule_end)
+            self.assertIsNone(stored.hourly_rate)
+
+    def test_update_must_state_the_schedule(self):
+        # Запрос без поля schedule не должен стереть график: поле обязательно, а null — это «снять».
+        with self.assertRaises(ValidationError):
+            StaffScheduleUpdate.model_validate({})
+        self.assertIsNone(StaffScheduleUpdate.model_validate({"schedule": None}).schedule)
+        with self.assertRaises(ValidationError):
+            StaffScheduleUpdate(schedule=schedule(pattern="1/1"))
+
+    def test_schedule_is_changed_only_for_staff_accounts(self):
+        with self.Session() as db:
+            guest_role = Role(code="guest", name="Гость")
+            db.add(guest_role)
+            db.flush()
+            db.add(
+                User(
+                    role_id=guest_role.id,
+                    login="guest",
+                    password_hash=hash_password("guest123"),
+                    full_name="Гость",
+                )
+            )
+            db.commit()
+            guest = db.execute(select(User).where(User.login == "guest")).scalar_one()
+
+            for user_id in (guest.id, 999_999):
+                with self.subTest(user_id=user_id), self.assertRaises(HTTPException) as raised:
+                    staff_routes.update_staff_schedule(
+                        user_id=user_id,
+                        payload=StaffScheduleUpdate(schedule=schedule()),
+                        _=self._admin(db),
+                        db=db,
+                    )
+                self.assertEqual(raised.exception.status_code, 404)
 
 
 if __name__ == "__main__":

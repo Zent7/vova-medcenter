@@ -192,6 +192,7 @@ const data = {
   staffListError: "",
   editingStaffCentersId: null,
   staffCentersError: "",
+  editingStaffScheduleId: null,
   lastCreatedStaffUser: null,
   reportSummary: null,
   reportLoading: false,
@@ -3419,6 +3420,7 @@ function signOutDemoStaff({ message = "Вы вышли из программы" 
   data.staffListError = "";
   data.editingStaffCentersId = null;
   data.staffCentersError = "";
+  data.editingStaffScheduleId = null;
   appState.page = "start";
   appState.doctorExamModal = {
     isOpen: false,
@@ -3502,6 +3504,27 @@ async function updateDemoStaffCenters(userId, centerIds) {
   } catch (error) {
     data.staffCentersError = humanizeApiError(error, "Не удалось сохранить медцентры");
     renderApp();
+  }
+}
+
+// Сохраняет график существующего сотрудника; null снимает его. Ошибку возвращает, а не
+// выводит через перерисовку: форма остается с тем, что ввел админ.
+async function updateDemoStaffSchedule(userId, schedule) {
+  try {
+    const updatedUser = await apiRequest(`/staff/${encodeURIComponent(userId)}/schedule`, {
+      method: "PUT",
+      body: JSON.stringify({ schedule }),
+      headers: {},
+    });
+    data.staffUsers = (data.staffUsers || []).map((user) => (Number(user.id) === Number(userId) ? updatedUser : user));
+    data.editingStaffScheduleId = null;
+    persistDemoState();
+    renderApp();
+    const name = updatedUser.full_name || updatedUser.login || userId;
+    showToast(schedule ? `График сотрудника ${name} сохранен` : `График сотрудника ${name} снят`);
+    return "";
+  } catch (error) {
+    return humanizeApiError(error, "Не удалось сохранить график");
   }
 }
 
@@ -7354,7 +7377,7 @@ function renderSchedulePage() {
   return `
     <section class="card">
       <h3>График работы</h3>
-      <p class="muted">Смены, время и ставка часа сотрудников. Задаются кнопкой «График» на странице «Сотрудник» при создании учетной записи.</p>
+      <p class="muted">Смены, время и ставка часа сотрудников. Задаются и меняются кнопкой «График» на странице «Сотрудник».</p>
       ${data.staffError ? `<div class="note employee-note employee-note--error">${escapeHtml(data.staffError)}</div>` : ""}
       ${body}
     </section>
@@ -7422,6 +7445,80 @@ function showStaffScheduleError(message) {
     note.textContent = message;
     note.classList.remove("hidden");
   }
+}
+
+// Поля графика одинаковы при создании и при изменении: смена, время и ставка.
+// schedule — график сотрудника из GET /staff или null, если поля пустые.
+function renderStaffScheduleFields(schedule = null) {
+  const pattern = schedule?.pattern || "";
+  const start = schedule ? formatStaffTime(schedule.shift_start) : "";
+  const end = schedule ? formatStaffTime(schedule.shift_end) : "";
+  const rate = schedule && schedule.hourly_rate != null ? String(Number(schedule.hourly_rate)) : "";
+  return `
+    <div class="employee-schedule__patterns" role="radiogroup" aria-label="Смена">
+      ${["2/2", "3/3", "4/4", "5/2", "6/1"]
+        .map(
+          (value) => `
+            <label class="employee-schedule__pattern">
+              <input type="radio" name="schedule_pattern" value="${value}" ${value === pattern ? "checked" : ""} />
+              <span>${value}</span>
+            </label>`,
+        )
+        .join("")}
+    </div>
+    <div class="employee-schedule__times">
+      <label class="field">
+        <span>Со скольки</span>
+        <input type="time" name="schedule_start" value="${escapeHtml(start)}" />
+      </label>
+      <label class="field">
+        <span>До скольки</span>
+        <input type="time" name="schedule_end" value="${escapeHtml(end)}" />
+      </label>
+      <label class="field">
+        <span>Ставка, ₽ в час</span>
+        <input type="text" name="hourly_rate" inputmode="decimal" placeholder="например, 350" value="${escapeHtml(rate)}" />
+      </label>
+    </div>
+    <div class="employee-schedule__hint">Смену выбирают вручную. Время может идти через полночь, например с 20:00 до 08:00.</div>
+  `;
+}
+
+// Панель графика у уже созданного сотрудника: та же панель, что в форме создания,
+// с его текущими значениями. Пустые поля при сохранении снимают график.
+function renderStaffScheduleEditForm(user) {
+  return `
+    <form class="employee-schedule-edit" data-staff-schedule-form="${escapeHtml(user.id)}">
+      <fieldset class="employee-schedule">
+        <legend>График работы</legend>
+        ${renderStaffScheduleFields(user.schedule)}
+        <div class="employee-schedule__hint">Если смена и время пустые, график снимается.</div>
+        <div class="note employee-note employee-note--error hidden" data-staff-schedule-error></div>
+        <div class="actions">
+          <button class="primary-button" type="submit">Сохранить график</button>
+          <button class="ghost-button" type="button" data-clear-staff-schedule>Очистить график</button>
+          <button class="ghost-button" type="button" data-cancel-staff-schedule>Отмена</button>
+        </div>
+      </fieldset>
+    </form>
+  `;
+}
+
+// Очищает поля графика в любой форме, где они есть: и в создании, и в изменении.
+function clearStaffScheduleFields(form) {
+  form.querySelectorAll('input[name="schedule_pattern"]').forEach((radio) => {
+    radio.checked = false;
+  });
+  form.elements.schedule_start.value = "";
+  form.elements.schedule_end.value = "";
+  form.elements.hourly_rate.value = "";
+}
+
+function showStaffScheduleEditError(form, message) {
+  const note = form.querySelector("[data-staff-schedule-error]");
+  if (!note) return;
+  note.textContent = message;
+  note.classList.remove("hidden");
 }
 
 function renderEmployeePage() {
@@ -7509,32 +7606,7 @@ function renderEmployeePage() {
                   </div>
                   <fieldset class="employee-schedule field--wide hidden" id="employeeSchedule">
                     <legend>График работы</legend>
-                    <div class="employee-schedule__patterns" role="radiogroup" aria-label="Смена">
-                      ${["2/2", "3/3", "4/4", "5/2", "6/1"]
-                        .map(
-                          (pattern) => `
-                            <label class="employee-schedule__pattern">
-                              <input type="radio" name="schedule_pattern" value="${pattern}" />
-                              <span>${pattern}</span>
-                            </label>`,
-                        )
-                        .join("")}
-                    </div>
-                    <div class="employee-schedule__times">
-                      <label class="field">
-                        <span>Со скольки</span>
-                        <input type="time" name="schedule_start" />
-                      </label>
-                      <label class="field">
-                        <span>До скольки</span>
-                        <input type="time" name="schedule_end" />
-                      </label>
-                      <label class="field">
-                        <span>Ставка, ₽ в час</span>
-                        <input type="text" name="hourly_rate" inputmode="decimal" placeholder="например, 350" />
-                      </label>
-                    </div>
-                    <div class="employee-schedule__hint">Смену выбирают вручную. Время может идти через полночь, например с 20:00 до 08:00.</div>
+                    ${renderStaffScheduleFields()}
                     <div class="note employee-note employee-note--error hidden" id="employeeScheduleError"></div>
                     <div class="actions">
                       <button class="ghost-button" type="button" id="employeeScheduleClear">Очистить график</button>
@@ -7583,6 +7655,7 @@ function renderEmployeePage() {
                                 <div class="table-row__title">${escapeHtml(user.full_name || user.login)}</div>
                                 <div class="actions">
                                   <span class="status ${user.is_active ? "ok" : "warn"}">${user.is_active ? "Активен" : "Отключен"}</span>
+                                  <button class="ghost-button" type="button" data-edit-staff-schedule="${escapeHtml(user.id)}">График</button>
                                   ${user.all_centers ? "" : `<button class="ghost-button" type="button" data-edit-staff-centers="${escapeHtml(user.id)}">Центры</button>`}
                                   ${user.is_active && user.role?.code !== "chairman" && Number(user.id) !== Number(appState.auth.userId) ? `<button class="ghost-button" type="button" data-delete-staff-user="${escapeHtml(user.id)}" data-delete-staff-name="${escapeHtml(user.full_name || user.login || "сотрудник")}">Удалить</button>` : ""}
                                 </div>
@@ -7601,6 +7674,11 @@ function renderEmployeePage() {
                                       </div>
                                     </form>
                                   `
+                                  : ""
+                              }
+                              ${
+                                Number(data.editingStaffScheduleId) === Number(user.id)
+                                  ? renderStaffScheduleEditForm(user)
                                   : ""
                               }
                             </div>
@@ -13590,12 +13668,7 @@ function bindContentEvents() {
     schedulePanel?.addEventListener("input", refreshScheduleSummary);
     schedulePanel?.addEventListener("change", refreshScheduleSummary);
     document.getElementById("employeeScheduleClear")?.addEventListener("click", () => {
-      schedulePanel?.querySelectorAll('input[name="schedule_pattern"]').forEach((radio) => {
-        radio.checked = false;
-      });
-      employeeCreateForm.elements.schedule_start.value = "";
-      employeeCreateForm.elements.schedule_end.value = "";
-      employeeCreateForm.elements.hourly_rate.value = "";
+      clearStaffScheduleFields(employeeCreateForm);
       refreshScheduleSummary();
     });
 
@@ -13649,6 +13722,51 @@ function bindContentEvents() {
       if (!userId) return;
       const checked = new FormData(form).getAll("center_ids");
       await updateDemoStaffCenters(userId, orderStaffCenterIds(checked, form.dataset.staffMainCenter));
+    });
+  });
+
+  // График существующего сотрудника: панель открывается кнопкой «График» в его строке.
+  contentRoot.querySelectorAll("[data-edit-staff-schedule]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = Number(button.dataset.editStaffSchedule || 0);
+      data.editingStaffScheduleId = Number(data.editingStaffScheduleId) === userId ? null : userId;
+      renderApp();
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-cancel-staff-schedule]").forEach((button) => {
+    button.addEventListener("click", () => {
+      data.editingStaffScheduleId = null;
+      renderApp();
+    });
+  });
+
+  contentRoot.querySelectorAll("[data-staff-schedule-form]").forEach((form) => {
+    const note = form.querySelector("[data-staff-schedule-error]");
+    const hideError = () => note?.classList.add("hidden");
+    form.addEventListener("input", hideError);
+    form.addEventListener("change", hideError);
+    form.querySelector("[data-clear-staff-schedule]")?.addEventListener("click", () => {
+      clearStaffScheduleFields(form);
+      hideError();
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const userId = Number(form.dataset.staffScheduleForm || 0);
+      if (!userId) return;
+      const staffSchedule = readStaffScheduleFromForm(form);
+      if (staffSchedule.error) {
+        showStaffScheduleEditError(form, staffSchedule.error);
+        return;
+      }
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (submitButton) submitButton.disabled = true;
+      const error = await updateDemoStaffSchedule(userId, staffSchedule.schedule);
+      if (error) {
+        if (submitButton) submitButton.disabled = false;
+        showStaffScheduleEditError(form, error);
+      }
     });
   });
 

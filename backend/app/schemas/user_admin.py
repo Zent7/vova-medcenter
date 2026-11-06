@@ -109,3 +109,9 @@ class StaffUserDeleteResponse(BaseModel):
 class StaffCentersUpdate(BaseModel):
     # Первый центр становится основным, остальные — дополнительными.
     center_ids: list[int]
+
+
+class StaffScheduleUpdate(BaseModel):
+    # График существующего сотрудника; null снимает его целиком. Поле обязательно, чтобы
+    # пустой запрос не стер график молча.
+    schedule: StaffScheduleCreate | None
