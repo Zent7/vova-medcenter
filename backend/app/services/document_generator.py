@@ -3370,11 +3370,6 @@ def _fill_new_tractor_front_xls_sheet(
             "apartment": parsed_address.get("apartment", ""),
         }
     has_address = any(address.values())
-    blank_number = _first_non_empty(
-        context.get("BlankNumber"),
-        context.get("BlankFullNumber"),
-        context.get("ReferenceNumber"),
-    )
     exam_lines = (
         _driver_certificate_lines(client, exams_by_role, tractor=True)
         if context.get("ClientCalc") or exams_by_role
@@ -3382,8 +3377,6 @@ def _fill_new_tractor_front_xls_sheet(
     )
 
     values = [
-        ((7, 3), blank_number),
-        ((7, 30), blank_number),
         ((14, 2), context.get("ClientCalc", "")),
         ((14, 28), context.get("ClientCalc", "")),
         ((15, 8), context.get("BirthDateCalc_DAY", "")),
@@ -3450,11 +3443,7 @@ def _fill_new_gims_xls_sheet(
         address = _split_address(context.get("AddressCalc", ""))
     signer = _new_xls_signer(context, exams_by_role)
     values = [
-        # Номер бланка сверху заказчик просил не печатать. Поля «Номер бланка»
-        # остаются в шаблоне и получают пустое значение: без них правленую копию
-        # заказчика загрузка отклонит, а при старте отложит.
-        ((7, 3), ""),
-        ((7, 30), ""),
+        # Номер бланка сверху не печатается: его поля убраны из бланка (retired_cells).
         ((14, 2), context.get("ClientCalc", "")),
         ((14, 28), context.get("ClientCalc", "")),
         ((15, 14), context.get("BirthDateCalc_DAY", "")),
@@ -4329,6 +4318,9 @@ def _patch_new_xls_placeholders(
             for offset in _new_xls_marker_offsets(workbook_stream, spans, marker.encode("utf-16le"))
         ]
         if not marker_offsets:
+            if coordinate in spec.retired_cells:
+                # Убранное поле: в копии заказчика его метки может уже не быть.
+                continue
             raise ValueError(
                 f"В {spec.file_name} не найдена метка поля "
                 f"«{new_xls_marker(spec, coordinate)}»"

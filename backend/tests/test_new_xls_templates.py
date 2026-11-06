@@ -58,6 +58,11 @@ ADMIN = SimpleNamespace(pinned_center_id=None, sees_all_centers=True, work_cente
 CENTER_ID = 7
 
 
+def required_cells(spec):
+    """Поля, которые обязаны быть в загружаемом бланке: убранные поля не обязательны."""
+    return [cell for cell in spec.dynamic_cells if cell not in spec.retired_cells]
+
+
 def exam(
     role_id: str,
     doctor_name: str,
@@ -287,6 +292,10 @@ class NewXlsTemplatesTests(unittest.TestCase):
                     self.assertRegex(marker, r"^\[[^\[\]]+\]$")
                     self.assertNotIn(marker, markers)
                     markers.add(marker)
+                    if coordinate in spec.retired_cells:
+                        # Убранное поле: в бланке нет ни метки, ни текста.
+                        self.assertEqual(strip_new_xls_placeholder_padding(sheet.cell_value(*coordinate)), "")
+                        continue
                     self.assertEqual(
                         strip_new_xls_placeholder_padding(sheet.cell_value(*coordinate)),
                         marker,
@@ -556,8 +565,9 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 (40, 15): "Невролог Тестов",
             },
             "Тр.Лиц": {
-                (7, 3): "7654321",
-                (7, 30): "7654321",
+                # Номер бланка сверху убран из бланка: клетки пустые.
+                (7, 3): "",
+                (7, 30): "",
                 (14, 2): "Проверкин Алексей Сергеевич",
                 (14, 28): "Проверкин Алексей Сергеевич",
                 (15, 8): "12",
@@ -753,7 +763,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
             self.assertEqual(generated_sheet.cell_value(*source_coordinate), "")
 
     def test_gims_does_not_print_the_blank_number_even_in_a_customer_copy(self):
-        """Номер бланка сверху ГИМС не печатается, а метки в правленой копии остаются."""
+        """Номер бланка сверху ГИМС не печатается, в том числе в копии с перенесённой меткой."""
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
         number_cells = [(7, 3), (7, 30)]
         moved_to = {(7, 3): (42, 8), (7, 30): (42, 20)}
@@ -796,6 +806,54 @@ class NewXlsTemplatesTests(unittest.TestCase):
                     "",
                 )
 
+    def test_removed_blank_number_is_in_no_bundled_copy_and_is_not_printed(self):
+        """Номер бланка сверху убран из ГИМС и 071у: в бланке и копиях центров его нет,
+        а старая копия с меткой печатается без номера."""
+        centers_dir = TEMPLATES_DIR.parent / "Centers"
+        for sheet_name in ("Суда", "Тр.Лиц"):
+            spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == sheet_name)
+            with self.subTest(template=spec.file_name):
+                self.assertEqual(spec.retired_cells, ((7, 3), (7, 30)))
+                copies = [TEMPLATES_DIR / spec.file_name, *sorted(centers_dir.glob(f"*/{spec.file_name}"))]
+                for copy_path in copies:
+                    sheet = xlrd.open_workbook(str(copy_path), formatting_info=True).sheet_by_name(spec.sheet_name)
+                    texts = [
+                        strip_new_xls_placeholder_padding(sheet.cell_value(row, col))
+                        for row in range(sheet.nrows)
+                        for col in range(sheet.ncols)
+                    ]
+                    self.assertFalse([text for text in texts if "Номер бланка" in text], copy_path)
+                    validate_editable_xls_template(copy_path, spec)
+
+                with tempfile.TemporaryDirectory() as temporary_dir:
+                    edited_path = Path(temporary_dir) / spec.file_name
+                    output_path = Path(temporary_dir) / "printed.xls"
+                    edited_book = copy_xls_workbook(
+                        xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
+                    )
+                    for coordinate in spec.retired_cells:
+                        edited_book.get_sheet(0).write(*coordinate, new_xls_placeholder(spec, coordinate))
+                    edited_book.save(str(edited_path))
+
+                    validate_editable_xls_template(edited_path, spec)
+                    _generate_runtime_xls(
+                        edited_path,
+                        output_path,
+                        self.context,
+                        self.client,
+                        self.encounter,
+                        {"exams": self.exams},
+                        print_variant=spec.print_variant,
+                    )
+                    sheet = xlrd.open_workbook(str(output_path)).sheet_by_index(0)
+                    printed = [
+                        strip_new_xls_placeholder_padding(sheet.cell_value(row, col))
+                        for row in range(sheet.nrows)
+                        for col in range(sheet.ncols)
+                    ]
+                    self.assertFalse(any("7654321" in value for value in printed))
+                    self.assertFalse(any("Номер бланка" in value for value in printed))
+
     def test_tractor_front_without_result_markers_is_not_swapped_for_the_bundled_one(self):
         """Старую копию 071у печать не подменяет встроенной: её откладывают при старте."""
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Тр.Лиц")
@@ -824,7 +882,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
 
     def test_validation_rejects_missing_and_duplicate_markers(self):
         spec = next(item for item in NEW_XLS_TEMPLATE_SPECS if item.sheet_name == "Суда")
-        coordinate = spec.dynamic_cells[0]
+        coordinate = required_cells(spec)[0]
         with tempfile.TemporaryDirectory() as temporary_dir:
             temporary_path = Path(temporary_dir)
             source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
@@ -899,7 +957,7 @@ class NewXlsTemplatesTests(unittest.TestCase):
                 settings.document_template_overrides_dir = temporary_dir
                 source_book = xlrd.open_workbook(str(TEMPLATES_DIR / spec.file_name), formatting_info=True)
                 invalid_book = copy_xls_workbook(source_book)
-                invalid_book.get_sheet(0).write(*spec.dynamic_cells[0], "")
+                invalid_book.get_sheet(0).write(*required_cells(spec)[0], "")
                 invalid_path = Path(temporary_dir) / "invalid-source.xls"
                 invalid_book.save(str(invalid_path))
 

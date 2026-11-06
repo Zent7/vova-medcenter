@@ -48,6 +48,14 @@ TRACTOR_BACK_INDICATION_CELLS: tuple[tuple[Cell, Cell], ...] = tuple(
 )
 
 
+# Номер бланка сверху ГИМС и 071у больше не печатается, поэтому поля убраны из
+# бланка. Клетки остаются в dynamic_cells: скрытые метки остальных полей
+# пронумерованы по их позиции в этом списке. Старая копия заказчика с такой
+# меткой печатается без номера (печать её очищает), а загрузка без метки
+# не отклоняется.
+RETIRED_BLANK_NUMBER_CELLS: tuple[Cell, ...] = ((7, 3), (7, 30))
+
+
 @dataclass(frozen=True)
 class NewXlsTemplateSpec:
     file_name: str
@@ -60,6 +68,8 @@ class NewXlsTemplateSpec:
     print_area: str = ""
     print_zoom: int | None = None
     vertical_page_break_column: int | None = None
+    # Поля, которых нет в бланке: метка может отсутствовать в загружаемой копии.
+    retired_cells: tuple[Cell, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -268,6 +278,7 @@ NEW_XLS_TEMPLATE_SPECS: tuple[NewXlsTemplateSpec, ...] = (
             (41, 12),
             (41, 39),
         ),
+        retired_cells=RETIRED_BLANK_NUMBER_CELLS,
     ),
     NewXlsTemplateSpec(
         file_name="трактор об ст.xls",
@@ -321,6 +332,7 @@ NEW_XLS_TEMPLATE_SPECS: tuple[NewXlsTemplateSpec, ...] = (
             (36, 9),
             (36, 31),
         ),
+        retired_cells=RETIRED_BLANK_NUMBER_CELLS,
     ),
     NewXlsTemplateSpec(
         file_name="ЛМК.xls",
@@ -465,6 +477,7 @@ NEW_XLS_FIELD_LABELS: dict[str, dict[Cell, str]] = {
     },
     "трактор лиц ст.xls": _sided_labels(
         (
+            # Убранное поле: метка нужна только старым копиям, см. RETIRED_BLANK_NUMBER_CELLS.
             ("Номер бланка", (7, 3), (7, 30)),
             ("ФИО", (14, 2), (14, 28)),
             ("День рождения", (15, 8), (15, 35)),
@@ -500,6 +513,7 @@ NEW_XLS_FIELD_LABELS: dict[str, dict[Cell, str]] = {
     ),
     "ГИМС (судна).xls": _sided_labels(
         (
+            # Убранное поле: метка нужна только старым копиям, см. RETIRED_BLANK_NUMBER_CELLS.
             ("Номер бланка", (7, 3), (7, 30)),
             ("ФИО", (14, 2), (14, 28)),
             ("День рождения", (15, 14), (15, 39)),
@@ -966,6 +980,8 @@ def validate_editable_xls_template(path: Path, spec: NewXlsTemplateSpec) -> None
         marker_locations = locations[coordinate]
         marker = new_xls_marker(spec, coordinate)
         if not marker_locations:
+            if coordinate in spec.retired_cells:
+                continue
             raise ValueError(
                 f"Удалена метка поля «{marker}». "
                 "Верните исходный шаблон и повторите правку"
