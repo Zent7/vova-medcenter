@@ -1,21 +1,25 @@
 """График работы по дням: смены по шаблону, отгулы, больничные, отпуска и фактические часы.
 
 Шаблон сотрудника (`2/2`, `3/3`, `4/4`, `5/2`, `6/1`) задает только порядок: первая смена
-цикла ставится кнопкой «Назначить первую смену» (`users.schedule_anchor_date`), дальше дни
-считаются от нее без пропусков. «Создать график» заполняет пустые дни нового месяца в том
-же порядке, поэтому смена 31 числа и смена 1 числа идут подряд. Ручные записи (время,
-отгул, больничный, отпуск) лежат в `staff_schedule_days` и шаблон не сдвигают.
+цикла (`users.schedule_anchor_date`) ставится кнопкой «Назначить первую смену». Если график
+сохранен, а первой смены еще нет, она ставится на сегодня (`start_plan_if_missing`), чтобы
+план сразу был виден в «Статусе». Дальше дни считаются от первой смены без пропусков.
+«Создать график» заполняет пустые дни нового месяца в том же порядке, поэтому смена 31 числа
+и смена 1 числа идут подряд. Ручные записи (время, отгул, больничный, отпуск) лежат в
+`staff_schedule_days` и шаблон не сдвигают.
 """
 
 from calendar import monthrange
 from collections import Counter, defaultdict
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.core.config import settings
 from app.models.center import Center
 from app.models.staff_schedule_day import StaffScheduleDay
 from app.models.user import Role, User
@@ -73,6 +77,15 @@ def center_color(center: Center | None) -> str | None:
         return None
     slot = CENTER_PALETTE_SLOTS.get(center.code, center.id)
     return CENTER_PALETTE[slot % len(CENTER_PALETTE)]
+
+
+def local_today() -> date:
+    """Сегодня по местному времени (Москва): план и отметки считаются по местным дням."""
+    try:
+        zone = ZoneInfo(settings.xml_exports_timezone)
+    except ZoneInfoNotFoundError:
+        zone = ZoneInfo("Europe/Moscow")
+    return datetime.now(zone).date()
 
 
 def pattern_shifts(user: User, first: date, last: date) -> list[tuple[date, int]]:
@@ -361,6 +374,31 @@ def restart_pattern(db: Session, user: User, work_date: date) -> int:
     )
     _, last = month_bounds(work_date.year, work_date.month)
     return fill_pattern_shifts(db, user, work_date, last)
+
+
+def start_plan_if_missing(db: Session, user: User, *, actor_id: int | None, today: date | None = None) -> int:
+    """Первая смена по умолчанию: график есть, первой смены нет — цикл начинается сегодня.
+
+    Ставит смены по шаблону с сегодняшнего дня до конца месяца, чтобы в «Статусе» сразу был план.
+    Назначенную первую смену не трогает: ее меняет только «Назначить первую смену». Пишет в журнал
+    как «Первая смена назначена». Без графика или с уже назначенной сменой ничего не делает и вернет 0.
+    """
+    if not user.schedule_pattern or user.schedule_start is None or user.schedule_end is None:
+        return 0
+    if user.schedule_anchor_date is not None:
+        return 0
+    start = today or local_today()
+    _, last = month_bounds(start.year, start.month)
+    user.schedule_anchor_date = start
+    created = fill_pattern_shifts(db, user, start, last)
+    audit_schedule_change(
+        db,
+        staff=user,
+        actor_id=actor_id,
+        action="first_shift",
+        payload={"work_date": start.isoformat(), "anchor_before": None, "created": created},
+    )
+    return created
 
 
 def put_day(db: Session, user: User, work_date: date, kind: str, start: time | None, end: time | None) -> None:

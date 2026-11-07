@@ -22,7 +22,7 @@ from app.schemas.user_admin import (
 )
 from app.services.audit import write_audit_log
 from app.services.notifications import notify_change
-from app.services.work_schedule import AUDIT_ENTITY, audit_schedule_change, rate_for_audit
+from app.services.work_schedule import AUDIT_ENTITY, audit_schedule_change, rate_for_audit, start_plan_if_missing
 
 router = APIRouter()
 
@@ -125,19 +125,23 @@ def create_staff(
                 "hourly_rate": rate_for_audit(user.hourly_rate),
             },
         )
+        start_plan_if_missing(db, user, actor_id=current_user.id)
     db.commit()
     db.refresh(user)
     db.refresh(user, attribute_names=["role"])
     if payload.schedule is not None:
+        lines = [
+            f"Сотрудник: {user.full_name or user.login}",
+            f"График: {describe_schedule(user.schedule_pattern, user.schedule_start, user.schedule_end)}",
+        ]
+        if user.schedule_anchor_date is not None:
+            lines.append(f"Первая смена: {user.schedule_anchor_date:%d.%m.%Y}")
         notify_change(
             background_tasks,
             db,
             title="Создан график работы",
             actor=current_user.full_name or current_user.login,
-            lines=[
-                f"Сотрудник: {user.full_name or user.login}",
-                f"График: {describe_schedule(user.schedule_pattern, user.schedule_start, user.schedule_end)}",
-            ],
+            lines=lines,
         )
     return StaffUserRead.model_validate(user)
 
@@ -217,20 +221,24 @@ def update_staff_schedule(
                 "after": rate_for_audit(user.hourly_rate),
             },
         )
+    anchor_before = user.schedule_anchor_date
+    start_plan_if_missing(db, user, actor_id=admin.id)
+    first_shift_started = anchor_before is None and user.schedule_anchor_date is not None
     db.commit()
     db.refresh(user)
     after = (user.schedule_pattern, user.schedule_start, user.schedule_end)
-    if before != after:
+    if before != after or first_shift_started:
+        lines = [f"Сотрудник: {user.full_name or user.login}"]
+        if before != after:
+            lines += [f"Было: {describe_schedule(*before)}", f"Стало: {describe_schedule(*after)}"]
+        if first_shift_started:
+            lines.append(f"Первая смена: {user.schedule_anchor_date:%d.%m.%Y}")
         notify_change(
             background_tasks,
             db,
             title="Изменено время работы",
             actor=admin.full_name or admin.login,
-            lines=[
-                f"Сотрудник: {user.full_name or user.login}",
-                f"Было: {describe_schedule(*before)}",
-                f"Стало: {describe_schedule(*after)}",
-            ],
+            lines=lines,
         )
     return StaffUserRead.model_validate(user)
 

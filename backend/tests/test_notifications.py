@@ -236,6 +236,8 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(subject, "Медцентр: Создан график работы")
         self.assertIn("Сотрудник: Иван Сотрудников", body)
         self.assertIn("График: 2/2, 09:00-20:00", body)
+        # Первая смена по умолчанию — сегодня: в письме она указана, чтобы админ мог ее поправить.
+        self.assertIn("Первая смена: ", body)
 
     def test_a_new_employee_without_a_schedule_reports_nothing(self):
         with self.Session() as db:

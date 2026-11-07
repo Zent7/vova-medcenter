@@ -23,6 +23,7 @@ from app.models.staff_schedule_day import StaffScheduleDay  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
 from app.models.work_time_entry import WorkTimeEntry  # noqa: E402
 from app.services import work_status as service  # noqa: E402
+from app.services.work_schedule import start_plan_if_missing  # noqa: E402
 
 
 # Москва без летнего времени с 2014 года, поэтому фиксированное смещение +3 надежно.
@@ -98,6 +99,24 @@ class WorkStatusTests(unittest.TestCase):
 
     def _user(self, db, login: str) -> User:
         return db.execute(select(User).where(User.login == login)).scalar_one()
+
+
+class PlanInStatusTests(WorkStatusTests):
+    def test_a_schedule_saved_without_first_shift_shows_its_plan_from_today(self):
+        # Так сохраняется график без первой смены: план на сегодня и дальше, в «Статусе» есть столбцы плана.
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            anna.schedule_pattern, anna.schedule_start, anna.schedule_end = "2/2", time(8), time(20)
+            start_plan_if_missing(db, anna, actor_id=None, today=date(2026, 11, 7))
+            db.commit()
+
+            payload = service.month_payload(db, anna, 2026, 11, msk(7, 10))
+
+            days = {day["work_date"]: day for day in payload["days"]}
+            self.assertEqual(days[date(2026, 11, 6)]["plan_hours"], 0)  # до первой смены плана нет
+            self.assertEqual(days[date(2026, 11, 7)]["plan_hours"], 12.0)
+            self.assertEqual(days[date(2026, 11, 9)]["plan_hours"], 0)  # отдых по 2/2
+            self.assertGreater(payload["totals"]["plan_hours"], 0)
 
 
 class MarksTests(WorkStatusTests):

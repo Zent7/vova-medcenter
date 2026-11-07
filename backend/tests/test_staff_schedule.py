@@ -5,11 +5,12 @@
 выбрать только из пяти вариантов, время и ставка проверяются. Без графика все поля пустые.
 """
 
-from datetime import time
+from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
@@ -24,6 +25,7 @@ from app.api.v1.routes import staff as staff_routes  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models.center import Center  # noqa: E402
+from app.models.staff_schedule_day import StaffScheduleDay  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
 from app.schemas.user_admin import StaffScheduleUpdate, StaffUserCreate  # noqa: E402
 
@@ -153,6 +155,65 @@ class StaffScheduleTests(unittest.TestCase):
         user = db.execute(select(User).where(User.login == login)).scalar_one()
         payload = StaffScheduleUpdate(schedule=schedule_values)
         return staff_routes.update_staff_schedule(user_id=user.id, payload=payload, background_tasks=BackgroundTasks(), admin=self._admin(db), db=db)
+
+    def _plan_days(self, db, login):
+        user = db.execute(select(User).where(User.login == login)).scalar_one()
+        return list(
+            db.execute(
+                select(StaffScheduleDay).where(StaffScheduleDay.user_id == user.id).order_by(StaffScheduleDay.work_date)
+            ).scalars()
+        )
+
+    def test_new_schedule_plans_shifts_from_today_to_month_end(self):
+        with self.Session() as db, mock.patch("app.services.work_schedule.local_today", return_value=date(2026, 11, 7)):
+            self._create(db, schedule=schedule())  # 2/2, 08:00-20:00
+
+            stored = db.execute(select(User).where(User.login == "new")).scalar_one()
+            self.assertEqual(stored.schedule_anchor_date, date(2026, 11, 7))
+            days = self._plan_days(db, "new")
+            # 7 и 8 — первая и вторая смена цикла, 9 и 10 — отдых; до конца ноября план идет по кругу.
+            self.assertEqual(
+                [(day.work_date.day, day.shift_no) for day in days],
+                [(7, 1), (8, 2), (11, 1), (12, 2), (15, 1), (16, 2), (19, 1), (20, 2), (23, 1), (24, 2), (27, 1), (28, 2)],
+            )
+            self.assertTrue(all(day.kind == "shift" and day.source == "pattern" for day in days))
+            self.assertTrue(all(day.start_time == time(8) and day.end_time == time(20) for day in days))
+
+    def test_employee_created_without_schedule_gets_no_plan(self):
+        with self.Session() as db, mock.patch("app.services.work_schedule.local_today", return_value=date(2026, 11, 7)):
+            self._create(db, login="plain")
+
+            stored = db.execute(select(User).where(User.login == "plain")).scalar_one()
+            self.assertIsNone(stored.schedule_anchor_date)
+            self.assertEqual(self._plan_days(db, "plain"), [])
+
+    def test_saving_a_schedule_without_first_shift_starts_it_today(self):
+        # Сотрудник с графиком, у которого первой смены нет (как раньше сохраненные графики).
+        with self.Session() as db, mock.patch("app.services.work_schedule.local_today", return_value=date(2026, 11, 7)):
+            self._create(db, login="old")
+            old = db.execute(select(User).where(User.login == "old")).scalar_one()
+            old.schedule_pattern, old.schedule_start, old.schedule_end = "2/2", time(8), time(20)
+            db.commit()
+
+            self._update_schedule(db, "old", schedule())
+
+            stored = db.execute(select(User).where(User.login == "old")).scalar_one()
+            self.assertEqual(stored.schedule_anchor_date, date(2026, 11, 7))
+            self.assertEqual(len(self._plan_days(db, "old")), 12)
+
+    def test_saving_a_schedule_keeps_the_first_shift_already_set(self):
+        with self.Session() as db, mock.patch("app.services.work_schedule.local_today", return_value=date(2026, 11, 7)):
+            self._create(db, login="anna", schedule=schedule())
+            anna = db.execute(select(User).where(User.login == "anna")).scalar_one()
+            anna.schedule_anchor_date = date(2026, 11, 3)  # первую смену уже назначили кнопкой
+            db.commit()
+            plan_before = len(self._plan_days(db, "anna"))
+
+            self._update_schedule(db, "anna", schedule(shift_end="21:00"))
+
+            stored = db.execute(select(User).where(User.login == "anna")).scalar_one()
+            self.assertEqual(stored.schedule_anchor_date, date(2026, 11, 3))
+            self.assertEqual(len(self._plan_days(db, "anna")), plan_before)
 
     def test_admin_sets_schedule_of_existing_employee(self):
         with self.Session() as db:

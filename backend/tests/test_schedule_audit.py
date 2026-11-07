@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import create_engine, event, select
@@ -156,6 +157,9 @@ class ScheduleAuditTests(unittest.TestCase):
 
     def test_changed_times_and_rate_are_logged_as_separate_entries(self):
         with self.Session() as db:
+            # Первая смена уже назначена: сохранение того же графика ничего не пишет.
+            self._boris(db).schedule_anchor_date = date(2026, 11, 2)
+            db.commit()
             # Те же время и ставка: правки нет, записи нет.
             self._update_schedule(
                 db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("300"))
@@ -273,6 +277,24 @@ class ScheduleAuditTests(unittest.TestCase):
             (entry,) = self._entries(db, "absence_add")
             self.assertEqual(entry.payload_json["days"], 2)
             self.assertEqual(entry.payload_json["before"], {"empty": 2})
+
+    def test_first_shift_started_by_saving_the_schedule_is_logged_once(self):
+        with self.Session() as db, mock.patch("app.services.work_schedule.local_today", return_value=date(2026, 11, 7)):
+            # График есть, первой смены нет: сохранение ставит ее на сегодня и пишет в журнал.
+            self._update_schedule(
+                db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("300"))
+            )
+            (entry,) = self._entries(db, "first_shift")
+            self.assertIsNone(entry.payload_json["anchor_before"])
+            self.assertEqual(entry.payload_json["work_date"], "2026-11-07")
+            self.assertGreater(entry.payload_json["created"], 0)
+            self.assertEqual(self._boris(db).schedule_anchor_date, date(2026, 11, 7))
+
+            # Второе сохранение первую смену не трогает и в журнал ничего не добавляет.
+            self._update_schedule(
+                db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("300"))
+            )
+            self.assertEqual(len(self._entries(db, "first_shift")), 1)
 
     def test_first_shift_is_logged_with_the_previous_start(self):
         with self.Session() as db:
