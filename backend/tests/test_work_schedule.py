@@ -2,11 +2,12 @@
 
 Шаблон задает порядок, первая смена (`schedule_anchor_date`) ставит начало цикла. «Создать
 график» продолжает порядок на следующий месяц: если 31 числа у сотрудника 4/4 была вторая
-смена, 1 числа будет третья. Ручной график без шаблона остается пустым. Факт по умолчанию
-равен плану. Таблица открыта админу, врачу и оператору, ставки и правки — только админу.
+смена, 1 числа будет третья. Ручной график без шаблона остается пустым. Факт идет из отметок
+«На работу», ручная правка на смене его заменяет. Таблица открыта админу, врачу и оператору,
+ставки и правки — только админу.
 """
 
-from datetime import date, time
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import sys
@@ -28,8 +29,10 @@ from app.db.base import Base  # noqa: E402
 from app.models.center import Center  # noqa: E402
 from app.models.staff_schedule_day import StaffScheduleDay  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
+from app.models.work_time_entry import WorkTimeEntry  # noqa: E402
 from app.schemas.work_schedule import WorkScheduleDayUpdate, WorkScheduleFactItem  # noqa: E402
 from app.services import work_schedule as service  # noqa: E402
+from app.services import work_status  # noqa: E402
 
 
 ROLE_CODES = ("admin", "operator", "doctor", "chairman", "guest")
@@ -61,6 +64,24 @@ def make_user(db, roles, role_code, login, full_name, center=None, pattern=None,
     db.add(user)
     db.flush()
     return user
+
+
+MSK = timezone(timedelta(hours=3))  # Москва без летнего времени с 2014 года
+
+
+def msk(day: int, hour: int = 0, minute: int = 0) -> datetime:
+    return datetime(2026, 11, day, hour, minute, tzinfo=MSK)
+
+
+def utc(day: int, hour: int = 0, minute: int = 0) -> datetime:
+    """Отметка так, как ее пишут в таблицу: в UTC."""
+    return msk(day, hour, minute).astimezone(timezone.utc)
+
+
+def stats(db, year: int, month: int, now: datetime = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)) -> dict:
+    """Статистика админа так, как ее отдает маршрут: факт берется из отметок за месяц."""
+    first, last = service.month_bounds(year, month)
+    return service.stats_payload(db, year, month, work_status.fact_minutes_by_user(db, first, last, now))
 
 
 class WorkScheduleTests(unittest.TestCase):
@@ -204,7 +225,7 @@ class MonthGenerationTests(WorkScheduleTests):
             # Смены до нового начала остаются со своими номерами.
             self.assertEqual(days[1], ("shift", 3))
             self.assertEqual(days[2], ("shift", 4))
-            october = next(row for row in service.stats_payload(db, 2026, 10)["rows"] if row["full_name"] == "Анна")
+            october = next(row for row in stats(db, 2026, 10)["rows"] if row["full_name"] == "Анна")
             self.assertEqual(october["plan"]["days"], 2)
 
     def test_first_shift_needs_a_pattern(self):
@@ -279,29 +300,32 @@ class StatsTests(WorkScheduleTests):
             service.put_facts(db, self._user(db, "anna"), [{"work_date": date(2026, 11, 1), "start_time": time(8), "end_time": time(21)}])
             db.commit()
 
-            row = next(item for item in service.stats_payload(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
-            # 14 смен по 12 часов; 1 ноября факт 13 часов вместо 12.
+            row = next(item for item in service.stats_payload(db, 2026, 11, {})["rows"] if item["full_name"] == "Анна")
+            # 14 смен по 12 часов. Отметок нет, факт только в ручной правке: 1 ноября 13 часов.
             self.assertEqual(row["plan"], {"days": 14, "hours": 168.0, "amount": 50400.0})
-            self.assertEqual(row["fact"], {"days": 14, "hours": 169.0, "amount": 50700.0})
+            self.assertEqual(row["fact"], {"days": 1, "hours": 13.0, "amount": 3900.0})
             self.assertEqual(row["hourly_rate"], 300.0)
 
-    def test_fact_equals_plan_until_entered_and_leave_counts_zero(self):
+    def test_no_time_marks_means_no_fact_and_leave_counts_zero(self):
         with self.Session() as db:
             self._set_anchor(db, "anna", date(2026, 10, 30))
             service.generate_month(db, 2026, 11)
             service.put_absence(db, self._user(db, "anna"), service.days_in_range(date(2026, 11, 1), date(2026, 11, 2)), "vacation")
             db.commit()
-            row = next(item for item in service.stats_payload(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            # Отметок «На работу» нет: план есть, факт нулевой, красных столбцов не будет.
             self.assertEqual(row["plan"]["days"], 12)
-            self.assertEqual(row["fact"], row["plan"])
+            self.assertEqual(row["fact"], {"days": 0, "hours": 0.0, "amount": 0.0})
             day_one = next(day for day in row["days"] if day["work_date"] == date(2026, 11, 1))
             self.assertEqual((day_one["plan_hours"], day_one["fact_hours"]), (0.0, 0.0))
+            day_seven = next(day for day in row["days"] if day["work_date"] == date(2026, 11, 7))
+            self.assertEqual((day_seven["plan_hours"], day_seven["fact_hours"]), (12.0, 0.0))
 
     def test_amounts_are_empty_when_rate_is_not_set(self):
         with self.Session() as db:
             self._set_anchor(db, "boris", date(2026, 11, 1))
             service.generate_month(db, 2026, 11)
-            row = next(item for item in service.stats_payload(db, 2026, 11)["rows"] if item["full_name"] == "Борис")
+            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Борис")
             self.assertIsNone(row["hourly_rate"])
             self.assertIsNone(row["plan"]["amount"])
             self.assertGreater(row["plan"]["hours"], 0)
@@ -310,8 +334,72 @@ class StatsTests(WorkScheduleTests):
         with self.Session() as db:
             service.put_day(db, self._user(db, "viktor"), date(2026, 11, 5), "shift", time(20), time(8))
             db.commit()
-            row = next(item for item in service.stats_payload(db, 2026, 11)["rows"] if item["full_name"] == "Виктор")
+            row = next(item for item in service.stats_payload(db, 2026, 11, {})["rows"] if item["full_name"] == "Виктор")
             self.assertEqual((row["plan"]["days"], row["plan"]["hours"]), (1, 12.0))
+
+    def test_fact_is_the_time_on_the_counter_not_the_schedule(self):
+        with self.Session() as db:
+            self._set_anchor(db, "anna", date(2026, 10, 30))
+            service.generate_month(db, 2026, 11)
+            anna = self._user(db, "anna")
+            anna_id = anna.id
+            db.add_all(
+                [
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(1, 9), ended_at=utc(1, 13)),  # смена 1 ноября: 4 из 12 ч
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(3, 10), ended_at=utc(3, 11, 30)),  # выходной: 1,5 ч
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(7, 22), ended_at=utc(8, 2)),  # через полночь: по 2 ч
+                ]
+            )
+            db.commit()
+
+            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            days = {day["work_date"]: day for day in row["days"]}
+            self.assertEqual(row["plan"], {"days": 14, "hours": 168.0, "amount": 50400.0})
+            self.assertEqual(row["fact"], {"days": 4, "hours": 9.5, "amount": 2850.0})
+            self.assertEqual((days[date(2026, 11, 1)]["plan_hours"], days[date(2026, 11, 1)]["fact_hours"]), (12.0, 4.0))
+            self.assertEqual((days[date(2026, 11, 3)]["plan_hours"], days[date(2026, 11, 3)]["fact_hours"]), (0.0, 1.5))
+            self.assertEqual((days[date(2026, 11, 7)]["fact_hours"], days[date(2026, 11, 8)]["fact_hours"]), (2.0, 2.0))
+
+    def test_manual_fact_on_a_shift_replaces_the_marks_of_that_day(self):
+        with self.Session() as db:
+            self._set_anchor(db, "anna", date(2026, 10, 30))
+            service.generate_month(db, 2026, 11)
+            anna = self._user(db, "anna")
+            anna_id = anna.id
+            db.add(WorkTimeEntry(user_id=anna_id, started_at=utc(1, 9), ended_at=utc(1, 13)))
+            service.put_facts(
+                db,
+                anna,
+                [
+                    {"work_date": date(2026, 11, 1), "start_time": time(9), "end_time": time(10)},
+                    {"work_date": date(2026, 11, 2), "start_time": time(8), "end_time": time(21)},
+                ],
+            )
+            db.commit()
+
+            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            days = {day["work_date"]: day for day in row["days"]}
+            # 1 ноября правка 1 ч вместо отметки в 4 ч; 2 ноября отметок нет, а правка есть.
+            self.assertEqual((days[date(2026, 11, 1)]["fact_hours"], days[date(2026, 11, 2)]["fact_hours"]), (1.0, 13.0))
+            self.assertEqual(row["fact"]["hours"], 14.0)
+
+            # Пустое время снимает правку: 1 ноября снова считается по отметке.
+            service.put_facts(db, anna, [{"work_date": date(2026, 11, 1), "start_time": None, "end_time": None}])
+            db.commit()
+            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            self.assertEqual(row["fact"]["hours"], 17.0)
+
+    def test_stats_route_counts_the_marks_too(self):
+        with self.Session() as db:
+            self._set_anchor(db, "anna", date(2026, 10, 30))
+            service.generate_month(db, 2026, 11)
+            db.add(WorkTimeEntry(user_id=self._user(db, "anna").id, started_at=utc(1, 9), ended_at=utc(1, 13)))
+            db.commit()
+
+            routed = routes.read_stats(year=2026, month=11, _=self._user(db, "admin"), db=db)
+
+            row = next(item for item in routed.rows if item.full_name == "Анна")
+            self.assertEqual((row.fact.days, row.fact.hours, row.fact.amount), (1, 4.0, 1200.0))
 
 
 class AccessTests(WorkScheduleTests):

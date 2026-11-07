@@ -172,6 +172,25 @@ class MarksTests(WorkStatusTests):
         self.assertIsNone(payload["open"])
         self.assertEqual(payload["totals"]["fact_hours"], 0.0)
 
+    def test_fact_minutes_by_user_groups_marks_by_employee_and_local_day(self):
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            boris = self._user(db, "boris")
+            anna_id, boris_id = anna.id, boris.id
+            db.add_all(
+                [
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(2, 21), ended_at=utc(3, 2)),  # через полночь
+                    WorkTimeEntry(user_id=boris_id, started_at=utc(7, 9), ended_at=utc(7, 10)),
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(7, 9)),  # открыта: считается до now
+                ]
+            )
+            db.commit()
+
+            counted = service.fact_minutes_by_user(db, date(2026, 11, 1), date(2026, 11, 30), msk(7, 10, 30))
+
+        self.assertEqual(counted[anna_id], {date(2026, 11, 2): 180, date(2026, 11, 3): 120, date(2026, 11, 7): 90})
+        self.assertEqual(counted[boris_id], {date(2026, 11, 7): 60})
+
     def test_routes_start_and_stop_the_marks_of_the_current_user(self):
         with self.Session() as db:
             anna = self._user(db, "anna")

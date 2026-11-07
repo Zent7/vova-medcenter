@@ -119,7 +119,7 @@ class WorkScheduleFirstShift(BaseModel):
 
 class WorkScheduleFactItem(BaseModel):
     work_date: date
-    # Оба пустые — факт равен плану.
+    # Оба пустые — ручной факт снят, день считается по отметкам «На работу».
     start_time: time | None = None
     end_time: time | None = None
 

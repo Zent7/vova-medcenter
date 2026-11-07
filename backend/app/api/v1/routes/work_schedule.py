@@ -18,6 +18,7 @@ from app.schemas.work_schedule import (
     WorkScheduleStatsRead,
 )
 from app.services import work_schedule as service
+from app.services import work_status
 from app.services.notifications import notify_change
 
 # График работы: таблица месяца открыта админу, врачу и оператору; статистика, ставки и
@@ -78,7 +79,9 @@ def read_stats(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleStatsRead:
-    return WorkScheduleStatsRead.model_validate(service.stats_payload(db, year, month))
+    first, last = service.month_bounds(year, month)
+    counted = work_status.fact_minutes_by_user(db, first, last, work_status.utc_now())
+    return WorkScheduleStatsRead.model_validate(service.stats_payload(db, year, month, counted))
 
 
 @router.post("/month/generate", response_model=WorkScheduleGenerateRead)
@@ -284,7 +287,7 @@ def update_facts(
             + (
                 f"факт {service.format_time(item['start_time'])}-{service.format_time(item['end_time'])}"
                 if item["start_time"] is not None
-                else "отработано по плану"
+                else "факт по отметкам «На работу»"
             )
             for item in items
         ]

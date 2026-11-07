@@ -222,8 +222,12 @@ def month_payload(db: Session, viewer: User, year: int, month: int) -> dict:
     }
 
 
-def stats_payload(db: Session, year: int, month: int) -> dict:
-    """План и факт по каждому сотруднику за месяц и сумма «часы × ставка». Только для админа."""
+def stats_payload(db: Session, year: int, month: int, counted_minutes: dict[int, dict[date, int]]) -> dict:
+    """План и факт по каждому сотруднику за месяц и сумма «часы × ставка». Только для админа.
+
+    Факт дня — ручная правка на смене, если она задана, иначе минуты отметок «На работу» за этот
+    местный день (`counted_minutes` от work_status.fact_minutes_by_user). Без отметок факт нулевой.
+    """
     first, last = month_bounds(year, month)
     days_by_user = _days_by_user(db, first, last)
     users = visible_users(schedule_users(db), days_by_user, None)
@@ -231,17 +235,17 @@ def stats_payload(db: Session, year: int, month: int) -> dict:
     rows = []
     for user in users:
         by_date = {row.work_date: row for row in days_by_user.get(user.id, [])}
+        marked = counted_minutes.get(user.id, {})
         plan_days = plan_minutes = fact_days = fact_minutes = 0
         day_items = []
         for work_date in days_in_range(first, last):
             row = by_date.get(work_date)
-            plan = fact = 0
+            plan = 0
             if row is not None and row.kind == "shift":
                 plan = shift_minutes(row.start_time, row.end_time)
-                if row.fact_start_time is not None and row.fact_end_time is not None:
-                    fact = shift_minutes(row.fact_start_time, row.fact_end_time)
-                else:
-                    fact = plan
+            fact = marked.get(work_date, 0)
+            if row is not None and row.kind == "shift" and row.fact_start_time is not None and row.fact_end_time is not None:
+                fact = shift_minutes(row.fact_start_time, row.fact_end_time)
             if plan:
                 plan_days += 1
                 plan_minutes += plan
@@ -411,7 +415,7 @@ def put_absence(db: Session, user: User, days: list[date], kind: str) -> int:
 
 
 def put_facts(db: Session, user: User, items: list[dict]) -> int:
-    """Факт по дням смены. Пустые время — «отработано по плану». Проверяем все дни до записи."""
+    """Ручной факт по дням смены. Пустое время снимает правку: факт снова берется из отметок. Проверяем все дни до записи."""
     for item in items:
         if (item["start_time"] is None) != (item["end_time"] is None):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Факт задается сразу с начала и с конца смены")
@@ -506,7 +510,7 @@ def _fact_text(row: StaffScheduleDay) -> str | None:
 
 
 def facts_state(db: Session, user: User, dates: list[date]) -> dict[date, str | None]:
-    """Факт по дням: «09:30-18:00» или None, когда отработано по плану."""
+    """Ручной факт по дням: «09:30-18:00» или None, когда факт идет из отметок."""
     rows = db.execute(
         select(StaffScheduleDay).where(StaffScheduleDay.user_id == user.id, StaffScheduleDay.work_date.in_(dates))
     ).scalars()

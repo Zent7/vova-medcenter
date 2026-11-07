@@ -107,7 +107,7 @@ function wsAbsenceRequest(values) {
   return { body: { kind: values.kind, date_from: from, date_to: to } };
 }
 
-// Факт: в каждой строке либо оба времени, либо ни одного (тогда отработано по плану).
+// Факт: в каждой строке либо оба времени, либо ни одного (тогда факт идет из отметок «На работу»).
 function wsFactItemsFromValues(rows) {
   const items = [];
   for (const row of rows) {
@@ -453,7 +453,7 @@ function wsRenderFactEditor(row, stat) {
   return `
     <form class="ws__fact-form" data-ws-fact-form="${wsEscape(row.user_id)}">
       <h4>Фактическое время</h4>
-      <p class="muted">Пустые поля означают, что сотрудник отработал по графику.</p>
+      <p class="muted">Пустые поля: факт берется из отметок «На работу». Заполненные поля заменяют отметки этого дня.</p>
       ${lines
         ? `<table class="ws__summary"><thead><tr><th>Дата</th><th>По графику</th><th>Факт с</th><th>Факт до</th></tr></thead><tbody>${lines}</tbody></table>`
         : '<div class="empty">В этом месяце у сотрудника нет смен.</div>'}

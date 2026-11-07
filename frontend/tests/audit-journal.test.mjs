@@ -87,7 +87,7 @@ test("каждое действие описывается по-русски и�
   assert.equal(describe("month_generate", { year: 2026, month: 11, created: 27 }), "за 11.2026, создано смен: 27");
   assert.equal(
     describe("facts_update", { items: [{ date: "2026-11-04", before: null, after: "09:00-21:00" }] }),
-    "04.11.2026: по плану → 09:00-21:00",
+    "04.11.2026: по отметкам → 09:00-21:00",
   );
   assert.equal(
     describe("staff_delete", { schedule: "2/2, 09:00-20:00", hourly_rate: 300 }),
@@ -162,7 +162,7 @@ test("выход из программы очищает журнал и отбр
 });
 
 test("index.html: журнал грузится после графика и до app.js, токены app.js и стилей обновлены", () => {
-  assert.match(indexSource, /<script src="\.\/audit-journal\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/audit-journal\.js\?v=[\w-]*fact-from-marks-v1"><\/script>/);
   assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
   assert.match(indexSource, /styles\.css\?v=[\w-]*audit-journal-v1/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("audit-journal.js?v="), "график раньше журнала");

@@ -4,6 +4,7 @@
 перешла через полночь, делится по местным дням. Переработка — факт сверх плана дня.
 """
 
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -94,13 +95,40 @@ def plan_minutes(row: StaffScheduleDay | None) -> int:
     return schedule.shift_minutes(row.start_time, row.end_time)
 
 
+def period_entries(db: Session, first: date, last: date, user_id: int | None = None) -> list[WorkTimeEntry]:
+    """Отметки, которые пересекают период с first по last по местным дням. user_id — один сотрудник."""
+    zone = local_zone()
+    utc_start = datetime.combine(first, time.min, tzinfo=zone).astimezone(timezone.utc)
+    utc_end = datetime.combine(last + timedelta(days=1), time.min, tzinfo=zone).astimezone(timezone.utc)
+    query = select(WorkTimeEntry).where(
+        WorkTimeEntry.started_at < utc_end,
+        (WorkTimeEntry.ended_at.is_(None)) | (WorkTimeEntry.ended_at > utc_start),
+    )
+    if user_id is not None:
+        query = query.where(WorkTimeEntry.user_id == user_id)
+    return list(db.execute(query).scalars())
+
+
+def fact_minutes_by_day(entries: list[WorkTimeEntry], first: date, last: date, now: datetime) -> dict[date, int]:
+    """Факт по местным дням: минуты отметок. Открытая отметка идет до now."""
+    fact: dict[date, int] = {}
+    for entry in entries:
+        ended = as_utc(entry.ended_at) if entry.ended_at is not None else now
+        for day, minutes in minutes_by_local_day(entry.started_at, ended, first, last).items():
+            fact[day] = fact.get(day, 0) + minutes
+    return fact
+
+
+def fact_minutes_by_user(db: Session, first: date, last: date, now: datetime) -> dict[int, dict[date, int]]:
+    """Факт по дням у каждого сотрудника. Статистика админа берет его отсюда же, что и статус."""
+    grouped: dict[int, list[WorkTimeEntry]] = defaultdict(list)
+    for entry in period_entries(db, first, last):
+        grouped[entry.user_id].append(entry)
+    return {user_id: fact_minutes_by_day(entries, first, last, now) for user_id, entries in grouped.items()}
+
+
 def month_payload(db: Session, user: User, year: int, month: int, now: datetime) -> dict:
     first, last = schedule.month_bounds(year, month)
-    zone = local_zone()
-    period_start = datetime.combine(first, time.min, tzinfo=zone)
-    period_end = datetime.combine(last + timedelta(days=1), time.min, tzinfo=zone)
-    utc_start = period_start.astimezone(timezone.utc)
-    utc_end = period_end.astimezone(timezone.utc)
 
     plan_rows = db.execute(
         select(StaffScheduleDay).where(
@@ -111,18 +139,7 @@ def month_payload(db: Session, user: User, year: int, month: int, now: datetime)
     ).scalars().all()
     by_date = {row.work_date: row for row in plan_rows}
 
-    entries = db.execute(
-        select(WorkTimeEntry).where(
-            WorkTimeEntry.user_id == user.id,
-            WorkTimeEntry.started_at < utc_end,
-            (WorkTimeEntry.ended_at.is_(None)) | (WorkTimeEntry.ended_at > utc_start),
-        )
-    ).scalars().all()
-    fact_minutes: dict[date, int] = {}
-    for entry in entries:
-        ended = as_utc(entry.ended_at) if entry.ended_at is not None else now
-        for day, minutes in minutes_by_local_day(entry.started_at, ended, first, last).items():
-            fact_minutes[day] = fact_minutes.get(day, 0) + minutes
+    fact_minutes = fact_minutes_by_day(period_entries(db, first, last, user.id), first, last, now)
 
     days = []
     total_plan = total_fact = total_over = 0

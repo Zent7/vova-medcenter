@@ -31,7 +31,7 @@ class StaffScheduleDay(TimestampMixin, Base):
     # Плановое время смены; у отгула, больничного и отпуска пусто.
     start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
-    # Фактическое время; пусто — отработано по плану.
+    # Ручной факт; пусто — день считается по отметкам «На работу».
     fact_start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     fact_end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     source: Mapped[str] = mapped_column(String(10), default="manual")

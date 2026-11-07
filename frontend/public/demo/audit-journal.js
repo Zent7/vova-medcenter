@@ -106,7 +106,7 @@ function ajDescribe(entry) {
     case "facts_update": {
       const items = Array.isArray(payload.items) ? payload.items : [];
       return items
-        .map((item) => `${ajDate(item.date)}: ${item.before || "по плану"} → ${item.after || "по плану"}`)
+        .map((item) => `${ajDate(item.date)}: ${item.before || "по отметкам"} → ${item.after || "по отметкам"}`)
         .join("; ");
     }
     case "staff_delete":
