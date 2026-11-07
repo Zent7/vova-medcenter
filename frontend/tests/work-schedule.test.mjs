@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const demoDir = resolve(testDir, "../public/demo");
 const scheduleSource = readFileSync(resolve(demoDir, "work-schedule.js"), "utf8");
-// Статистика выводит отметки через renderWstMarksBlock из work-status.js, поэтому модуль статуса грузится следом.
+// Список отметок рисует вместе с модулем статуса: даты, время и длительность берутся оттуда.
 const statusSource = readFileSync(resolve(demoDir, "work-status.js"), "utf8");
 const appSource = readFileSync(resolve(demoDir, "app.js"), "utf8");
 const indexSource = readFileSync(resolve(demoDir, "index.html"), "utf8");
@@ -47,7 +47,7 @@ return {
   appState, wsState, wsCanEdit, wsCanOpen, wsDayValuesToRequest, wsAbsenceRequest, wsFactItemsFromValues,
   wsResolveCreateTarget, wsShiftMonth, wsFormatDateLabel, wsIsWeekend, buildWsHoursChart, wsCellContent,
   wsEscape, renderWorkScheduleContent, wsRenderCenterTabs, wsWithCenter, wsCenterQuery, wsConflictText, wsStatsKey,
-  wsStatsReady, wsCanSeeMoney, wsMonthReportHtml,
+  wsStatsReady, wsCanSeeMoney, wsMonthReportHtml, wsRenderMarksTable, wsStatsListing,
 };`,
   )(appState, canViewWorkSchedule);
 }
@@ -56,13 +56,6 @@ function currentMonth() {
   const now = new Date();
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
-
-test("статистика: отметки сотрудника стоят между таблицей часов и правкой факта", () => {
-  assert.match(
-    scheduleSource,
-    /<\/table>\s*\$\{renderWstMarksBlock\("Отметки «На работу»", stat\.marks\)\}\s*\$\{factEditor\}/,
-  );
-});
 
 test("«Создать график» строит следующий месяц; открытый будущий месяц строится как есть", () => {
   const { wsResolveCreateTarget } = loadSchedule();
@@ -260,7 +253,7 @@ function sampleStats({ year, month, rows }) {
 }
 
 // Строка статистики как ее отдает сервер: ставка и суммы приходят только админу.
-function statsRow({ year, month, userId, name, rate, planHours, factHours }) {
+function statsRow({ year, month, userId, name, rate, planHours, factHours, marks = [] }) {
   const amount = (hours) => (rate == null ? null : hours * rate);
   return {
     user_id: userId,
@@ -272,6 +265,7 @@ function statsRow({ year, month, userId, name, rate, planHours, factHours }) {
     shift_end: null,
     hourly_rate: rate,
     days: [{ work_date: `${year}-${String(month).padStart(2, "0")}-01`, plan_hours: planHours, fact_hours: factHours }],
+    marks,
     plan: { days: 1, hours: planHours, amount: amount(planHours) },
     fact: { days: 1, hours: factHours, amount: amount(factHours) },
   };
@@ -324,6 +318,129 @@ test("статистика админа: выбранный сотрудник, 
   assert.match(panel, /3\s600 ₽/, "план 12 ч × 300 ₽ = 3 600 ₽");
   assert.doesNotMatch(panel, /Борис/);
   assert.match(html, /data-ws-fact-toggle/);
+});
+
+test("список отметок: таблица Сотрудник | Начало | Конец | Длит. из поля marks; открытая и длинная отметки красные", () => {
+  const { year, month } = currentMonth();
+  const mm = String(month).padStart(2, "0");
+  const admin = loadSchedule("admin");
+  admin.wsState.grid = sampleGrid({ year, month });
+  admin.wsState.year = year;
+  admin.wsState.month = month;
+  admin.wsState.selectedUserId = 1;
+  admin.wsState.statsOpen = true;
+  admin.wsState.statsView = "list";
+  admin.wsState.stats = sampleStats({
+    year,
+    month,
+    rows: [
+      statsRow({
+        year,
+        month,
+        userId: 1,
+        name: "Анна",
+        rate: 300,
+        planHours: 12,
+        factHours: 25.08,
+        // Как отдает сервер: новые сверху, время в UTC; в таблице время московское.
+        marks: [
+          { started_at: `${year}-${mm}-22T06:00:00Z`, ended_at: `${year}-${mm}-23T05:00:00Z`, duration_seconds: 82800 },
+          { started_at: `${year}-${mm}-21T05:00:00Z`, ended_at: null, duration_seconds: 9000 },
+          { started_at: `${year}-${mm}-02T06:05:00Z`, ended_at: `${year}-${mm}-02T14:40:00Z`, duration_seconds: 30900 },
+        ],
+      }),
+      statsRow({
+        year,
+        month,
+        userId: 2,
+        name: "Борис",
+        rate: null,
+        planHours: 4,
+        factHours: 1,
+        marks: [{ started_at: `${year}-${mm}-03T07:00:00Z`, ended_at: `${year}-${mm}-03T08:00:00Z`, duration_seconds: 3600 }],
+      }),
+    ],
+  });
+  const html = admin.renderWorkScheduleContent();
+  const table = html.match(/<table class="ws__summary wst-marks__table">[\s\S]*?<\/table>/)?.[0] ?? "";
+  const stamp = (d, time) => `<span class="wst-marks__date">${String(d).padStart(2, "0")}-${mm}-${year}</span> ${time}`;
+  assert.match(html, /data-ws-stats-view="list"/);
+  assert.match(table, /<th>Сотрудник<\/th><th>Начало<\/th><th>Конец<\/th><th>Длит\.<\/th>/);
+  assert.match(
+    table,
+    new RegExp(`<tr class="wst-marks__row wst-marks__row--long" title="[^"]*"><td>Анна</td><td>${stamp(22, "09:00:00")}</td><td>${stamp(23, "08:00:00")}</td><td>23:00:00</td></tr>`),
+  );
+  assert.match(
+    table,
+    new RegExp(`<tr class="wst-marks__row wst-marks__row--open" title="Нет отметки «С работы»"><td>Анна</td><td>${stamp(21, "08:00:00")}</td><td>на работе</td><td>02:30:00</td></tr>`),
+  );
+  assert.match(table, new RegExp(`<tr class="wst-marks__row"><td>Анна</td><td>${stamp(2, "09:05:00")}</td><td>${stamp(2, "17:40:00")}</td><td>08:35:00</td></tr>`));
+  assert.doesNotMatch(table, /Борис/, "список показывает одного сотрудника — выбранного");
+  assert.doesNotMatch(table, /Итого/, "итога нет: список как в статусе");
+  assert.doesNotMatch(html, /class="ws-chart"|по факту, часов в день/, "вместо графика — список");
+  assert.doesNotMatch(html, /wst-marks-block/, "блок отметок под статистикой убран: таблица вместо него");
+  assert.match(html, /План по графику/, "итоги план-факт остаются под списком");
+});
+
+test("«Списки» переключают статистику: из графика открывают таблицу, из таблицы кнопка возвращает график", () => {
+  const { year, month } = currentMonth();
+  const label = (html) => html.match(/data-ws-list-toggle>([^<]+)<\/button>/)?.[1];
+  const admin = loadSchedule("admin");
+  admin.wsState.grid = sampleGrid({ year, month });
+  admin.wsState.year = year;
+  admin.wsState.month = month;
+  admin.wsState.selectedUserId = 1;
+  const oneMark = [{ started_at: `${year}-${String(month).padStart(2, "0")}-02T06:00:00Z`, ended_at: `${year}-${String(month).padStart(2, "0")}-02T07:00:00Z`, duration_seconds: 3600 }];
+  admin.wsState.stats = sampleStats({
+    year,
+    month,
+    rows: [statsRow({ year, month, userId: 1, name: "Анна", rate: 300, planHours: 12, factHours: 1, marks: oneMark })],
+  });
+  assert.equal(label(admin.renderWorkScheduleContent()), "Списки", "статистика закрыта: кнопка откроет таблицу");
+  admin.wsState.statsOpen = true;
+  admin.wsState.statsView = "chart";
+  let html = admin.renderWorkScheduleContent();
+  assert.equal(label(html), "Списки");
+  assert.match(html, /class="ws-chart"/);
+  admin.wsState.statsView = "list";
+  html = admin.renderWorkScheduleContent();
+  assert.equal(label(html), "График");
+  assert.doesNotMatch(html, /class="ws-chart"/);
+  assert.match(html, /<table class="ws__summary wst-marks__table">/);
+
+  const doctor = loadSchedule("doctor", 2);
+  doctor.wsState.grid = sampleGrid({ year, month });
+  doctor.wsState.year = year;
+  doctor.wsState.month = month;
+  doctor.wsState.statsOpen = true;
+  doctor.wsState.statsView = "list";
+  doctor.wsState.stats = sampleStats({
+    year,
+    month,
+    rows: [statsRow({ year, month, userId: 2, name: "Борис", rate: null, planHours: 12, factHours: 0.97 })],
+  });
+  const doctorHtml = doctor.renderWorkScheduleContent();
+  // Таблица медцентра врачу видна вся, а статистика — только своя строка: проверяем панель статистики.
+  const doctorPanel = doctorHtml.slice(doctorHtml.indexOf('<div class="ws__stats"'), doctorHtml.indexOf('<div class="ws__footer">'));
+  assert.equal(label(doctorHtml), "График", "врач тоже переключает таблицу");
+  assert.match(doctorPanel, /Статистика: Борис/);
+  assert.doesNotMatch(doctorPanel, /Анна/);
+  assert.doesNotMatch(doctorPanel, /ставк|₽/i, "список врачу без денег");
+});
+
+test("список без отметок: пустое сообщение, таблицы нет", () => {
+  const { year, month } = currentMonth();
+  const admin = loadSchedule("admin");
+  admin.wsState.grid = sampleGrid({ year, month });
+  admin.wsState.year = year;
+  admin.wsState.month = month;
+  admin.wsState.selectedUserId = 1;
+  admin.wsState.statsOpen = true;
+  admin.wsState.statsView = "list";
+  admin.wsState.stats = sampleStats({ year, month, rows: [statsRow({ year, month, userId: 1, name: "Анна", rate: 300, planHours: 12, factHours: 0 })] });
+  const html = admin.renderWorkScheduleContent();
+  assert.match(html, /В этом месяце отметок «На работу» пока нет\./);
+  assert.doesNotMatch(html, /wst-marks__table/);
 });
 
 test("статистику открывают врач и оператор сами; админу без выбранного сотрудника — нет", () => {
@@ -470,7 +587,7 @@ test("app.js: выход сбрасывает график, перерисовк
 });
 
 test("index.html: модуль графика грузится до app.js, токен у app.js, модуля и стилей один", () => {
-  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*own-hours-v1"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*marks-list-v1"><\/script>/);
   assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
   assert.match(indexSource, /styles\.css\?v=[\w-]*audit-journal-v1/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("app.js?v="), "модуль раньше app.js");

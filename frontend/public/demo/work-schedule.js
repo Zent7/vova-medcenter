@@ -213,6 +213,8 @@ function wsInitialState() {
     stats: null,
     statsKey: "",
     statsOpen: false,
+    // Что показывает открытая статистика: график часов или таблица отметок («list»).
+    statsView: "chart",
     statsLoading: false,
     statsError: "",
     factEditing: false,
@@ -258,6 +260,11 @@ function wsCanOpen() {
 // Статистика открыта и есть о ком ее считать: админу нужен выбранный сотрудник, врачу и оператору — они сами.
 function wsStatsReady() {
   return wsState.statsOpen && (!wsIsAdmin() || Boolean(wsState.selectedUserId));
+}
+
+// Статистика открыта таблицей отметок, а не графиком.
+function wsStatsListing() {
+  return wsState.statsOpen && wsState.statsView === "list";
 }
 
 // Правка дней — админ в режиме «Редактировать» и только в текущем месяце.
@@ -430,15 +437,18 @@ function wsRenderFooter(grid) {
   const admin = wsIsAdmin();
   const editing = wsState.mode === "edit";
   const statsButton = `<button class="ghost-button" type="button" data-ws-stats-toggle>${wsState.statsOpen ? "Скрыть статистику" : "Статистика"}</button>`;
+  // «Списки» переключают статистику между графиком и таблицей отметок; из таблицы кнопка возвращает график.
+  const listButton = `<button class="ghost-button" type="button" data-ws-list-toggle>${wsStatsListing() ? "График" : "Списки"}</button>`;
   const reportButton = `<button class="ghost-button" type="button" data-ws-report>Сформировать месяц</button>`;
   const tools = admin
     ? `<div class="ws__tools">
          <button class="primary-button" type="button" data-ws-create ${wsState.busy ? "disabled" : ""}>Создать график</button>
          <button class="ghost-button" type="button" data-ws-edit-toggle>${editing ? "Закрыть редактирование" : "Редактировать"}</button>
          ${statsButton}
+         ${listButton}
          ${reportButton}
        </div>`
-    : `<div class="ws__tools">${statsButton}${reportButton}</div>`;
+    : `<div class="ws__tools">${statsButton}${listButton}${reportButton}</div>`;
   return `
     <div class="ws__footer">
       <div class="ws__months">
@@ -468,11 +478,11 @@ function wsRenderStatsPanel() {
   const stat = (wsState.stats?.rows || []).find((item) => Number(item.user_id) === Number(userId));
   if (!stat) return `<div class="ws__stats"><div class="empty">Статистики за этот месяц пока нет.</div></div>`;
   const money = wsCanSeeMoney();
-  const chart = buildWsHoursChart(stat.days);
+  const listing = wsStatsListing();
   const rateLine = stat.hourly_rate == null ? "ставка не задана" : `ставка ${wsFormatMoney(stat.hourly_rate)} в час`;
   const factEditor = admin && wsState.factEditing ? wsRenderFactEditor(row, stat) : "";
   return `
-    <div class="ws__stats" data-ws-stats="${wsEscape(stat.user_id)}">
+    <div class="ws__stats" data-ws-stats="${wsEscape(stat.user_id)}" data-ws-stats-view="${listing ? "list" : "chart"}">
       <div class="ws__stats-head">
         <div>
           <h4>Статистика: ${wsEscape(stat.full_name)}</h4>
@@ -483,8 +493,10 @@ function wsRenderStatsPanel() {
           <button class="ghost-button" type="button" data-ws-stats-toggle>Закрыть</button>
         </div>
       </div>
-      <div class="ws__legend-chart"><span class="ws-legend-dot is-plan"></span>по графику <span class="ws-legend-dot is-fact"></span>по факту, часов в день</div>
-      <div class="ws__chart">${renderWsChartSvg(chart)}</div>
+      ${listing
+        ? wsRenderMarksTable(stat)
+        : `<div class="ws__legend-chart"><span class="ws-legend-dot is-plan"></span>по графику <span class="ws-legend-dot is-fact"></span>по факту, часов в день</div>
+      <div class="ws__chart">${renderWsChartSvg(buildWsHoursChart(stat.days))}</div>`}
       <table class="ws__summary">
         <thead><tr><th></th><th>Дней</th><th>Часов</th>${money ? "<th>Сумма (часы × ставка)</th>" : ""}</tr></thead>
         <tbody>
@@ -492,8 +504,37 @@ function wsRenderStatsPanel() {
           <tr><th scope="row">Факт</th><td>${stat.fact.days}</td><td>${wsFormatHours(stat.fact.hours)}</td>${money ? `<td>${wsFormatMoney(stat.fact.amount)}</td>` : ""}</tr>
         </tbody>
       </table>
-      ${renderWstMarksBlock("Отметки «На работу»", stat.marks)}
       ${factEditor}
+    </div>`;
+}
+
+// Список «Списки»: отметки месяца из поля marks (новые сверху, время как отмечено). Открытая отметка
+// и отметка длиннее 12 часов красные, как в блоке «Статуса»; сам вид строк и даты берется оттуда же (work-status.js).
+function wsRenderMarksTable(stat) {
+  const marks = Array.isArray(stat.marks) ? stat.marks : [];
+  if (!marks.length) {
+    return `<div class="empty">В этом месяце отметок «На работу» пока нет.</div>`;
+  }
+  const lines = marks
+    .map((mark) => {
+      const flag = wstMarkFlag(mark);
+      const rowClass = flag ? `wst-marks__row wst-marks__row--${flag}` : "wst-marks__row";
+      const hint =
+        flag === "open" ? "Нет отметки «С работы»" : flag === "long" ? "Дольше 12 часов: проверьте, не забыли ли отметить уход" : "";
+      const end = mark.ended_at ? wstStampHtml(mark.ended_at) : "на работе";
+      return (
+        `<tr class="${rowClass}"${hint ? ` title="${wsEscape(hint)}"` : ""}>` +
+        `<td>${wsEscape(stat.full_name)}</td><td>${wstStampHtml(mark.started_at)}</td><td>${end}</td>` +
+        `<td>${wstFormatElapsed(mark.duration_seconds)}</td></tr>`
+      );
+    })
+    .join("");
+  return `
+    <div class="ws__scroll wst-marks">
+      <table class="ws__summary wst-marks__table">
+        <thead><tr><th>Сотрудник</th><th>Начало</th><th>Конец</th><th>Длит.</th></tr></thead>
+        <tbody>${lines}</tbody>
+      </table>
     </div>`;
 }
 
@@ -742,6 +783,26 @@ function wsToggleStats() {
   wsState.statsOpen = !wsState.statsOpen;
   wsState.factEditing = false;
   if (wsState.statsOpen) {
+    wsState.statsView = "chart";
+    wsState.stats = null;
+    loadWorkStats();
+  }
+  renderApp();
+}
+
+// «Списки» переключают статистику между графиком и таблицей отметок. Если статистика закрыта, открывают ее таблицей.
+function wsToggleList() {
+  if (!wsCanOpen()) return;
+  if (wsIsAdmin() && !wsState.selectedUserId) {
+    showToast("Выберите сотрудника: нажмите на его имя в таблице.");
+    return;
+  }
+  if (wsState.statsOpen) {
+    wsState.statsView = wsState.statsView === "list" ? "chart" : "list";
+  } else {
+    wsState.statsOpen = true;
+    wsState.statsView = "list";
+    wsState.factEditing = false;
     wsState.stats = null;
     loadWorkStats();
   }
@@ -1093,6 +1154,7 @@ function bindWorkScheduleEvents() {
   root.querySelector("[data-ws-create]")?.addEventListener("click", wsCreateSchedule);
   root.querySelector("[data-ws-edit-toggle]")?.addEventListener("click", wsToggleEdit);
   root.querySelectorAll("[data-ws-stats-toggle]").forEach((button) => button.addEventListener("click", wsToggleStats));
+  root.querySelectorAll("[data-ws-list-toggle]").forEach((button) => button.addEventListener("click", wsToggleList));
   root.querySelector("[data-ws-report]")?.addEventListener("click", openWsMonthReport);
   root.querySelector("[data-ws-clear-selection]")?.addEventListener("click", () => wsSelectUser(wsState.selectedUserId));
   root.querySelectorAll("[data-ws-first-shift-start]").forEach((button) => {
