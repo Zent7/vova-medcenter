@@ -55,6 +55,10 @@ TRACTOR_BACK_INDICATION_CELLS: tuple[tuple[Cell, Cell], ...] = tuple(
 # не отклоняется.
 RETIRED_BLANK_NUMBER_CELLS: tuple[Cell, ...] = ((7, 3), (7, 30))
 
+# Текст метки, которую убрали вместе с полем номера. Старая копия с ней откладывается
+# при старте, см. xls_override_has_retired_blank_number в template_catalog.py.
+RETIRED_BLANK_NUMBER_LABEL = "Номер бланка"
+
 
 @dataclass(frozen=True)
 class NewXlsTemplateSpec:

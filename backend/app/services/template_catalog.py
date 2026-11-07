@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.services.new_xls_templates import (
     LEGACY_XLS_TEMPLATE_BY_FILE,
     NEW_XLS_TEMPLATE_BY_FILE,
+    RETIRED_BLANK_NUMBER_LABEL,
     validate_editable_xls_template,
     validate_legacy_editable_xls_template,
 )
@@ -504,10 +505,30 @@ def xls_override_misses_current_fields(file_name: str, path: Path) -> bool:
     return False
 
 
+def xls_override_has_retired_blank_number(file_name: str, path: Path) -> bool:
+    """True, если в клиентской XLS-версии осталась метка номера, которую убрали из бланка."""
+    spec = NEW_XLS_TEMPLATE_BY_FILE.get(file_name.casefold())
+    if spec is None or not spec.retired_cells:
+        return False
+    try:
+        book = xlrd.open_workbook(file_contents=path.read_bytes())
+    except Exception:
+        # Нечитаемый файл не трогаем: печать сама сообщит, что с ним не так.
+        return False
+    return any(
+        isinstance(value, str) and RETIRED_BLANK_NUMBER_LABEL in value
+        for sheet in book.sheets()
+        for row in range(sheet.nrows)
+        for value in sheet.row_values(row)
+    )
+
+
 def _override_is_outdated(file_name: str, override_path: Path) -> bool:
     required_token = OUTDATED_TEMPLATE_OVERRIDE_TOKENS.get(file_name)
     if required_token is not None:
         return not docx_text_contains(override_path, required_token)
+    if xls_override_has_retired_blank_number(file_name, override_path):
+        return True
     return xls_override_misses_current_fields(file_name, override_path)
 
 

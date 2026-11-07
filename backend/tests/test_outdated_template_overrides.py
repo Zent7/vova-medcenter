@@ -332,5 +332,74 @@ class OutdatedXlsTemplateOverrideTests(unittest.TestCase):
         self.assertEqual(self.retired_files(DRIVER_FRONT_FILE_NAME), [])
 
 
+GIMS_FILE_NAME = "ГИМС (судна).xls"
+LEGACY_FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+LEGACY_GIMS_WITH_LABEL = "legacy-gims-with-number-label.xls"
+LEGACY_TRACTOR_FRONT_WITH_LABEL = "legacy-tractor-front-with-number-label.xls"
+
+
+class RetiredBlankNumberLabelTests(unittest.TestCase):
+    """Копия с меткой «Номер бланка» откладывается, и печать берёт бланк без неё.
+
+    Поле номера убрали из ГИМС и 071у лицевой. Старые копии заказчика метку ещё
+    содержат, а проверка полей их пропускает, поэтому проверяем метку отдельно.
+    Фикстуры — встроенные бланки до убирания номера.
+    """
+
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.storage_root = Path(self.temporary_directory.name)
+        self.overrides_root = self.storage_root / "center-1"
+        self.overrides_root.mkdir()
+        patcher = mock.patch.object(
+            template_catalog,
+            "get_template_overrides_root",
+            lambda: self.storage_root,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def retired_files(self, file_name: str) -> list[Path]:
+        return sorted(self.overrides_root.glob(f"{file_name}.retired-*"))
+
+    def test_fixtures_carry_the_label_and_pass_the_field_check(self):
+        for file_name, fixture in (
+            (GIMS_FILE_NAME, LEGACY_GIMS_WITH_LABEL),
+            (TRACTOR_FRONT_FILE_NAME, LEGACY_TRACTOR_FRONT_WITH_LABEL),
+        ):
+            with self.subTest(file_name=file_name):
+                fixture_path = LEGACY_FIXTURES_DIR / fixture
+                self.assertTrue(template_catalog.xls_override_has_retired_blank_number(file_name, fixture_path))
+                self.assertFalse(template_catalog.xls_override_misses_current_fields(file_name, fixture_path))
+
+    def test_gims_copy_with_the_label_is_retired(self):
+        override_path = self.overrides_root / GIMS_FILE_NAME
+        shutil.copy2(LEGACY_FIXTURES_DIR / LEGACY_GIMS_WITH_LABEL, override_path)
+
+        template_catalog.retire_outdated_template_overrides()
+
+        self.assertFalse(override_path.exists())
+        self.assertEqual(len(self.retired_files(GIMS_FILE_NAME)), 1)
+
+    def test_tractor_front_copy_with_the_label_is_retired(self):
+        override_path = self.overrides_root / TRACTOR_FRONT_FILE_NAME
+        shutil.copy2(LEGACY_FIXTURES_DIR / LEGACY_TRACTOR_FRONT_WITH_LABEL, override_path)
+
+        template_catalog.retire_outdated_template_overrides()
+
+        self.assertFalse(override_path.exists())
+        self.assertEqual(len(self.retired_files(TRACTOR_FRONT_FILE_NAME)), 1)
+
+    def test_gims_copy_without_the_label_is_kept(self):
+        override_path = self.overrides_root / GIMS_FILE_NAME
+        shutil.copy2(TEMPLATES_DIR / GIMS_FILE_NAME, override_path)
+
+        template_catalog.retire_outdated_template_overrides()
+
+        self.assertTrue(override_path.is_file())
+        self.assertEqual(self.retired_files(GIMS_FILE_NAME), [])
+
+
 if __name__ == "__main__":
     unittest.main()
