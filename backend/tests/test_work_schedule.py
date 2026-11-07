@@ -2,8 +2,8 @@
 
 У каждого медцентра свой график сотрудника: шаблон, время смены и первая смена цикла. Сотрудник с
 двумя медцентрами появляется в таблице каждого из них. Если в один день он стоит сменой в двух
-медцентрах, оба дня помечаются как пересечение. Таблица открыта админу, врачу и оператору, ставки
-и правки — только админу.
+медцентрах, оба дня помечаются как пересечение. Таблица открыта админу, врачу и оператору; ставки,
+суммы и правки — только админу. Врач и оператор видят в статистике только свои часы своего медцентра.
 """
 
 from datetime import date, datetime, time, timedelta, timezone
@@ -413,7 +413,7 @@ class StatsTests(WorkScheduleTests):
             db.add(WorkTimeEntry(user_id=self._user(db, "anna").id, started_at=utc(1, 9), ended_at=utc(1, 13)))
             db.commit()
 
-            routed = routes.read_stats(year=2026, month=11, center_id=center.id, admin=self._user(db, "admin"), db=db)
+            routed = routes.read_stats(year=2026, month=11, center_id=center.id, viewer=self._user(db, "admin"), db=db)
 
             row = next(item for item in routed.rows if item.full_name == "Анна")
             self.assertEqual((row.fact.days, row.fact.hours, row.fact.amount), (1, 4.0, 1200.0))
@@ -456,6 +456,41 @@ class AccessTests(WorkScheduleTests):
                 self._grid(db, "anna", "center-b")
             self.assertEqual(caught.exception.status_code, 403)
 
+    def test_doctor_and_operator_get_only_their_own_hours_without_money(self):
+        with self.Session() as db:
+            center_a = self._center(db, "center-a")
+            service.generate_month(db, center_a, 2026, 11)
+            anna = self._user(db, "anna")
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=utc(1, 9), ended_at=utc(1, 13)))
+            db.commit()
+
+            for login in ("anna", "boris"):
+                viewer = self._user(db, login)
+                routed = routes.read_stats(year=2026, month=11, center_id=center_a.id, viewer=viewer, db=db)
+                self.assertEqual([row.user_id for row in routed.rows], [viewer.id], login)
+                row = routed.rows[0]
+                self.assertEqual((row.hourly_rate, row.plan.amount, row.fact.amount), (None, None, None), login)
+
+            anna_row = routes.read_stats(year=2026, month=11, center_id=center_a.id, viewer=anna, db=db).rows[0]
+            self.assertEqual((anna_row.plan.days, anna_row.plan.hours), (16, 192.0))
+            self.assertEqual((anna_row.fact.days, anna_row.fact.hours), (1, 4.0))
+
+            viktor = self._user(db, "viktor")
+            viktor_rows = routes.read_stats(year=2026, month=11, center_id=None, viewer=viktor, db=db).rows
+            self.assertEqual([row.user_id for row in viktor_rows], [viktor.id])
+            with self.assertRaises(HTTPException) as caught:
+                routes.read_stats(year=2026, month=11, center_id=self._center(db, "center-b").id, viewer=anna, db=db)
+            self.assertEqual(caught.exception.status_code, 403)
+
+    def test_admin_stats_still_show_everyone_with_rates(self):
+        with self.Session() as db:
+            center_a = self._center(db, "center-a")
+            routed = routes.read_stats(year=2026, month=11, center_id=center_a.id, viewer=self._user(db, "admin"), db=db)
+            rows = {row.full_name: row for row in routed.rows}
+            self.assertTrue({"Анна", "Ольга", "Борис", "Председатель"} <= set(rows))
+            self.assertEqual(rows["Анна"].hourly_rate, 300.0)
+            self.assertIsNone(rows["Борис"].hourly_rate)
+
     def test_viewers_are_admin_operator_and_doctor_only(self):
         with self.Session() as db:
             self.assertEqual(routes.require_schedule_viewer(current_user=self._user(db, "anna")).login, "anna")
@@ -465,12 +500,12 @@ class AccessTests(WorkScheduleTests):
             with self.assertRaises(HTTPException):
                 routes.require_schedule_viewer(current_user=self._user(db, "guest"))
 
-    def test_only_the_month_table_is_open_to_viewers(self):
+    def test_only_the_month_table_and_stats_are_open_to_viewers(self):
         for route in (item for item in routes.router.routes if isinstance(item, APIRoute)):
             calls = _dependency_calls(route.dependant)
-            if route.path == "/month":
-                self.assertIn(routes.require_schedule_viewer, calls)
-                self.assertNotIn(auth_routes.require_admin, calls)
+            if route.path in ("/month", "/stats"):
+                self.assertIn(routes.require_schedule_viewer, calls, route.path)
+                self.assertNotIn(auth_routes.require_admin, calls, route.path)
             else:
                 self.assertIn(auth_routes.require_admin, calls, f"{sorted(route.methods)} {route.path} открыт не только админу")
 

@@ -309,8 +309,20 @@ def month_payload(db: Session, viewer: User, center: Center, year: int, month: i
     }
 
 
-def stats_payload(db: Session, center: Center, year: int, month: int, counted_minutes: dict[int, dict[date, int]]) -> dict:
-    """План и факт по каждому сотруднику медцентра за месяц и сумма «часы × ставка». Только для админа.
+def stats_payload(
+    db: Session,
+    center: Center,
+    year: int,
+    month: int,
+    counted_minutes: dict[int, dict[date, int]],
+    *,
+    only_user_id: int | None = None,
+    with_money: bool = True,
+) -> dict:
+    """План и факт по сотрудникам медцентра за месяц; с деньгами — сумма «часы × ставка».
+
+    Админ получает всех со ставками и суммами. Врач и оператор получают `only_user_id` и
+    `with_money=False`: одна строка без ставки и сумм, часы остаются.
 
     Факт дня — ручная правка на смене этого медцентра, если она задана; иначе минуты отметок «На работу»
     за местный день (`counted_minutes` от work_status.fact_minutes_by_user). Отметки дня считаются один
@@ -320,6 +332,8 @@ def stats_payload(db: Session, center: Center, year: int, month: int, counted_mi
     days_by_user = _days_by_user(db, first, last, center.id)
     users = visible_users(schedule_users(db), days_by_user, center.id)
     owners = _mark_owners(db, users, first, last)
+    if only_user_id is not None:
+        users = [user for user in users if user.id == only_user_id]
 
     rows = []
     for user in users:
@@ -345,7 +359,7 @@ def stats_payload(db: Session, center: Center, year: int, month: int, counted_mi
             day_items.append(
                 {"work_date": work_date, "plan_hours": minutes_to_hours(plan), "fact_hours": minutes_to_hours(fact)}
             )
-        rate = user.hourly_rate
+        rate = user.hourly_rate if with_money else None
         rows.append(
             {
                 "user_id": user.id,

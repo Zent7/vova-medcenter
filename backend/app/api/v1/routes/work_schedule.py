@@ -22,9 +22,10 @@ from app.services import work_schedule as service
 from app.services import work_status
 from app.services.notifications import notify_change
 
-# График работы по медцентрам: таблица месяца открыта админу, врачу и оператору; статистика, ставки и
-# все правки — только админу. Каждый запрос называет медцентр (center_id); без него берется первый
-# медцентр смотрящего. Маршруты ниже подключены в router.py под /work-schedule.
+# График работы по медцентрам: таблица месяца открыта админу, врачу и оператору. Статистика у врача и
+# оператора — только их собственные часы своего медцентра, без ставок и сумм; ставки и все правки —
+# только админу. Каждый запрос называет медцентр (center_id); без него берется первый медцентр
+# смотрящего. Маршруты ниже подключены в router.py под /work-schedule.
 router = APIRouter()
 
 
@@ -82,14 +83,19 @@ def read_stats(
     year: int = Query(ge=2000, le=2100),
     month: int = Query(ge=1, le=12),
     center_id: int | None = Query(default=None),
-    admin: User = Depends(require_admin),
+    viewer: User = Depends(require_schedule_viewer),
     db: Session = Depends(get_db),
 ) -> WorkScheduleStatsRead:
-    center = service.pick_center(db, admin, center_id)
+    center = service.pick_center(db, viewer, center_id)
     first, last = service.month_bounds(year, month)
     # Факт из отметок «На работу» (ручная правка на смене его заменяет); считается один раз на месяц.
     counted = work_status.fact_minutes_by_user(db, first, last, work_status.utc_now())
-    return WorkScheduleStatsRead.model_validate(service.stats_payload(db, center, year, month, counted))
+    if viewer.role.code == "admin":
+        payload = service.stats_payload(db, center, year, month, counted)
+    else:
+        # Врач и оператор видят только свои часы в своем медцентре: чужие строки и ставки в ответ не попадают.
+        payload = service.stats_payload(db, center, year, month, counted, only_user_id=viewer.id, with_money=False)
+    return WorkScheduleStatsRead.model_validate(payload)
 
 
 @router.post("/month/generate", response_model=WorkScheduleGenerateRead)

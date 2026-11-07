@@ -30,8 +30,8 @@ function extractFunction(name) {
 }
 
 // Модуль с настоящим canViewWorkSchedule из app.js: права в тестах те же, что в программе.
-function loadSchedule(roleCode = "admin") {
-  const appState = { auth: { roleCode } };
+function loadSchedule(roleCode = "admin", userId = null) {
+  const appState = { auth: { roleCode, userId } };
   const canViewWorkSchedule = new Function(
     "appState",
     `${extractFunction("canViewWorkSchedule")}\nreturn canViewWorkSchedule;`,
@@ -44,6 +44,7 @@ return {
   appState, wsState, wsCanEdit, wsCanOpen, wsDayValuesToRequest, wsAbsenceRequest, wsFactItemsFromValues,
   wsResolveCreateTarget, wsShiftMonth, wsFormatDateLabel, wsIsWeekend, buildWsHoursChart, wsCellContent,
   wsEscape, renderWorkScheduleContent, wsRenderCenterTabs, wsWithCenter, wsCenterQuery, wsConflictText, wsStatsKey,
+  wsStatsReady, wsCanSeeMoney, wsMonthReportHtml,
 };`,
   )(appState, canViewWorkSchedule);
 }
@@ -229,17 +230,135 @@ function sampleGrid({ year, month }) {
   };
 }
 
-test("таблица: оператор и врач видят график без правки, без статистики и без денег", () => {
-  const { wsState, renderWorkScheduleContent } = loadSchedule("doctor");
+test("таблица: врач и оператор видят график без правки и без денег; у них есть статистика и отчет", () => {
+  const { wsState, renderWorkScheduleContent } = loadSchedule("doctor", 2);
   wsState.grid = sampleGrid(currentMonth());
   const html = renderWorkScheduleContent();
   assert.ok(html.indexOf("Анна") > 0 && html.indexOf("Борис") > html.indexOf("Анна"), "порядок строк сохранен");
   assert.doesNotMatch(html, /data-ws-cell/);
   assert.doesNotMatch(html, /data-ws-name/);
-  assert.doesNotMatch(html, /Создать график|Сформировать месяц|Статистика|Редактировать/);
+  assert.doesNotMatch(html, /Создать график|Редактировать/);
+  assert.match(html, /data-ws-stats-toggle>Статистика<\/button>/, "статистика открывается по своим часам");
+  assert.match(html, /data-ws-report>Сформировать месяц<\/button>/, "отчет открыт");
   assert.doesNotMatch(html, /₽|ставк/i);
   assert.match(html, /data-ws-month="-1"/);
   assert.match(html, /data-ws-month="1"/);
+});
+
+function sampleStats({ year, month, rows }) {
+  return { year, month, days_in_month: 30, center: { id: 1, name: "Медцентр А", color: "#2F6FB3" }, rows };
+}
+
+// Строка статистики как ее отдает сервер: ставка и суммы приходят только админу.
+function statsRow({ year, month, userId, name, rate, planHours, factHours }) {
+  const amount = (hours) => (rate == null ? null : hours * rate);
+  return {
+    user_id: userId,
+    full_name: name,
+    role_name: "Врач",
+    center_name: "Медцентр А",
+    pattern: null,
+    shift_start: null,
+    shift_end: null,
+    hourly_rate: rate,
+    days: [{ work_date: `${year}-${String(month).padStart(2, "0")}-01`, plan_hours: planHours, fact_hours: factHours }],
+    plan: { days: 1, hours: planHours, amount: amount(planHours) },
+    fact: { days: 1, hours: factHours, amount: amount(factHours) },
+  };
+}
+
+test("статистика врача и оператора: только своя строка, без ставки и сумм, без правки факта", () => {
+  const { year, month } = currentMonth();
+  const doctor = loadSchedule("doctor", 2);
+  doctor.wsState.grid = sampleGrid({ year, month });
+  doctor.wsState.year = year;
+  doctor.wsState.month = month;
+  doctor.wsState.statsOpen = true;
+  // Сервер врачу отдает только его строку; ставка и суммы в ней пустые.
+  doctor.wsState.stats = sampleStats({
+    year,
+    month,
+    rows: [statsRow({ year, month, userId: 2, name: "Борис", rate: null, planHours: 12, factHours: 0.97 })],
+  });
+  const html = doctor.renderWorkScheduleContent();
+  const panel = html.match(/<div class="ws__stats"[\s\S]*?<\/table>/)?.[0] ?? "";
+  assert.match(panel, /Статистика: Борис/);
+  assert.match(panel, /План по графику/);
+  assert.doesNotMatch(panel, /Анна/);
+  assert.doesNotMatch(panel, /Сумма|₽|ставк|Редактировать факт/i);
+  assert.doesNotMatch(html, /data-ws-fact-toggle/);
+  assert.match(html, /data-ws-report>Сформировать месяц<\/button>/, "отчет доступен и при открытой статистике");
+});
+
+test("статистика админа: выбранный сотрудник, ставка и суммы на месте, правка факта доступна", () => {
+  const { year, month } = currentMonth();
+  const admin = loadSchedule("admin");
+  admin.wsState.grid = sampleGrid({ year, month });
+  admin.wsState.year = year;
+  admin.wsState.month = month;
+  admin.wsState.selectedUserId = 1;
+  admin.wsState.statsOpen = true;
+  admin.wsState.stats = sampleStats({
+    year,
+    month,
+    rows: [
+      statsRow({ year, month, userId: 1, name: "Анна", rate: 300, planHours: 12, factHours: 0.97 }),
+      statsRow({ year, month, userId: 2, name: "Борис", rate: null, planHours: 4, factHours: 0 }),
+    ],
+  });
+  const html = admin.renderWorkScheduleContent();
+  const panel = html.match(/<div class="ws__stats"[\s\S]*?<\/table>/)?.[0] ?? "";
+  assert.match(panel, /Статистика: Анна/);
+  assert.match(panel, /ставка 300 ₽ в час/);
+  assert.match(panel, /Сумма \(часы × ставка\)/);
+  assert.match(panel, /3\s600 ₽/, "план 12 ч × 300 ₽ = 3 600 ₽");
+  assert.doesNotMatch(panel, /Борис/);
+  assert.match(html, /data-ws-fact-toggle/);
+});
+
+test("статистику открывают врач и оператор сами; админу без выбранного сотрудника — нет", () => {
+  const doctor = loadSchedule("doctor", 2);
+  doctor.wsState.statsOpen = true;
+  assert.equal(doctor.wsStatsReady(), true);
+  const admin = loadSchedule("admin");
+  admin.wsState.statsOpen = true;
+  assert.equal(admin.wsStatsReady(), false, "админу нужен выбранный сотрудник");
+  admin.wsState.selectedUserId = 1;
+  assert.equal(admin.wsStatsReady(), true);
+  admin.wsState.statsOpen = false;
+  assert.equal(admin.wsStatsReady(), false, "закрытая статистика не грузится");
+});
+
+test("деньги: ставку и суммы видит только админ", () => {
+  assert.equal(loadSchedule("admin").wsCanSeeMoney(), true);
+  assert.equal(loadSchedule("doctor", 2).wsCanSeeMoney(), false);
+  assert.equal(loadSchedule("operator", 3).wsCanSeeMoney(), false);
+});
+
+test("отчет «Сформировать месяц»: врачу и оператору без ставки и сумм, админу — с колонками денег", () => {
+  const { year, month } = currentMonth();
+  const stats = sampleStats({
+    year,
+    month,
+    rows: [statsRow({ year, month, userId: 2, name: "Борис", rate: null, planHours: 12, factHours: 0.97 })],
+  });
+  const doctorReport = loadSchedule("doctor", 2).wsMonthReportHtml(stats);
+  assert.match(doctorReport, /Борис/);
+  assert.doesNotMatch(doctorReport, /Ставка|сумма|₽/i);
+  assert.match(doctorReport, /<td colspan="5">Итого<\/td>/);
+
+  const adminReport = loadSchedule("admin").wsMonthReportHtml(stats);
+  assert.match(adminReport, /Ставка, ₽\/ч/);
+  assert.match(adminReport, /Факт: сумма/);
+  assert.match(adminReport, /<td colspan="6">Итого<\/td>/);
+});
+
+test("печать и статистика в коде: врачу и оператору открыты, правка и деньги — только админу", () => {
+  assert.match(scheduleSource, /async function openWsMonthReport\(\) \{\s*if \(!wsCanOpen\(\)\) return;/);
+  assert.match(scheduleSource, /async function loadWorkStats\(\) \{\s*if \(!wsCanOpen\(\)\) return null;/);
+  assert.match(scheduleSource, /function wsToggleStats\(\) \{\s*if \(!wsCanOpen\(\)\) return;\s*if \(wsIsAdmin\(\) && !wsState\.selectedUserId\) \{/);
+  assert.match(scheduleSource, /function wsToggleEdit\(\) \{\s*if \(!wsIsAdmin\(\)\) return;/);
+  assert.match(scheduleSource, /async function wsCreateSchedule\(\) \{\s*if \(!wsIsAdmin\(\) \|\| wsState\.busy\) return;/);
 });
 
 test("таблица: админ в режиме «Редактировать» видит все кнопки и может нажать на день", () => {
@@ -341,7 +460,7 @@ test("app.js: выход сбрасывает график, перерисовк
 });
 
 test("index.html: модуль графика грузится до app.js, токен у app.js, модуля и стилей один", () => {
-  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*fact-from-marks-v1"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*own-hours-v1"><\/script>/);
   assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
   assert.match(indexSource, /styles\.css\?v=[\w-]*audit-journal-v1/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("app.js?v="), "модуль раньше app.js");

@@ -69,7 +69,7 @@ class WorkScheduleHoursDayRead(BaseModel):
 class WorkScheduleTotalsRead(BaseModel):
     days: int
     hours: float
-    # Часы × ставка; None, если ставка у сотрудника не задана.
+    # Часы × ставка; None, если ставка не задана или статистику смотрит врач или оператор.
     amount: float | None = None
 
 
@@ -81,6 +81,7 @@ class WorkScheduleStatsRowRead(BaseModel):
     pattern: str | None = None
     shift_start: str | None = None
     shift_end: str | None = None
+    # Ставка видна только админу: врачу и оператору отдается None.
     hourly_rate: float | None = None
     days: list[WorkScheduleHoursDayRead] = Field(default_factory=list)
     plan: WorkScheduleTotalsRead

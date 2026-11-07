@@ -5,7 +5,8 @@
 // canViewWorkSchedule.
 // app.js вызывает renderWorkScheduleContent (страница), bindWorkScheduleEvents (после
 // каждой перерисовки), loadWorkSchedule (вход в раздел) и resetWorkSchedule (выход).
-// Таблицу видят админ, врач и оператор; правят, смотрят статистику и ставки — только админ.
+// Таблицу видят админ, врач и оператор; правят график, ставки и суммы — только админ. Врач и оператор
+// смотрят статистику только по своим часам, без ставки и сумм.
 // Каждый запрос называет медцентр (center_id): сотрудник с двумя медцентрами стоит в таблице каждого.
 
 const WS_WEEKDAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
@@ -245,8 +246,18 @@ function wsWithCenter(path) {
   return query ? `${path}?${query}` : path;
 }
 
+// Ставки и суммы видит только админ. Врач и оператор смотрят статистику своих часов без денег.
+function wsCanSeeMoney() {
+  return wsIsAdmin();
+}
+
 function wsCanOpen() {
   return canViewWorkSchedule();
+}
+
+// Статистика открыта и есть о ком ее считать: админу нужен выбранный сотрудник, врачу и оператору — они сами.
+function wsStatsReady() {
+  return wsState.statsOpen && (!wsIsAdmin() || Boolean(wsState.selectedUserId));
 }
 
 // Правка дней — админ в режиме «Редактировать» и только в текущем месяце.
@@ -418,14 +429,16 @@ function wsRenderBanner() {
 function wsRenderFooter(grid) {
   const admin = wsIsAdmin();
   const editing = wsState.mode === "edit";
+  const statsButton = `<button class="ghost-button" type="button" data-ws-stats-toggle>${wsState.statsOpen ? "Скрыть статистику" : "Статистика"}</button>`;
+  const reportButton = `<button class="ghost-button" type="button" data-ws-report>Сформировать месяц</button>`;
   const tools = admin
     ? `<div class="ws__tools">
          <button class="primary-button" type="button" data-ws-create ${wsState.busy ? "disabled" : ""}>Создать график</button>
          <button class="ghost-button" type="button" data-ws-edit-toggle>${editing ? "Закрыть редактирование" : "Редактировать"}</button>
-         <button class="ghost-button" type="button" data-ws-stats-toggle>${wsState.statsOpen ? "Скрыть статистику" : "Статистика"}</button>
-         <button class="ghost-button" type="button" data-ws-report>Сформировать месяц</button>
+         ${statsButton}
+         ${reportButton}
        </div>`
-    : "";
+    : `<div class="ws__tools">${statsButton}${reportButton}</div>`;
   return `
     <div class="ws__footer">
       <div class="ws__months">
@@ -438,9 +451,10 @@ function wsRenderFooter(grid) {
 }
 
 function wsRenderStatsPanel() {
-  if (!wsIsAdmin() || !wsState.statsOpen) return "";
-  const row = wsFindRow(wsState.selectedUserId);
-  if (!row) {
+  if (!wsCanOpen() || !wsState.statsOpen) return "";
+  const admin = wsIsAdmin();
+  const row = admin ? wsFindRow(wsState.selectedUserId) : null;
+  if (admin && !row) {
     return `<div class="ws__stats"><div class="empty">Нажмите на имя сотрудника, чтобы увидеть его статистику.</div></div>`;
   }
   if (wsState.statsLoading && !wsState.stats) {
@@ -449,30 +463,33 @@ function wsRenderStatsPanel() {
   if (wsState.statsError) {
     return `<div class="ws__stats"><div class="note employee-note employee-note--error">${wsEscape(wsState.statsError)}</div></div>`;
   }
-  const stat = (wsState.stats?.rows || []).find((item) => Number(item.user_id) === Number(row.user_id));
+  // Админ смотрит выбранного сотрудника, врач и оператор — только себя.
+  const userId = admin ? row.user_id : appState.auth.userId;
+  const stat = (wsState.stats?.rows || []).find((item) => Number(item.user_id) === Number(userId));
   if (!stat) return `<div class="ws__stats"><div class="empty">Статистики за этот месяц пока нет.</div></div>`;
+  const money = wsCanSeeMoney();
   const chart = buildWsHoursChart(stat.days);
   const rateLine = stat.hourly_rate == null ? "ставка не задана" : `ставка ${wsFormatMoney(stat.hourly_rate)} в час`;
-  const factEditor = wsState.factEditing ? wsRenderFactEditor(row, stat) : "";
+  const factEditor = admin && wsState.factEditing ? wsRenderFactEditor(row, stat) : "";
   return `
-    <div class="ws__stats" data-ws-stats="${wsEscape(row.user_id)}">
+    <div class="ws__stats" data-ws-stats="${wsEscape(stat.user_id)}">
       <div class="ws__stats-head">
         <div>
-          <h4>Статистика: ${wsEscape(row.full_name)}</h4>
-          <div class="muted">${wsEscape(wsMonthTitle(wsState.year, wsState.month))} · ${wsEscape(wsRowMeta(row))} · ${wsEscape(rateLine)}</div>
+          <h4>Статистика: ${wsEscape(stat.full_name)}</h4>
+          <div class="muted">${wsEscape(wsMonthTitle(wsState.year, wsState.month))} · ${wsEscape(wsRowMeta(stat))}${money ? ` · ${wsEscape(rateLine)}` : ""}</div>
         </div>
         <div class="ws__stats-actions">
-          <button class="ghost-button" type="button" data-ws-fact-toggle>${wsState.factEditing ? "Закрыть правку факта" : "Редактировать факт"}</button>
+          ${admin ? `<button class="ghost-button" type="button" data-ws-fact-toggle>${wsState.factEditing ? "Закрыть правку факта" : "Редактировать факт"}</button>` : ""}
           <button class="ghost-button" type="button" data-ws-stats-toggle>Закрыть</button>
         </div>
       </div>
       <div class="ws__legend-chart"><span class="ws-legend-dot is-plan"></span>по графику <span class="ws-legend-dot is-fact"></span>по факту, часов в день</div>
       <div class="ws__chart">${renderWsChartSvg(chart)}</div>
       <table class="ws__summary">
-        <thead><tr><th></th><th>Дней</th><th>Часов</th><th>Сумма (часы × ставка)</th></tr></thead>
+        <thead><tr><th></th><th>Дней</th><th>Часов</th>${money ? "<th>Сумма (часы × ставка)</th>" : ""}</tr></thead>
         <tbody>
-          <tr><th scope="row">План по графику</th><td>${stat.plan.days}</td><td>${wsFormatHours(stat.plan.hours)}</td><td>${wsFormatMoney(stat.plan.amount)}</td></tr>
-          <tr><th scope="row">Факт</th><td>${stat.fact.days}</td><td>${wsFormatHours(stat.fact.hours)}</td><td>${wsFormatMoney(stat.fact.amount)}</td></tr>
+          <tr><th scope="row">План по графику</th><td>${stat.plan.days}</td><td>${wsFormatHours(stat.plan.hours)}</td>${money ? `<td>${wsFormatMoney(stat.plan.amount)}</td>` : ""}</tr>
+          <tr><th scope="row">Факт</th><td>${stat.fact.days}</td><td>${wsFormatHours(stat.fact.hours)}</td>${money ? `<td>${wsFormatMoney(stat.fact.amount)}</td>` : ""}</tr>
         </tbody>
       </table>
       ${factEditor}
@@ -545,7 +562,7 @@ function renderWorkScheduleContent() {
       ${wsRenderTable(grid)}
       ${wsRenderStatsPanel()}
       ${wsRenderFooter(grid)}
-      ${admin ? "" : `<div class="ws__hint muted">Таблица только для просмотра. Правит график администратор.</div>`}`;
+      ${admin ? "" : `<div class="ws__hint muted">Таблица только для просмотра. Правит график администратор. Статистика показывает только ваши часы.</div>`}`;
   }
   return `
     <section class="card ws${editing ? " is-editing" : ""}" data-work-schedule>
@@ -576,7 +593,7 @@ async function loadWorkSchedule() {
     wsState.centerId = grid.center?.id ?? wsState.centerId;
     if (wsState.selectedUserId && !wsFindRow(wsState.selectedUserId)) wsState.selectedUserId = null;
     if (wsState.firstShiftUserId && !wsFindRow(wsState.firstShiftUserId)) wsState.firstShiftUserId = null;
-    if (wsIsAdmin() && wsState.statsOpen && wsState.selectedUserId) {
+    if (wsStatsReady()) {
       loadWorkStats();
     }
   } catch (error) {
@@ -595,7 +612,7 @@ function wsStatsKey() {
 }
 
 async function loadWorkStats() {
-  if (!wsIsAdmin()) return null;
+  if (!wsCanOpen()) return null;
   const key = wsStatsKey();
   wsState.statsLoading = true;
   wsState.statsError = "";
@@ -716,8 +733,8 @@ function wsSelectUser(userId) {
 }
 
 function wsToggleStats() {
-  if (!wsIsAdmin()) return;
-  if (!wsState.selectedUserId) {
+  if (!wsCanOpen()) return;
+  if (wsIsAdmin() && !wsState.selectedUserId) {
     showToast("Выберите сотрудника: нажмите на его имя в таблице.");
     return;
   }
@@ -935,7 +952,8 @@ function wsSaveFacts(userId) {
   });
 }
 
-function wsMonthReportHtml(stats) {
+// Отчет без денег (withMoney=false) — для врача и оператора: часы остаются, ставка и суммы уходят.
+function wsMonthReportHtml(stats, withMoney = wsCanSeeMoney()) {
   const centerName = stats.center?.name ? ` — ${stats.center.name}` : "";
   const title = `График работы${centerName} — ${wsMonthTitle(stats.year, stats.month)}`;
   const totals = { planDays: 0, planHours: 0, planAmount: 0, factDays: 0, factHours: 0, factAmount: 0 };
@@ -954,13 +972,13 @@ function wsMonthReportHtml(stats) {
           <td>${wsEscape(row.role_name)}</td>
           <td>${wsEscape(row.center_name || "")}</td>
           <td>${wsEscape(row.pattern ? `${row.pattern}, ${wsTime(row.shift_start)}–${wsTime(row.shift_end)}` : "не задан")}</td>
-          <td class="num">${row.hourly_rate == null ? "—" : wsEscape(wsFormatHours(row.hourly_rate))}</td>
+          ${withMoney ? `<td class="num">${row.hourly_rate == null ? "—" : wsEscape(wsFormatHours(row.hourly_rate))}</td>` : ""}
           <td class="num">${row.plan.days}</td>
           <td class="num">${wsFormatHours(row.plan.hours)}</td>
-          <td class="num">${wsFormatMoney(row.plan.amount)}</td>
+          ${withMoney ? `<td class="num">${wsFormatMoney(row.plan.amount)}</td>` : ""}
           <td class="num">${row.fact.days}</td>
           <td class="num">${wsFormatHours(row.fact.hours)}</td>
-          <td class="num">${wsFormatMoney(row.fact.amount)}</td>
+          ${withMoney ? `<td class="num">${wsFormatMoney(row.fact.amount)}</td>` : ""}
         </tr>`;
     })
     .join("");
@@ -987,17 +1005,17 @@ function wsMonthReportHtml(stats) {
   <table>
     <thead>
       <tr>
-        <th>№</th><th>Сотрудник</th><th>Роль</th><th>Медцентр</th><th>График</th><th>Ставка, ₽/ч</th>
-        <th>План: дней</th><th>План: часов</th><th>План: сумма</th>
-        <th>Факт: дней</th><th>Факт: часов</th><th>Факт: сумма</th>
+        <th>№</th><th>Сотрудник</th><th>Роль</th><th>Медцентр</th><th>График</th>${withMoney ? "<th>Ставка, ₽/ч</th>" : ""}
+        <th>План: дней</th><th>План: часов</th>${withMoney ? "<th>План: сумма</th>" : ""}
+        <th>Факт: дней</th><th>Факт: часов</th>${withMoney ? "<th>Факт: сумма</th>" : ""}
       </tr>
     </thead>
-    <tbody>${lines || '<tr><td colspan="12">В этом месяце нет сотрудников с графиком.</td></tr>'}</tbody>
+    <tbody>${lines || `<tr><td colspan="${withMoney ? 12 : 9}">В этом месяце нет сотрудников с графиком.</td></tr>`}</tbody>
     <tfoot>
       <tr>
-        <td colspan="6">Итого</td>
-        <td class="num">${totals.planDays}</td><td class="num">${wsFormatHours(totals.planHours)}</td><td class="num">${wsFormatMoney(totals.planAmount)}</td>
-        <td class="num">${totals.factDays}</td><td class="num">${wsFormatHours(totals.factHours)}</td><td class="num">${wsFormatMoney(totals.factAmount)}</td>
+        <td colspan="${withMoney ? 6 : 5}">Итого</td>
+        <td class="num">${totals.planDays}</td><td class="num">${wsFormatHours(totals.planHours)}</td>${withMoney ? `<td class="num">${wsFormatMoney(totals.planAmount)}</td>` : ""}
+        <td class="num">${totals.factDays}</td><td class="num">${wsFormatHours(totals.factHours)}</td>${withMoney ? `<td class="num">${wsFormatMoney(totals.factAmount)}</td>` : ""}
       </tr>
     </tfoot>
   </table>
@@ -1008,7 +1026,7 @@ function wsMonthReportHtml(stats) {
 
 // «Сформировать месяц»: окно печати, как у кассы. Окно открываем сразу, иначе браузер его заблокирует.
 async function openWsMonthReport() {
-  if (!wsIsAdmin()) return;
+  if (!wsCanOpen()) return;
   const printWindow = window.open("about:blank", "_blank");
   if (!printWindow) {
     showToast("Браузер заблокировал окно печати");
