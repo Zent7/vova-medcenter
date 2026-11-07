@@ -88,13 +88,17 @@ def read_stats(
 ) -> WorkScheduleStatsRead:
     center = service.pick_center(db, viewer, center_id)
     first, last = service.month_bounds(year, month)
-    # Факт из отметок «На работу» (ручная правка на смене его заменяет); считается один раз на месяц.
-    counted = work_status.fact_minutes_by_user(db, first, last, work_status.utc_now())
+    now = work_status.utc_now()
+    # Факт из отметок «На работу» (ручная правка на смене его заменяет) и сами отметки месяца.
+    counted = work_status.fact_minutes_by_user(db, first, last, now)
+    marks = work_status.marks_by_user(db, first, last, now)
     if viewer.role.code == "admin":
-        payload = service.stats_payload(db, center, year, month, counted)
+        payload = service.stats_payload(db, center, year, month, counted, marks=marks)
     else:
         # Врач и оператор видят только свои часы в своем медцентре: чужие строки и ставки в ответ не попадают.
-        payload = service.stats_payload(db, center, year, month, counted, only_user_id=viewer.id, with_money=False)
+        payload = service.stats_payload(
+            db, center, year, month, counted, only_user_id=viewer.id, with_money=False, marks=marks
+        )
     return WorkScheduleStatsRead.model_validate(payload)
 
 

@@ -318,6 +318,7 @@ def stats_payload(
     *,
     only_user_id: int | None = None,
     with_money: bool = True,
+    marks: dict[int, list[dict]] | None = None,
 ) -> dict:
     """План и факт по сотрудникам медцентра за месяц; с деньгами — сумма «часы × ставка».
 
@@ -327,6 +328,7 @@ def stats_payload(
     Факт дня — ручная правка на смене этого медцентра, если она задана; иначе минуты отметок «На работу»
     за местный день (`counted_minutes` от work_status.fact_minutes_by_user). Отметки дня считаются один
     раз: в медцентре, где у сотрудника смена в этот день (см. _mark_owners). Без отметок факт нулевой.
+    `marks` — отметки каждого сотрудника за месяц (work_status.marks_by_user) для списка в статистике.
     """
     first, last = month_bounds(year, month)
     days_by_user = _days_by_user(db, first, last, center.id)
@@ -371,6 +373,7 @@ def stats_payload(
                 "shift_end": format_time(schedule.schedule_end) if schedule else None,
                 "hourly_rate": float(rate) if rate is not None else None,
                 "days": day_items,
+                "marks": (marks or {}).get(user.id, []),
                 "plan": {
                     "days": plan_days,
                     "hours": minutes_to_hours(plan_minutes_total),

@@ -437,6 +437,25 @@ class StatsTests(WorkScheduleTests):
             self.assertEqual((days[date(2026, 11, 1)]["fact_hours"], days[date(2026, 11, 2)]["fact_hours"]), (12.0, 11.67))
             self.assertEqual(row["fact"]["hours"], 23.67)
 
+    def test_stats_route_lists_the_marks_of_the_month_for_admin_and_only_own_for_staff(self):
+        with self.Session() as db:
+            self._anchor(db, "anna", date(2026, 10, 30))
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
+            anna = self._user(db, "anna")
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=utc(1, 9), ended_at=utc(1, 13)))
+            db.add(WorkTimeEntry(user_id=self._user(db, "boris").id, started_at=utc(1, 9), ended_at=utc(1, 10)))
+            db.commit()
+
+            admin_rows = routes.read_stats(year=2026, month=11, center_id=center.id, viewer=self._user(db, "admin"), db=db).rows
+            admin_anna = next(item for item in admin_rows if item.full_name == "Анна")
+            self.assertEqual([mark.duration_seconds for mark in admin_anna.marks], [4 * 3600])
+            self.assertEqual(admin_anna.marks[0].ended_at, utc(1, 13))
+
+            staff_rows = routes.read_stats(year=2026, month=11, center_id=center.id, viewer=anna, db=db).rows
+            self.assertEqual([row.user_id for row in staff_rows], [anna.id])
+            self.assertEqual([mark.duration_seconds for mark in staff_rows[0].marks], [4 * 3600], "чужих отметок нет")
+
     def test_amounts_are_empty_when_rate_is_not_set(self):
         with self.Session() as db:
             service.generate_month(db, self._center(db, "center-a"), 2026, 11)

@@ -182,6 +182,31 @@ def fact_minutes_by_user(db: Session, first: date, last: date, now: datetime) ->
     }
 
 
+def marks_list(entries: list[WorkTimeEntry], now: datetime) -> list[dict]:
+    """Отметки для списка «Начало — Конец — Длительность», новые сверху. Открытая отметка идет до now."""
+    marks = []
+    for entry in entries:
+        started = as_utc(entry.started_at)
+        ended = as_utc(entry.ended_at) if entry.ended_at is not None else None
+        finish = ended if ended is not None else now
+        marks.append(
+            {
+                "started_at": started,
+                "ended_at": ended,
+                "duration_seconds": max(int((finish - started).total_seconds()), 0),
+            }
+        )
+    return sorted(marks, key=lambda mark: mark["started_at"], reverse=True)
+
+
+def marks_by_user(db: Session, first: date, last: date, now: datetime) -> dict[int, list[dict]]:
+    """Отметки месяца у каждого сотрудника для статистики графика: тот же период, что у факта."""
+    grouped: dict[int, list[WorkTimeEntry]] = defaultdict(list)
+    for entry in period_entries(db, first, last):
+        grouped[entry.user_id].append(entry)
+    return {user_id: marks_list(entries, now) for user_id, entries in grouped.items()}
+
+
 def day_kind(rows: list[StaffScheduleDay]) -> str | None:
     """Вид дня для сводки: смена, если в каком-то медцентре стоит смена; иначе вид первой записи."""
     if not rows:
@@ -206,7 +231,8 @@ def month_payload(db: Session, user: User, year: int, month: int, now: datetime)
         by_date[row.work_date].append(row)
 
     ends = planned_ends_by_user(db, first, last, user.id).get(user.id)
-    fact_minutes = fact_minutes_by_day(period_entries(db, first, last, user.id), first, last, now, ends)
+    entries = period_entries(db, first, last, user.id)
+    fact_minutes = fact_minutes_by_day(entries, first, last, now, ends)
 
     days = []
     total_plan = total_fact = total_over = 0
@@ -243,6 +269,7 @@ def month_payload(db: Session, user: User, year: int, month: int, now: datetime)
         "now": now,
         "open": open_payload,
         "days": days,
+        "marks": marks_list(entries, now),
         "totals": {
             "plan_hours": schedule.minutes_to_hours(total_plan),
             "fact_hours": schedule.minutes_to_hours(total_fact),

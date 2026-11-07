@@ -492,6 +492,7 @@ function wsRenderStatsPanel() {
           <tr><th scope="row">Факт</th><td>${stat.fact.days}</td><td>${wsFormatHours(stat.fact.hours)}</td>${money ? `<td>${wsFormatMoney(stat.fact.amount)}</td>` : ""}</tr>
         </tbody>
       </table>
+      ${renderWstMarksBlock("Отметки «На работу»", stat.marks)}
       ${factEditor}
     </div>`;
 }

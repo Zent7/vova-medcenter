@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WorkStatusOpenRead(BaseModel):
@@ -22,6 +22,14 @@ class WorkStatusTotalsRead(BaseModel):
     overtime_hours: float
 
 
+class WorkStatusMarkRead(BaseModel):
+    """Отметка «На работу» — «С работы». Пока ended_at пуст, отметка открыта, а длительность идет до now."""
+
+    started_at: datetime
+    ended_at: datetime | None = None
+    duration_seconds: int
+
+
 class WorkStatusMonthRead(BaseModel):
     year: int
     month: int
@@ -30,4 +38,5 @@ class WorkStatusMonthRead(BaseModel):
     now: datetime
     open: WorkStatusOpenRead | None = None
     days: list[WorkStatusDayRead]
+    marks: list[WorkStatusMarkRead] = Field(default_factory=list)
     totals: WorkStatusTotalsRead

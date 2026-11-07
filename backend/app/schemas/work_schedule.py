@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.work_status import WorkStatusMarkRead
+
 
 # Ответы таблицы и статистики. Времени — строки «ЧЧ:ММ», часы и суммы — числа с копейками.
 
@@ -84,6 +86,8 @@ class WorkScheduleStatsRowRead(BaseModel):
     # Ставка видна только админу: врачу и оператору отдается None.
     hourly_rate: float | None = None
     days: list[WorkScheduleHoursDayRead] = Field(default_factory=list)
+    # Отметки «На работу» за месяц; врачу и оператору приходят только свои.
+    marks: list[WorkStatusMarkRead] = Field(default_factory=list)
     plan: WorkScheduleTotalsRead
     fact: WorkScheduleTotalsRead
 

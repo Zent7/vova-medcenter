@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const demoDir = resolve(testDir, "../public/demo");
 const scheduleSource = readFileSync(resolve(demoDir, "work-schedule.js"), "utf8");
+// Статистика выводит отметки через renderWstMarksBlock из work-status.js, поэтому модуль статуса грузится следом.
+const statusSource = readFileSync(resolve(demoDir, "work-status.js"), "utf8");
 const appSource = readFileSync(resolve(demoDir, "app.js"), "utf8");
 const indexSource = readFileSync(resolve(demoDir, "index.html"), "utf8");
 const stylesSource = readFileSync(resolve(demoDir, "styles.css"), "utf8");
@@ -40,6 +42,7 @@ function loadSchedule(roleCode = "admin", userId = null) {
     "appState",
     "canViewWorkSchedule",
     `${scheduleSource}
+${statusSource}
 return {
   appState, wsState, wsCanEdit, wsCanOpen, wsDayValuesToRequest, wsAbsenceRequest, wsFactItemsFromValues,
   wsResolveCreateTarget, wsShiftMonth, wsFormatDateLabel, wsIsWeekend, buildWsHoursChart, wsCellContent,
@@ -53,6 +56,13 @@ function currentMonth() {
   const now = new Date();
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
+
+test("статистика: отметки сотрудника стоят между таблицей часов и правкой факта", () => {
+  assert.match(
+    scheduleSource,
+    /<\/table>\s*\$\{renderWstMarksBlock\("Отметки «На работу»", stat\.marks\)\}\s*\$\{factEditor\}/,
+  );
+});
 
 test("«Создать график» строит следующий месяц; открытый будущий месяц строится как есть", () => {
   const { wsResolveCreateTarget } = loadSchedule();

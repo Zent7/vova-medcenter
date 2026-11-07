@@ -7558,6 +7558,54 @@ body[data-page="dashboard"] .dashboard-table-head-scroll {
   color: var(--muted);
 }
 
+/* Отметки «На работу» за месяц: в «Статусе» и в статистике графика (renderWstMarksBlock). */
+.wst-marks-block {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.wst-marks-block h4 {
+  margin: 0;
+}
+
+.wst-marks-block__note {
+  margin: 0;
+  font-size: 13px;
+}
+
+.wst-marks {
+  overflow-x: auto;
+}
+
+table.wst-marks__table th,
+table.wst-marks__table td {
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Дата и время переносятся на узком экране, а длительность не разрывается. */
+table.wst-marks__table td:last-child,
+.wst-marks__date {
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  table.wst-marks__table {
+    font-size: 13px;
+  }
+
+  table.wst-marks__table th,
+  table.wst-marks__table td {
+    padding: 8px 6px;
+  }
+}
+
+.wst-marks__row--open td,
+.wst-marks__row--long td {
+  color: var(--danger);
+}
+
 /* Журнал изменений графика (audit-journal.js) */
 .aj__head {
   display: flex;

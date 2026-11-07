@@ -218,6 +218,70 @@ class MarksTests(WorkStatusTests):
         self.assertEqual(counted[anna_id], {date(2026, 11, 2): 180, date(2026, 11, 3): 120, date(2026, 11, 7): 90})
         self.assertEqual(counted[boris_id], {date(2026, 11, 7): 60})
 
+    def test_marks_list_shows_the_newest_first_and_counts_an_open_mark_to_now(self):
+        entries = [
+            WorkTimeEntry(user_id=1, started_at=utc(3, 9), ended_at=utc(3, 9, 30)),
+            WorkTimeEntry(user_id=1, started_at=utc(7, 8, 30)),
+        ]
+
+        marks = service.marks_list(entries, msk(7, 10))
+
+        self.assertEqual(
+            marks,
+            [
+                {"started_at": utc(7, 8, 30), "ended_at": None, "duration_seconds": 90 * 60},
+                {"started_at": utc(3, 9), "ended_at": utc(3, 9, 30), "duration_seconds": 30 * 60},
+            ],
+        )
+
+    def test_month_summary_lists_only_the_marks_of_the_employee(self):
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            boris = self._user(db, "boris")
+            db.add_all(
+                [
+                    WorkTimeEntry(user_id=anna.id, started_at=utc(6, 10), ended_at=utc(6, 12)),
+                    WorkTimeEntry(user_id=anna.id, started_at=utc(7, 9)),  # открыта
+                    WorkTimeEntry(user_id=boris.id, started_at=utc(7, 8)),  # чужая
+                ]
+            )
+            db.commit()
+
+            payload = service.month_payload(db, anna, 2026, 11, msk(7, 10))
+
+        self.assertEqual(
+            payload["marks"],
+            [
+                {"started_at": utc(7, 9), "ended_at": None, "duration_seconds": 60 * 60},
+                {"started_at": utc(6, 10), "ended_at": utc(6, 12), "duration_seconds": 2 * 60 * 60},
+            ],
+        )
+
+    def test_marks_by_user_groups_the_month_by_employee(self):
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            boris = self._user(db, "boris")
+            anna_id, boris_id = anna.id, boris.id
+            db.add_all(
+                [
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(2, 21), ended_at=utc(3, 2)),  # через полночь
+                    WorkTimeEntry(user_id=boris_id, started_at=utc(7, 9), ended_at=utc(7, 10)),
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(7, 9)),  # открыта: идет до now
+                ]
+            )
+            db.commit()
+
+            marks = service.marks_by_user(db, date(2026, 11, 1), date(2026, 11, 30), msk(7, 10, 30))
+
+        self.assertEqual(
+            marks[anna_id],
+            [
+                {"started_at": utc(7, 9), "ended_at": None, "duration_seconds": 90 * 60},
+                {"started_at": utc(2, 21), "ended_at": utc(3, 2), "duration_seconds": 5 * 60 * 60},
+            ],
+        )
+        self.assertEqual(marks[boris_id], [{"started_at": utc(7, 9), "ended_at": utc(7, 10), "duration_seconds": 60 * 60}])
+
     def test_routes_start_and_stop_the_marks_of_the_current_user(self):
         with self.Session() as db:
             anna = self._user(db, "anna")

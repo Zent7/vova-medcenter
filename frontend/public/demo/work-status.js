@@ -1,5 +1,5 @@
-// Статус «На работу / С работы»: большая кнопка, счетчик времени на работе и месячная сводка
-// план-факт по дням. Отметки ведет сервер (/work-status), график берется из модуля графика.
+// Статус «На работу / С работы»: большая кнопка, счетчик времени на работе, месячная сводка
+// план-факт по дням и список отметок месяца. Отметки ведет сервер (/work-status), график берется из модуля графика.
 //
 // Файл грузится до app.js, рядом с work-schedule.js: месяц, экранирование и числа берутся оттуда
 // (wsToday, wsShiftMonth, wsMonthTitle, wsPad, wsEscape, wsFormatHours). Из app.js берутся
@@ -47,6 +47,81 @@ function wstFormatMark(iso) {
   const moment = new Date(iso);
   if (Number.isNaN(moment.getTime())) return "";
   return moment.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: WST_TIME_ZONE });
+}
+
+// Отметка без «С работы» или длиннее 12 часов — красным: такие строки проверяют первыми.
+const WST_LONG_MARK_SECONDS = 12 * 3600;
+
+function wstMarkFlag(mark) {
+  if (!mark?.ended_at) return "open";
+  return Number(mark.duration_seconds) > WST_LONG_MARK_SECONDS ? "long" : "";
+}
+
+// Дата и время для списка отметок по московскому времени: «07-11-2026» и «17:19:02».
+function wstStampParts(iso) {
+  const moment = new Date(iso);
+  if (Number.isNaN(moment.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: WST_TIME_ZONE,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(moment);
+  const part = (type) => parts.find((item) => item.type === type)?.value || "";
+  return {
+    date: `${part("day")}-${part("month")}-${part("year")}`,
+    time: `${part("hour")}:${part("minute")}:${part("second")}`,
+  };
+}
+
+// «07-11-2026 17:19:02» одной строкой.
+function wstFormatStamp(iso) {
+  const stamp = wstStampParts(iso);
+  return stamp ? `${stamp.date} ${stamp.time}` : "";
+}
+
+// Для таблицы: дата не рвется при переносе строки, время уходит на следующую строку на узком экране.
+function wstStampHtml(iso) {
+  const stamp = wstStampParts(iso);
+  return stamp ? `<span class="wst-marks__date">${stamp.date}</span> ${stamp.time}` : "";
+}
+
+function renderWstMarkRow(mark, options) {
+  const flag = wstMarkFlag(mark);
+  const rowClass = flag ? `wst-marks__row wst-marks__row--${flag}` : "wst-marks__row";
+  const hint =
+    flag === "open" ? "Нет отметки «С работы»" : flag === "long" ? "Дольше 12 часов: проверьте, не забыли ли отметить уход" : "";
+  const end = mark.ended_at ? wstStampHtml(mark.ended_at) : "на работе";
+  const elapsed = wstFormatElapsed(mark.duration_seconds);
+  const duration = flag === "open" && options.live ? `<span data-wst-mark-elapsed>${elapsed}</span>` : elapsed;
+  return (
+    `<tr class="${rowClass}"${hint ? ` title="${wsEscape(hint)}"` : ""}>` +
+    `<td>${wstStampHtml(mark.started_at)}</td><td>${end}</td><td>${duration}</td></tr>`
+  );
+}
+
+// Блок «Отметки»: заголовок, пояснение и таблица «Начало — Конец — Длительность», новые сверху.
+// live — открытая отметка тикает вместе со счетчиком статуса; в статистике админа она стоит на времени ответа.
+function renderWstMarksBlock(title, marks, options = {}) {
+  const list = Array.isArray(marks) ? marks : [];
+  const body = list.length
+    ? `<div class="ws__scroll wst-marks">
+        <table class="ws__summary wst-marks__table">
+          <thead><tr><th>Начало</th><th>Конец</th><th>Длит.</th></tr></thead>
+          <tbody>${list.map((mark) => renderWstMarkRow(mark, options)).join("")}</tbody>
+        </table>
+      </div>`
+    : `<div class="empty">За этот месяц отметок нет.</div>`;
+  return `
+    <div class="wst-marks-block">
+      <h4>${wsEscape(title)}</h4>
+      <p class="muted wst-marks-block__note">Красным — отметка без «С работы» или длиннее 12 часов.</p>
+      ${body}
+    </div>`;
 }
 
 // Столбики месяца: серым — по графику; оранжевым — факт в пределах плана; зеленым поверх — переработка;
@@ -155,7 +230,12 @@ function wstTick() {
     wstStopTimer();
     return;
   }
-  element.textContent = wstFormatElapsed(wstElapsedSeconds());
+  const text = wstFormatElapsed(wstElapsedSeconds());
+  element.textContent = text;
+  // Открытая строка в списке отметок показывает то же время, что и большой счетчик.
+  document.querySelectorAll("[data-wst-mark-elapsed]").forEach((node) => {
+    node.textContent = text;
+  });
 }
 
 function wstStartTimer() {
@@ -212,7 +292,8 @@ function renderStatusContent() {
               <span class="wst__key wst__key--fact">Факт в пределах плана</span>
               <span class="wst__key wst__key--over">Переработка</span>
               <span class="wst__key wst__key--vacation">Отпуск</span>
-            </div>`
+            </div>
+            ${renderWstMarksBlock("Отметки за месяц", payload.marks, { live: true })}`
           : `<div class="empty">${wstState.loading ? "Загружаем статус..." : "Статус пока не загружен."}</div>`
       }
     </section>`;
