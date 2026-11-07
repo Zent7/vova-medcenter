@@ -418,7 +418,7 @@ class StatsTests(WorkScheduleTests):
             row = next(item for item in routed.rows if item.full_name == "Анна")
             self.assertEqual((row.fact.days, row.fact.hours, row.fact.amount), (1, 4.0, 1200.0))
 
-    def test_early_leave_within_fifteen_minutes_counts_the_whole_shift_in_stats(self):
+    def test_marks_within_fifteen_minutes_of_the_shift_edges_count_in_stats(self):
         with self.Session() as db:
             self._anchor(db, "anna", date(2026, 10, 30))
             center = self._center(db, "center-a")
@@ -426,16 +426,16 @@ class StatsTests(WorkScheduleTests):
             anna_id = self._user(db, "anna").id
             db.add_all(
                 [
-                    WorkTimeEntry(user_id=anna_id, started_at=utc(1, 8), ended_at=utc(1, 19, 50)),  # за 10 минут до конца смены
-                    WorkTimeEntry(user_id=anna_id, started_at=utc(2, 8), ended_at=utc(2, 19, 40)),  # за 20 минут: время как есть
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(1, 8, 10), ended_at=utc(1, 19, 50)),  # опоздание и ранний уход по 10 минут
+                    WorkTimeEntry(user_id=anna_id, started_at=utc(2, 8, 20), ended_at=utc(2, 19, 40)),  # по 20 минут: время как есть
                 ]
             )
             db.commit()
 
             row = self._row(db, "center-a", "Анна")
             days = {day["work_date"]: day for day in row["days"]}
-            self.assertEqual((days[date(2026, 11, 1)]["fact_hours"], days[date(2026, 11, 2)]["fact_hours"]), (12.0, 11.67))
-            self.assertEqual(row["fact"]["hours"], 23.67)
+            self.assertEqual((days[date(2026, 11, 1)]["fact_hours"], days[date(2026, 11, 2)]["fact_hours"]), (12.0, 11.33))
+            self.assertEqual(row["fact"]["hours"], 23.33)
 
     def test_stats_route_lists_the_marks_of_the_month_for_admin_and_only_own_for_staff(self):
         with self.Session() as db:

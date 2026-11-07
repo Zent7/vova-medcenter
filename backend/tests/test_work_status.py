@@ -297,8 +297,8 @@ class MarksTests(WorkStatusTests):
             self.assertEqual(len(month.days), 30)
 
 
-class EarlyLeaveRoundingTests(WorkStatusTests):
-    """Уход раньше конца смены не больше чем на 15 минут считается по плану; дальше время идет как есть."""
+class ShiftEdgeRoundingTests(WorkStatusTests):
+    """Опоздание на работу и ранний уход в пределах 15 минут считаются по плану; дальше время идет как есть."""
 
     def _day_3_november(self, leave, start=(9, 0), now=msk(7, 12)) -> dict:
         """Смена 3 ноября с 09:00 до 18:00; отметка с start до leave (часы, минуты), без leave — открыта."""
@@ -340,6 +340,45 @@ class EarlyLeaveRoundingTests(WorkStatusTests):
 
     def test_a_mark_that_starts_in_the_last_fifteen_minutes_is_not_rounded(self):
         self.assertEqual(self._day_3_november((17, 55), start=(17, 50))["fact_hours"], 0.08)  # 5 минут как есть
+
+    def test_an_open_mark_that_started_late_counts_from_the_start_of_the_shift(self):
+        self.assertEqual(self._day_3_november(None, start=(9, 10), now=msk(3, 10))["fact_hours"], 1.0)
+
+    def test_arriving_ten_minutes_late_counts_the_whole_shift(self):
+        day = self._day_3_november((18, 0), start=(9, 10))
+
+        self.assertEqual((day["fact_hours"], day["overtime_hours"]), (9.0, 0.0))
+
+    def test_arriving_exactly_fifteen_minutes_late_counts_the_whole_shift(self):
+        self.assertEqual(self._day_3_november((18, 0), start=(9, 15))["fact_hours"], 9.0)
+
+    def test_arriving_sixteen_minutes_late_counts_the_time_on_the_counter(self):
+        self.assertEqual(self._day_3_november((18, 0), start=(9, 16))["fact_hours"], 8.73)  # 8 ч 44 мин
+
+    def test_late_arrival_and_early_leave_together_count_the_whole_shift(self):
+        self.assertEqual(self._day_3_november((17, 50), start=(9, 10))["fact_hours"], 9.0)
+
+    def test_a_mark_that_ends_inside_the_arrival_window_is_not_rounded(self):
+        self.assertEqual(self._day_3_november((9, 12), start=(9, 5))["fact_hours"], 0.12)  # 7 минут как есть
+
+    def test_a_short_return_is_not_counted_twice(self):
+        # Ушли в 17:50, вернулись в 17:55: отметки не накладываются, между ними засчитано 5 минут.
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            db.add(
+                StaffScheduleDay(
+                    user_id=anna.id, work_date=date(2026, 11, 3), kind="shift",
+                    start_time=time(9), end_time=time(18), source="manual",
+                )
+            )
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=utc(3, 9), ended_at=utc(3, 17, 50)))
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=utc(3, 17, 55), ended_at=utc(3, 18, 30)))
+            db.commit()
+
+            payload = service.month_payload(db, anna, 2026, 11, msk(7, 12))
+
+        day = {d["work_date"]: d for d in payload["days"]}[date(2026, 11, 3)]
+        self.assertEqual((day["fact_hours"], day["overtime_hours"]), (9.5, 0.5))
 
     def test_night_shift_that_ends_early_in_the_next_month_is_rounded_too(self):
         with self.Session() as db:
