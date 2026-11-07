@@ -1,4 +1,4 @@
-// График работы: таблица месяца по сотрудникам, правка дней, статистика план-факт и печать.
+// График работы: таблица месяца одного медцентра (вкладки медцентров), правка дней, статистика план-факт и печать.
 //
 // Файл грузится до app.js. Из app.js берутся глобально: apiRequest, humanizeApiError,
 // showToast, renderApp, openActionModal, closeActionModal, actionModalContent, appState,
@@ -6,6 +6,7 @@
 // app.js вызывает renderWorkScheduleContent (страница), bindWorkScheduleEvents (после
 // каждой перерисовки), loadWorkSchedule (вход в раздел) и resetWorkSchedule (выход).
 // Таблицу видят админ, врач и оператор; правят, смотрят статистику и ставки — только админ.
+// Каждый запрос называет медцентр (center_id): сотрудник с двумя медцентрами стоит в таблице каждого.
 
 const WS_WEEKDAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
 const WS_MONTH_NAMES = [
@@ -199,6 +200,9 @@ function wsInitialState() {
     year: today.year,
     month: today.month,
     mode: "view",
+    // Медцентры для вкладок (из последнего ответа) и медцентр таблицы, выбранный на вкладке.
+    centers: [],
+    centerId: null,
     grid: null,
     loading: false,
     error: "",
@@ -219,6 +223,26 @@ const wsState = wsInitialState();
 
 function wsIsAdmin() {
   return appState.auth.roleCode === "admin";
+}
+
+// Медцентр таблицы: тот, что выбран на вкладке, а без выбора — медцентр последнего ответа.
+function wsCenterId() {
+  return wsState.centerId || wsState.grid?.center?.id || null;
+}
+
+function wsCenterLabel() {
+  return wsState.grid?.center?.name || "";
+}
+
+// Каждый запрос правки называет медцентр: одна учетка может стоять в двух медцентрах.
+function wsCenterQuery() {
+  const id = wsCenterId();
+  return id ? `center_id=${encodeURIComponent(id)}` : "";
+}
+
+function wsWithCenter(path) {
+  const query = wsCenterQuery();
+  return query ? `${path}?${query}` : path;
 }
 
 function wsCanOpen() {
@@ -255,18 +279,28 @@ function wsCellContent(day) {
   return `<span class="ws__cell-code">${wsEscape(WS_KIND_CODES[day.kind] || "")}</span>`;
 }
 
+// Смены того же сотрудника в других медцентрах в этот день: подсказка к клетке и окну дня.
+function wsConflictText(day) {
+  const items = Array.isArray(day?.conflicts) ? day.conflicts : [];
+  if (!items.length) return "";
+  const places = items.map((item) => `${item.center_name} ${wsTime(item.start_time)}–${wsTime(item.end_time)}`);
+  return `В этот день смена также в медцентре: ${places.join(", ")}`;
+}
+
 function wsCellTitle(row, day, dateKey) {
   const label = wsFormatDateLabel(dateKey);
   if (!day) return `${row.full_name}, ${label}: пусто`;
   if (day.kind !== "shift") return `${row.full_name}, ${label}: ${WS_KIND_LABELS[day.kind] || day.kind}`;
   const plan = `${wsTime(day.start_time)}–${wsTime(day.end_time)}`;
   const fact = day.fact_start_time && day.fact_end_time ? `, факт ${wsTime(day.fact_start_time)}–${wsTime(day.fact_end_time)}` : "";
-  return `${row.full_name}, ${label}: смена ${plan}${fact}`;
+  const conflict = wsConflictText(day);
+  return `${row.full_name}, ${label}: смена ${plan}${fact}${conflict ? `. ${conflict}` : ""}`;
 }
 
 function wsRenderRow(row, grid, editable) {
   const selected = Number(wsState.selectedUserId) === Number(row.user_id);
-  const color = row.center?.color || "";
+  // Строка стоит в таблице медцентра: полоска слева — цвет этого медцентра.
+  const color = grid.center?.color || "";
   const days = [];
   const dayMap = new Map((row.days || []).map((day) => [day.work_date, day]));
   for (let day = 1; day <= grid.days_in_month; day += 1) {
@@ -277,11 +311,13 @@ function wsRenderRow(row, grid, editable) {
     const factChanged =
       entry && entry.kind === "shift" && entry.fact_start_time && entry.fact_end_time &&
       (entry.fact_start_time !== entry.start_time || entry.fact_end_time !== entry.end_time);
+    // Красным — смена в этот день и в другом медцентре, где тоже работает этот сотрудник.
+    const conflict = Boolean(entry && entry.kind === "shift" && Array.isArray(entry.conflicts) && entry.conflicts.length);
     const editAttrs = editable
       ? ` data-ws-cell data-ws-user="${wsEscape(row.user_id)}" data-ws-date="${dateKey}" tabindex="0" role="button"`
       : "";
     days.push(
-      `<td class="ws__cell${kindClass}${weekend ? " is-weekend" : ""}${factChanged ? " is-fact-changed" : ""}"${editAttrs} title="${wsEscape(wsCellTitle(row, entry, dateKey))}">${wsCellContent(entry)}</td>`,
+      `<td class="ws__cell${kindClass}${weekend ? " is-weekend" : ""}${factChanged ? " is-fact-changed" : ""}${conflict ? " is-conflict" : ""}"${editAttrs} title="${wsEscape(wsCellTitle(row, entry, dateKey))}">${wsCellContent(entry)}</td>`,
     );
   }
   const nameAttrs = wsIsAdmin() ? ` data-ws-name="${wsEscape(row.user_id)}" tabindex="0" role="button"` : "";
@@ -289,7 +325,7 @@ function wsRenderRow(row, grid, editable) {
     <tr class="ws__row${selected ? " is-selected" : ""}${row.is_active ? "" : " is-inactive"}" style="--ws-color: ${wsEscape(color)}">
       <th class="ws__name" scope="row"${nameAttrs}>
         <span class="ws__name-text">${wsEscape(row.full_name)}</span>
-        <span class="ws__name-meta">${wsEscape(row.role_name)}${row.center ? ` · ${wsEscape(row.center.name)}` : ""}</span>
+        <span class="ws__name-meta">${wsEscape(row.role_name)}</span>
         <span class="ws__name-meta">${wsEscape(wsRowMeta(row))}${row.is_active ? "" : " · отключен"}</span>
       </th>
       ${days.join("")}
@@ -306,9 +342,10 @@ function wsRenderTable(grid) {
     dayHeads.push(`<th class="ws__day ws__day-no${weekend}" scope="col">${day}</th>`);
   }
   const editable = wsCanEdit();
+  const emptyHint = wsIsAdmin() ? " Добавьте их в разделе «Сотрудники»." : "";
   const body = grid.rows.length
     ? grid.rows.map((row) => wsRenderRow(row, grid, editable)).join("")
-    : `<tr><td class="ws__empty" colspan="${grid.days_in_month + 1}">Сотрудников с графиком пока нет.</td></tr>`;
+    : `<tr><td class="ws__empty" colspan="${grid.days_in_month + 1}">В этом медцентре пока нет сотрудников.${emptyHint}</td></tr>`;
   return `
     <div class="ws__scroll">
       <table class="ws__table">
@@ -321,18 +358,28 @@ function wsRenderTable(grid) {
     </div>`;
 }
 
-function wsRenderLegend(grid) {
-  const centers = (grid.centers || [])
-    .map((center) => `<span class="ws__chip" style="--ws-color: ${wsEscape(center.color || "")}">${wsEscape(center.name)}</span>`)
+// Вкладки медцентров: таблица одна на медцентр, поэтому сотрудник с двумя медцентрами виден в обоих.
+function wsRenderCenterTabs(centers, activeId) {
+  const list = Array.isArray(centers) ? centers : [];
+  if (!list.length) return `<div class="ws__tabs"><span class="muted">Медцентры не назначены.</span></div>`;
+  const tabs = list
+    .map((center) => {
+      const active = Number(center.id) === Number(activeId);
+      return `<button class="ws__tab${active ? " is-active" : ""}" type="button" aria-pressed="${active ? "true" : "false"}" data-ws-center="${wsEscape(center.id)}" style="--ws-color: ${wsEscape(center.color || "")}">${wsEscape(center.name)}</button>`;
+    })
     .join("");
+  return `<div class="ws__tabs" role="group" aria-label="Медцентр">${tabs}</div>`;
+}
+
+function wsRenderLegend() {
   return `
     <div class="ws__legend">
-      <span class="ws__legend-group">${centers || '<span class="muted">медцентры не назначены</span>'}</span>
       <span class="ws__legend-group">
         <span class="ws__key ws__key--shift">смена</span>
         <span class="ws__key ws__key--dayoff">Отг — отгул</span>
         <span class="ws__key ws__key--sick">Бол — больничный</span>
         <span class="ws__key ws__key--vacation">Отп — отпуск</span>
+        <span class="ws__key ws__key--conflict">красным — смена в двух медцентрах в один день</span>
         <span class="ws__key ws__key--fact">красная точка — факт отличается</span>
       </span>
     </div>`;
@@ -476,15 +523,21 @@ function renderWorkScheduleContent() {
   const grid = wsState.grid;
   const admin = wsIsAdmin();
   const editing = wsCanEdit();
+  // Вкладки берутся из последнего ответа и остаются на месте, пока таблица нового медцентра грузится.
+  const centers = wsState.centers.length ? wsState.centers : grid?.centers || [];
+  const tabs = wsRenderCenterTabs(centers, wsCenterId());
   let body;
   if (!grid) {
-    body = wsState.loading
+    const note = wsState.error ? `<div class="note employee-note employee-note--error">${wsEscape(wsState.error)}</div>` : "";
+    const message = wsState.loading
       ? `<div class="empty">Загружаем график...</div>`
       : `<div class="empty">График пока не загружен.</div>`;
+    body = `${tabs}${note}${message}`;
   } else {
     const selectedRow = admin ? wsFindRow(wsState.selectedUserId) : null;
     body = `
-      ${wsRenderLegend(grid)}
+      ${tabs}
+      ${wsRenderLegend()}
       ${wsState.error ? `<div class="note employee-note employee-note--error">${wsEscape(wsState.error)}</div>` : ""}
       ${editing ? `<div class="ws__hint">Нажмите на день, чтобы задать смену, отгул, больничный или отпуск. Нажмите на имя, чтобы выбрать сотрудника.</div>` : ""}
       ${wsRenderBanner()}
@@ -499,7 +552,7 @@ function renderWorkScheduleContent() {
       <div class="ws__head">
         <div>
           <h3>График работы${grid ? ` — ${wsEscape(wsMonthTitle(grid.year, grid.month))}` : ""}</h3>
-          <p class="muted">${admin ? "Смены по медцентрам. Цвет строки — медцентр сотрудника." : "Смены сотрудников вашего медцентра. Цвет строки — медцентр."}</p>
+          <p class="muted">${admin ? "Вкладка — медцентр, у каждого свой график. Сотрудник с двумя медцентрами виден в обоих; красным — смены в двух медцентрах в один день." : "Смены сотрудников выбранного медцентра."}</p>
         </div>
       </div>
       ${body}
@@ -515,9 +568,12 @@ async function loadWorkSchedule() {
   wsState.error = "";
   renderApp();
   try {
-    const grid = await apiRequest(`/work-schedule/month?year=${wsState.year}&month=${wsState.month}`);
+    const query = wsCenterQuery();
+    const grid = await apiRequest(`/work-schedule/month?year=${wsState.year}&month=${wsState.month}${query ? `&${query}` : ""}`);
     if (requestId !== wsState.requestId) return;
     wsState.grid = grid;
+    wsState.centers = grid.centers || [];
+    wsState.centerId = grid.center?.id ?? wsState.centerId;
     if (wsState.selectedUserId && !wsFindRow(wsState.selectedUserId)) wsState.selectedUserId = null;
     if (wsState.firstShiftUserId && !wsFindRow(wsState.firstShiftUserId)) wsState.firstShiftUserId = null;
     if (wsIsAdmin() && wsState.statsOpen && wsState.selectedUserId) {
@@ -535,7 +591,7 @@ async function loadWorkSchedule() {
 }
 
 function wsStatsKey() {
-  return `${wsState.year}-${wsState.month}`;
+  return `${wsState.year}-${wsState.month}-${wsCenterId() || ""}`;
 }
 
 async function loadWorkStats() {
@@ -544,7 +600,8 @@ async function loadWorkStats() {
   wsState.statsLoading = true;
   wsState.statsError = "";
   try {
-    const stats = await apiRequest(`/work-schedule/stats?year=${wsState.year}&month=${wsState.month}`);
+    const query = wsCenterQuery();
+    const stats = await apiRequest(`/work-schedule/stats?year=${wsState.year}&month=${wsState.month}${query ? `&${query}` : ""}`);
     wsState.stats = stats;
     wsState.statsKey = key;
     return stats;
@@ -584,6 +641,22 @@ function wsSetMonth(year, month) {
   loadWorkSchedule();
 }
 
+// Вкладка медцентра: таблица и статистика берутся для него, выбор и факт сбрасываются. Старую таблицу
+// убираем сразу, чтобы клик по клетке не ушел в другой медцентр.
+function wsSelectCenter(centerId) {
+  const id = Number(centerId);
+  if (!id || id === Number(wsCenterId())) return;
+  wsState.centerId = id;
+  wsState.grid = null;
+  wsState.selectedUserId = null;
+  wsState.firstShiftUserId = null;
+  wsState.statsOpen = false;
+  wsState.stats = null;
+  wsState.statsError = "";
+  wsState.factEditing = false;
+  loadWorkSchedule();
+}
+
 function wsToggleEdit() {
   if (!wsIsAdmin()) return;
   if (wsState.mode === "edit") {
@@ -612,13 +685,14 @@ async function wsCreateSchedule() {
   try {
     const result = await apiRequest("/work-schedule/month/generate", {
       method: "POST",
-      body: { year: target.year, month: target.month },
+      body: { year: target.year, month: target.month, center_id: wsCenterId() },
     });
     const missing = result.users_without_start || [];
     const notes = missing.length
       ? ` Не назначена первая смена: ${missing.join(", ")}. Выберите сотрудника и нажмите «Назначить первую смену».`
       : "";
-    showToast(`График на ${wsMonthTitle(target.year, target.month)} создан: смен ${result.created}.${notes}`);
+    const centerName = wsCenterLabel();
+    showToast(`График${centerName ? ` ${centerName}` : ""} на ${wsMonthTitle(target.year, target.month)} создан: смен ${result.created}.${notes}`);
     wsSetMonth(target.year, target.month);
   } catch (error) {
     showToast(humanizeApiError(error, "Не удалось создать график"));
@@ -670,7 +744,7 @@ async function wsCellClick(userId, dateKey) {
     wsState.firstShiftUserId = null;
     wsState.busy = true;
     renderApp();
-    const error = await wsSend(`/work-schedule/${encodeURIComponent(userId)}/first-shift`, "POST", { work_date: dateKey });
+    const error = await wsSend(wsWithCenter(`/work-schedule/${encodeURIComponent(userId)}/first-shift`), "POST", { work_date: dateKey });
     wsState.busy = false;
     if (error) {
       showToast(error);
@@ -698,15 +772,18 @@ function wsDayModalHtml(row, dateKey) {
   const hint = row.pattern
     ? `По графику ${wsEscape(row.pattern)}: ${wsEscape(wsTime(row.shift_start))}–${wsEscape(wsTime(row.shift_end))}.`
     : "Сотрудник работает вручную: время смены задайте здесь.";
+  const conflict = wsConflictText(day);
+  const centerName = wsCenterLabel();
   return `
     <form class="ws-day-form" data-ws-day-form="${wsEscape(row.user_id)}" data-ws-date="${dateKey}">
-      <p class="ws-day-form__date">${wsEscape(wsFormatDateLabel(dateKey))} · ${wsEscape(row.full_name)}</p>
+      <p class="ws-day-form__date">${wsEscape(wsFormatDateLabel(dateKey))} · ${wsEscape(row.full_name)}${centerName ? ` · ${wsEscape(centerName)}` : ""}</p>
       <fieldset class="ws-day-form__kinds">${options}</fieldset>
       <div class="ws-day-form__times">
         <label>Со скольки <input type="time" name="start" value="${wsEscape(start)}" /></label>
         <label>До скольки <input type="time" name="end" value="${wsEscape(end)}" /></label>
       </div>
       <p class="ws-day-form__hint">${hint}</p>
+      ${conflict ? `<p class="ws-day-form__hint ws-day-form__conflict">${wsEscape(conflict)}. Проверьте, что сотрудник успевает в обе смены.</p>` : ""}
       <div class="note employee-note employee-note--error hidden" data-ws-day-error></div>
       <div class="ws-day-form__actions">
         <button class="primary-button" type="submit">Сохранить</button>
@@ -741,7 +818,7 @@ function openWsDayModal(userId, dateKey) {
     if (request.error) return showError(request.error);
     const submit = form.querySelector('button[type="submit"]');
     if (submit) submit.disabled = true;
-    const path = `/work-schedule/${encodeURIComponent(userId)}/days/${dateKey}`;
+    const path = wsWithCenter(`/work-schedule/${encodeURIComponent(userId)}/days/${dateKey}`);
     const error = request.clear
       ? await wsSend(path, "DELETE")
       : await wsSend(path, "PUT", request.body);
@@ -761,7 +838,7 @@ function wsAbsenceModalHtml(row, kind) {
   const from = wsDateKey(wsState.year, wsState.month, defaultDay);
   return `
     <form class="ws-day-form" data-ws-absence-form="${wsEscape(row.user_id)}" data-ws-kind="${wsEscape(kind)}">
-      <p class="ws-day-form__date">${wsEscape(WS_KIND_LABELS[kind])} · ${wsEscape(row.full_name)}</p>
+      <p class="ws-day-form__date">${wsEscape(WS_KIND_LABELS[kind])} · ${wsEscape(row.full_name)}${wsCenterLabel() ? ` · ${wsEscape(wsCenterLabel())}` : ""}</p>
       <div class="ws-day-form__times">
         <label>С какого числа <input type="date" name="from" value="${from}" /></label>
         <label>По какое число <input type="date" name="to" value="${from}" /></label>
@@ -799,7 +876,7 @@ function openWsAbsenceModal(userId, kind) {
     }
     const submit = form.querySelector('button[type="submit"]');
     if (submit) submit.disabled = true;
-    const error = await wsSend(`/work-schedule/${encodeURIComponent(userId)}/absences`, "POST", request.body);
+    const error = await wsSend(wsWithCenter(`/work-schedule/${encodeURIComponent(userId)}/absences`), "POST", request.body);
     if (error) {
       if (submit) submit.disabled = false;
       if (note) {
@@ -844,7 +921,7 @@ function wsSaveFacts(userId) {
   }
   wsState.busy = true;
   renderApp();
-  wsSend(`/work-schedule/${encodeURIComponent(userId)}/facts`, "PUT", { items: prepared.items }).then(async (error) => {
+  wsSend(wsWithCenter(`/work-schedule/${encodeURIComponent(userId)}/facts`), "PUT", { items: prepared.items }).then(async (error) => {
     wsState.busy = false;
     if (error) {
       showToast(error);
@@ -859,7 +936,8 @@ function wsSaveFacts(userId) {
 }
 
 function wsMonthReportHtml(stats) {
-  const title = `График работы — ${wsMonthTitle(stats.year, stats.month)}`;
+  const centerName = stats.center?.name ? ` — ${stats.center.name}` : "";
+  const title = `График работы${centerName} — ${wsMonthTitle(stats.year, stats.month)}`;
   const totals = { planDays: 0, planHours: 0, planAmount: 0, factDays: 0, factHours: 0, factAmount: 0 };
   const lines = stats.rows
     .map((row, index) => {
@@ -966,6 +1044,10 @@ function bindWorkScheduleEvents() {
       const next = wsShiftMonth(wsState.year, wsState.month, Number(button.dataset.wsMonth) || 0);
       wsSetMonth(next.year, next.month);
     });
+  });
+
+  root.querySelectorAll("[data-ws-center]").forEach((button) => {
+    button.addEventListener("click", () => wsSelectCenter(button.dataset.wsCenter));
   });
 
   root.querySelectorAll("[data-ws-name]").forEach((element) => {

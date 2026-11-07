@@ -19,6 +19,8 @@ import app.models  # noqa: E402,F401
 from app.api.v1.routes import work_status as routes  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
+from app.models.center import Center  # noqa: E402
+from app.models.staff_center_schedule import StaffCenterSchedule  # noqa: E402
 from app.models.staff_schedule_day import StaffScheduleDay  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
 from app.models.work_time_entry import WorkTimeEntry  # noqa: E402
@@ -105,9 +107,15 @@ class PlanInStatusTests(WorkStatusTests):
     def test_a_schedule_saved_without_first_shift_shows_its_plan_from_today(self):
         # Так сохраняется график без первой смены: план на сегодня и дальше, в «Статусе» есть столбцы плана.
         with self.Session() as db:
+            center = Center(code="center-a", name="Мед-Авто")
+            db.add(center)
+            db.flush()
             anna = self._user(db, "anna")
-            anna.schedule_pattern, anna.schedule_start, anna.schedule_end = "2/2", time(8), time(20)
-            start_plan_if_missing(db, anna, actor_id=None, today=date(2026, 11, 7))
+            anna.center_id = center.id
+            schedule = StaffCenterSchedule(center_id=center.id, schedule_pattern="2/2", schedule_start=time(8), schedule_end=time(20))
+            anna.center_schedules.append(schedule)
+            db.flush()
+            start_plan_if_missing(db, anna, schedule, actor_id=None, today=date(2026, 11, 7))
             db.commit()
 
             payload = service.month_payload(db, anna, 2026, 11, msk(7, 10))

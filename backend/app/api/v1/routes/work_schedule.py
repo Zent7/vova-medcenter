@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.routes.auth import get_current_user, require_admin
 from app.db.session import get_db
+from app.models.center import Center
 from app.models.user import User
 from app.schemas.work_schedule import (
     WorkScheduleAbsenceCreate,
@@ -21,8 +22,9 @@ from app.services import work_schedule as service
 from app.services import work_status
 from app.services.notifications import notify_change
 
-# График работы: таблица месяца открыта админу, врачу и оператору; статистика, ставки и
-# все правки — только админу. Маршруты ниже подключены в router.py под /work-schedule.
+# График работы по медцентрам: таблица месяца открыта админу, врачу и оператору; статистика, ставки и
+# все правки — только админу. Каждый запрос называет медцентр (center_id); без него берется первый
+# медцентр смотрящего. Маршруты ниже подключены в router.py под /work-schedule.
 router = APIRouter()
 
 
@@ -49,16 +51,17 @@ def _notify_schedule(
     db: Session,
     admin: User,
     staff: User,
+    center: Center,
     title: str,
     lines: list[str],
 ) -> None:
-    """Письмо админам об изменении графика сотрудника. Вызывать после commit."""
+    """Письмо админам об изменении графика сотрудника в медцентре. Вызывать после commit."""
     notify_change(
         background_tasks,
         db,
         title=title,
         actor=admin.full_name or admin.login,
-        lines=[f"Сотрудник: {staff.full_name or staff.login}", *lines],
+        lines=[f"Сотрудник: {staff.full_name or staff.login}", f"Медцентр: {center.name}", *lines],
     )
 
 
@@ -66,22 +69,27 @@ def _notify_schedule(
 def read_month(
     year: int = Query(ge=2000, le=2100),
     month: int = Query(ge=1, le=12),
+    center_id: int | None = Query(default=None),
     viewer: User = Depends(require_schedule_viewer),
     db: Session = Depends(get_db),
 ) -> WorkScheduleMonthRead:
-    return WorkScheduleMonthRead.model_validate(service.month_payload(db, viewer, year, month))
+    center = service.pick_center(db, viewer, center_id)
+    return WorkScheduleMonthRead.model_validate(service.month_payload(db, viewer, center, year, month))
 
 
 @router.get("/stats", response_model=WorkScheduleStatsRead)
 def read_stats(
     year: int = Query(ge=2000, le=2100),
     month: int = Query(ge=1, le=12),
-    _: User = Depends(require_admin),
+    center_id: int | None = Query(default=None),
+    admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleStatsRead:
+    center = service.pick_center(db, admin, center_id)
     first, last = service.month_bounds(year, month)
+    # Факт из отметок «На работу» (ручная правка на смене его заменяет); считается один раз на месяц.
     counted = work_status.fact_minutes_by_user(db, first, last, work_status.utc_now())
-    return WorkScheduleStatsRead.model_validate(service.stats_payload(db, year, month, counted))
+    return WorkScheduleStatsRead.model_validate(service.stats_payload(db, center, year, month, counted))
 
 
 @router.post("/month/generate", response_model=WorkScheduleGenerateRead)
@@ -91,9 +99,14 @@ def generate_month(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleGenerateRead:
-    result = service.generate_month(db, payload.year, payload.month, actor_id=admin.id)
+    center = service.pick_center(db, admin, payload.center_id)
+    result = service.generate_month(db, center, payload.year, payload.month, actor_id=admin.id)
     if result["created"]:
-        lines = [f"Месяц: {payload.month:02d}.{payload.year}", f"Создано смен: {result['created']}"]
+        lines = [
+            f"Медцентр: {center.name}",
+            f"Месяц: {payload.month:02d}.{payload.year}",
+            f"Создано смен: {result['created']}",
+        ]
         if result["users_without_start"]:
             lines.append("Не назначена первая смена: " + ", ".join(result["users_without_start"]))
         notify_change(
@@ -112,22 +125,25 @@ def update_day(
     work_date: date,
     payload: WorkScheduleDayUpdate,
     background_tasks: BackgroundTasks,
+    center_id: int = Query(),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
+    center = service.load_schedule_center(db, user, center_id)
     service.check_day_update(payload.kind, payload.start_time, payload.end_time)
-    before = service.day_state(db, user, work_date)
-    service.put_day(db, user, work_date, payload.kind, payload.start_time, payload.end_time)
+    before = service.day_state(db, user, center.id, work_date)
+    service.put_day(db, user, center.id, work_date, payload.kind, payload.start_time, payload.end_time)
     db.flush()
-    after = service.day_state(db, user, work_date)
+    after = service.day_state(db, user, center.id, work_date)
     if before != after:
         service.audit_schedule_change(
             db,
             staff=user,
+            center_id=center.id,
             actor_id=admin.id,
             action="day_update",
-            payload={"date": work_date.isoformat(), "before": before, "after": after},
+            payload={"center": center.name, "date": work_date.isoformat(), "before": before, "after": after},
         )
     db.commit()
     _notify_schedule(
@@ -135,6 +151,7 @@ def update_day(
         db,
         admin,
         user,
+        center,
         "Изменен график работы",
         [
             f"Дата: {work_date:%d.%m.%Y}",
@@ -149,19 +166,22 @@ def clear_day(
     user_id: int,
     work_date: date,
     background_tasks: BackgroundTasks,
+    center_id: int = Query(),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
-    before = service.day_state(db, user, work_date)
-    changed = service.clear_day(db, user, work_date)
+    center = service.load_schedule_center(db, user, center_id)
+    before = service.day_state(db, user, center.id, work_date)
+    changed = service.clear_day(db, user, center.id, work_date)
     if changed:
         service.audit_schedule_change(
             db,
             staff=user,
+            center_id=center.id,
             actor_id=admin.id,
             action="day_clear",
-            payload={"date": work_date.isoformat(), "before": before, "after": None},
+            payload={"center": center.name, "date": work_date.isoformat(), "before": before, "after": None},
         )
     db.commit()
     if changed:
@@ -170,6 +190,7 @@ def clear_day(
             db,
             admin,
             user,
+            center,
             "Изменен график работы",
             [f"Дата: {work_date:%d.%m.%Y}", "Стало: день очищен, смены нет"],
         )
@@ -181,22 +202,26 @@ def add_absence(
     user_id: int,
     payload: WorkScheduleAbsenceCreate,
     background_tasks: BackgroundTasks,
+    center_id: int = Query(),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
+    center = service.load_schedule_center(db, user, center_id)
     days = service.check_absence_period(payload.date_from, payload.date_to)
-    before = service.kinds_in_period(db, user, days)
-    changed = service.put_absence(db, user, days, payload.kind)
+    before = service.kinds_in_period(db, user, center.id, days)
+    changed = service.put_absence(db, user, center.id, days, payload.kind)
     # Дни, которые уже стоят в этом виде, не меняются: если стоят все, в журнал ничего не пишем.
     already_kind_days = before.get(payload.kind, 0)
     if already_kind_days != len(days):
         service.audit_schedule_change(
             db,
             staff=user,
+            center_id=center.id,
             actor_id=admin.id,
             action="absence_add",
             payload={
+                "center": center.name,
                 "from": days[0].isoformat(),
                 "to": days[-1].isoformat(),
                 "kind": payload.kind,
@@ -211,6 +236,7 @@ def add_absence(
             db,
             admin,
             user,
+            center,
             "Изменен график работы",
             [
                 f"Период: с {days[0]:%d.%m.%Y} по {days[-1]:%d.%m.%Y}",
@@ -225,18 +251,28 @@ def start_first_shift(
     user_id: int,
     payload: WorkScheduleFirstShift,
     background_tasks: BackgroundTasks,
+    center_id: int = Query(),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
-    anchor_before = user.schedule_anchor_date
-    created = service.restart_pattern(db, user, payload.work_date)
+    center = service.load_schedule_center(db, user, center_id)
+    schedule = user.schedule_in(center.id)
+    if schedule is None or not schedule.schedule_pattern:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Сначала задайте график сотруднику в этом медцентре в разделе «Сотрудники»",
+        )
+    anchor_before = schedule.schedule_anchor_date
+    created = service.restart_pattern(db, user, schedule, payload.work_date)
     service.audit_schedule_change(
         db,
         staff=user,
+        center_id=center.id,
         actor_id=admin.id,
         action="first_shift",
         payload={
+            "center": center.name,
             "work_date": payload.work_date.isoformat(),
             "anchor_before": anchor_before.isoformat() if anchor_before else None,
             "created": created,
@@ -248,10 +284,11 @@ def start_first_shift(
         db,
         admin,
         user,
+        center,
         "Изменен график работы",
         [
             f"Первая смена: {payload.work_date:%d.%m.%Y}",
-            f"График: {user.schedule_pattern}, {service.format_time(user.schedule_start)}-{service.format_time(user.schedule_end)}",
+            f"График: {schedule.schedule_pattern}, {service.format_time(schedule.schedule_start)}-{service.format_time(schedule.schedule_end)}",
             f"Создано смен: {created}",
         ],
     )
@@ -263,23 +300,32 @@ def update_facts(
     user_id: int,
     payload: WorkScheduleFactsUpdate,
     background_tasks: BackgroundTasks,
+    center_id: int = Query(),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> WorkScheduleChangeRead:
     user = service.load_schedule_user(db, user_id)
+    center = service.load_schedule_center(db, user, center_id)
     items = [item.model_dump() for item in payload.items]
     fact_dates = list(dict.fromkeys(item["work_date"] for item in items))
-    facts_before = service.facts_state(db, user, fact_dates)
-    changed = service.put_facts(db, user, items)
+    facts_before = service.facts_state(db, user, center.id, fact_dates)
+    changed = service.put_facts(db, user, center.id, items)
     db.flush()
-    facts_after = service.facts_state(db, user, fact_dates)
+    facts_after = service.facts_state(db, user, center.id, fact_dates)
     fact_changes = [
         {"date": work_date.isoformat(), "before": facts_before.get(work_date), "after": facts_after.get(work_date)}
         for work_date in fact_dates
         if facts_before.get(work_date) != facts_after.get(work_date)
     ]
     if fact_changes:
-        service.audit_schedule_change(db, staff=user, actor_id=admin.id, action="facts_update", payload={"items": fact_changes})
+        service.audit_schedule_change(
+            db,
+            staff=user,
+            center_id=center.id,
+            actor_id=admin.id,
+            action="facts_update",
+            payload={"center": center.name, "items": fact_changes},
+        )
     db.commit()
     if changed:
         lines = [
@@ -291,5 +337,5 @@ def update_facts(
             )
             for item in items
         ]
-        _notify_schedule(background_tasks, db, admin, user, "Изменено фактическое время работы", lines)
+        _notify_schedule(background_tasks, db, admin, user, center, "Изменено фактическое время работы", lines)
     return WorkScheduleChangeRead(changed=changed)

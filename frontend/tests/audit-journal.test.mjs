@@ -99,6 +99,29 @@ test("каждое действие описывается по-русски и�
   );
 });
 
+test("запись медцентра называет его первым: график и дни относятся к одному медцентру", () => {
+  const { ajDescribe } = loadJournal();
+  const describe = (action, payload) => ajDescribe(entry({ action, payload_json: payload }));
+  assert.equal(
+    describe("schedule_create", { staff: "Борис Врачов", center: "Медилэнд", schedule: "2/2, 09:00-20:00", hourly_rate: 350 }),
+    "Медилэнд · 2/2, 09:00-20:00, ставка 350 ₽/ч",
+  );
+  assert.equal(
+    describe("schedule_update", { staff: "Борис Врачов", center: "Мед-Авто", before: "2/2, 09:00-20:00", after: null }),
+    "Мед-Авто · 2/2, 09:00-20:00 → без графика",
+  );
+  assert.equal(
+    describe("day_update", {
+      center: "Медилэнд",
+      date: "2026-11-05",
+      before: { kind: "shift", start: "09:00", end: "20:00" },
+      after: { kind: "dayoff", start: null, end: null },
+    }),
+    "Медилэнд · 05.11.2026: смена 09:00-20:00 → отгул",
+  );
+  assert.equal(describe("rate_update", { staff: "Борис Врачов", before: 300, after: 320 }), "300 ₽/ч → 320 ₽/ч");
+});
+
 test("имя берется из ответа сервера, а без имени — по номеру учетки", () => {
   const { ajStaffLabel } = loadJournal();
   assert.equal(ajStaffLabel(entry()), "Борис Врачов");

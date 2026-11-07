@@ -1,6 +1,6 @@
 """Статус «На работу / С работы»: отметки сотрудника и месячная сводка по дням.
 
-План дня берется из графика (`staff_schedule_days`), факт — из отметок. Отметка, которая
+План дня берется из графика (`staff_schedule_days`) и складывается по медцентрам, в которых сотрудник стоит в этот день; факт — из отметок. Отметка, которая
 перешла через полночь, делится по местным дням. Переработка — факт сверх плана дня.
 """
 
@@ -127,6 +127,15 @@ def fact_minutes_by_user(db: Session, first: date, last: date, now: datetime) ->
     return {user_id: fact_minutes_by_day(entries, first, last, now) for user_id, entries in grouped.items()}
 
 
+def day_kind(rows: list[StaffScheduleDay]) -> str | None:
+    """Вид дня для сводки: смена, если в каком-то медцентре стоит смена; иначе вид первой записи."""
+    if not rows:
+        return None
+    if any(row.kind == "shift" for row in rows):
+        return "shift"
+    return rows[0].kind
+
+
 def month_payload(db: Session, user: User, year: int, month: int, now: datetime) -> dict:
     first, last = schedule.month_bounds(year, month)
 
@@ -137,15 +146,17 @@ def month_payload(db: Session, user: User, year: int, month: int, now: datetime)
             StaffScheduleDay.work_date <= last,
         )
     ).scalars().all()
-    by_date = {row.work_date: row for row in plan_rows}
+    by_date: dict[date, list[StaffScheduleDay]] = defaultdict(list)
+    for row in plan_rows:
+        by_date[row.work_date].append(row)
 
     fact_minutes = fact_minutes_by_day(period_entries(db, first, last, user.id), first, last, now)
 
     days = []
     total_plan = total_fact = total_over = 0
     for day in schedule.days_in_range(first, last):
-        row = by_date.get(day)
-        plan = plan_minutes(row)
+        rows = by_date.get(day, [])
+        plan = sum(plan_minutes(row) for row in rows)
         fact = fact_minutes.get(day, 0)
         over = max(fact - plan, 0)
         total_plan += plan
@@ -154,7 +165,7 @@ def month_payload(db: Session, user: User, year: int, month: int, now: datetime)
         days.append(
             {
                 "work_date": day,
-                "kind": row.kind if row is not None else None,
+                "kind": day_kind(rows),
                 "plan_hours": schedule.minutes_to_hours(plan),
                 "fact_hours": schedule.minutes_to_hours(fact),
                 "overtime_hours": schedule.minutes_to_hours(over),

@@ -1,7 +1,7 @@
-from datetime import date, datetime, time
+from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Numeric, String, Table, Time
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, String, Table
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.security import generate_session_epoch
@@ -45,17 +45,16 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     session_epoch: Mapped[str] = mapped_column(String(32), default=generate_session_epoch)
-    # График смен задаётся при создании учетной записи; у сотрудника без графика все поля пустые.
-    schedule_pattern: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    schedule_start: Mapped[time | None] = mapped_column(Time, nullable=True)
-    schedule_end: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # Ставка за час одна на учетную запись; график смен — отдельно в каждом медцентре (staff_center_schedules).
     hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
-    # Первая смена цикла: с этого дня график по шаблону считается без пропусков.
-    schedule_anchor_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     center: Mapped["Center | None"] = relationship("Center")
     extra_centers: Mapped[list["Center"]] = relationship(
         "Center", secondary=user_extra_centers, order_by="Center.id"
+    )
+    # Графики по медцентрам живут вместе с учетной записью: удаление учетки без записей уводит и их.
+    center_schedules: Mapped[list["StaffCenterSchedule"]] = relationship(
+        "StaffCenterSchedule", cascade="all, delete-orphan", order_by="StaffCenterSchedule.center_id"
     )
     role: Mapped[Role] = relationship(Role)
 
@@ -86,14 +85,6 @@ class User(TimestampMixin, Base):
         centers += [center for center in self.extra_centers if center.id != self.center_id]
         return centers
 
-    @property
-    def schedule(self) -> dict | None:
-        """График сотрудника или None, если его не задали."""
-        if self.schedule_pattern is None:
-            return None
-        return {
-            "pattern": self.schedule_pattern,
-            "shift_start": self.schedule_start,
-            "shift_end": self.schedule_end,
-            "hourly_rate": self.hourly_rate,
-        }
+    def schedule_in(self, center_id: int):
+        """График сотрудника в медцентре или None, если там его не задали."""
+        return next((item for item in self.center_schedules if item.center_id == center_id), None)

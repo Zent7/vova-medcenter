@@ -13,20 +13,25 @@ SCHEDULE_DAY_SOURCES = ("pattern", "manual")
 
 
 class StaffScheduleDay(TimestampMixin, Base):
-    """Запись графика сотрудника на один день.
+    """Запись графика сотрудника в одном медцентре на один день.
 
+    Один сотрудник может работать в двух медцентрах, поэтому день уникален по (сотрудник, медцентр, дата).
     Смены по шаблону не хранятся заранее: их создает кнопка «Создать график», «Назначить первую
     смену» или сохранение графика без первой смены (тогда она ставится на сегодня). Ручные правки,
     отгулы, больничные и отпуска живут тут же.
     """
 
     __tablename__ = "staff_schedule_days"
-    __table_args__ = (UniqueConstraint("user_id", "work_date", name="uq_staff_schedule_days_user_date"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "center_id", "work_date", name="uq_staff_schedule_days_user_center_date"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # Без ON DELETE: учетку с графиком не стираем, как и учетку с записями в программе —
     # удаление отключит ее, а история смен и факта останется.
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # Медцентр, в котором стоит запись. Пусто только у старых записей учетки без медцентра (админ).
+    center_id: Mapped[int | None] = mapped_column(ForeignKey("centers.id"), index=True, nullable=True)
     work_date: Mapped[date] = mapped_column(Date, index=True)
     kind: Mapped[str] = mapped_column(String(12))
     # Плановое время смены; у отгула, больничного и отпуска пусто.

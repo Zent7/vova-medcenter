@@ -43,7 +43,7 @@ function loadSchedule(roleCode = "admin") {
 return {
   appState, wsState, wsCanEdit, wsCanOpen, wsDayValuesToRequest, wsAbsenceRequest, wsFactItemsFromValues,
   wsResolveCreateTarget, wsShiftMonth, wsFormatDateLabel, wsIsWeekend, buildWsHoursChart, wsCellContent,
-  wsEscape, renderWorkScheduleContent,
+  wsEscape, renderWorkScheduleContent, wsRenderCenterTabs, wsWithCenter, wsCenterQuery, wsConflictText, wsStatsKey,
 };`,
   )(appState, canViewWorkSchedule);
 }
@@ -214,15 +214,16 @@ function sampleGrid({ year, month }) {
     month,
     days_in_month: 30,
     can_edit: true,
+    center,
     centers: [center],
     rows: [
       {
         user_id: 1, full_name: "Анна", role_code: "operator", role_name: "Оператор", is_active: true,
-        center, pattern: "4/4", shift_start: "08:00", shift_end: "20:00", days: [day],
+        pattern: "4/4", shift_start: "08:00", shift_end: "20:00", days: [day],
       },
       {
         user_id: 2, full_name: "Борис", role_code: "doctor", role_name: "Врач", is_active: true,
-        center, pattern: null, shift_start: null, shift_end: null, days: [],
+        pattern: null, shift_start: null, shift_end: null, days: [],
       },
     ],
   };
@@ -254,6 +255,74 @@ test("таблица: админ в режиме «Редактировать» 
   assert.match(html, /Закрыть редактирование/);
 });
 
+test("вкладки медцентров: каждый медцентр своя вкладка, активный отмечен, пустой медцентр тоже вкладка", () => {
+  const { wsRenderCenterTabs } = loadSchedule();
+  const centers = [
+    { id: 1, name: "Мед-Авто", color: "#2F6FB3" },
+    { id: 2, name: "Медилэнд", color: "#2E9E6A" },
+    { id: 3, name: "Здравница", color: "#D9822B" },
+  ];
+  const html = wsRenderCenterTabs(centers, 2);
+  for (const center of centers) {
+    assert.match(html, new RegExp(`data-ws-center="${center.id}"`), center.name);
+  }
+  assert.match(html, /class="ws__tab is-active" type="button" aria-pressed="true" data-ws-center="2"/);
+  assert.equal((html.match(/is-active/g) || []).length, 1, "активна одна вкладка");
+  assert.match(wsRenderCenterTabs([], 1), /Медцентры не назначены/);
+});
+
+test("пустой медцентр: вкладка есть, таблица говорит, что сотрудников пока нет, админу — куда добавить", () => {
+  const { wsState, renderWorkScheduleContent } = loadSchedule("admin");
+  const empty = { id: 3, name: "Здравница", color: "#D9822B" };
+  const grid = sampleGrid(currentMonth());
+  grid.center = empty;
+  grid.centers = [{ id: 1, name: "Мед-Авто", color: "#2F6FB3" }, empty];
+  grid.rows = [];
+  wsState.grid = grid;
+  wsState.centers = grid.centers;
+  wsState.centerId = empty.id;
+  const html = renderWorkScheduleContent();
+  assert.match(html, /class="ws__tab is-active" type="button" aria-pressed="true" data-ws-center="3"/);
+  assert.match(html, /В этом медцентре пока нет сотрудников/);
+  assert.match(html, /Добавьте их в разделе «Сотрудники»/);
+});
+
+test("пересечение смен: день в двух медцентрах красный, в подсказке назван второй медцентр", () => {
+  const { wsState, renderWorkScheduleContent, wsConflictText } = loadSchedule("admin");
+  const grid = sampleGrid(currentMonth());
+  grid.rows[0].days[0].conflicts = [{ center_id: 3, center_name: "Здравница", start_time: "09:00", end_time: "21:00" }];
+  wsState.grid = grid;
+  wsState.centers = grid.centers;
+  wsState.centerId = grid.center.id;
+  const html = renderWorkScheduleContent();
+  assert.match(html, /<td class="ws__cell[^"]*is-conflict[^"]*"/, "клетка с пересечением красная");
+  assert.equal((html.match(/is-conflict/g) || []).length, 1, "только одна клетка с пересечением");
+  assert.match(html, /Здравница 09:00–21:00/, "подсказка называет второй медцентр");
+  assert.match(html, /ws__key--conflict/, "в легенде есть ключ красного цвета");
+  assert.equal(wsConflictText({ conflicts: [] }), "");
+  assert.equal(wsConflictText({}), "");
+});
+
+test("запросы графика называют медцентр таблицы: правка, отпуск, первая смена, факт, месяц и статистика", () => {
+  const { wsState, wsCenterQuery, wsWithCenter, wsStatsKey } = loadSchedule("admin");
+  wsState.grid = { center: { id: 3, name: "Здравница" }, centers: [] };
+  wsState.centerId = 3;
+  assert.equal(wsCenterQuery(), "center_id=3");
+  assert.equal(wsWithCenter("/work-schedule/7/days/2026-11-05"), "/work-schedule/7/days/2026-11-05?center_id=3");
+  wsState.year = 2026;
+  wsState.month = 11;
+  assert.equal(wsStatsKey(), "2026-11-3", "статистика кэшируется по медцентру");
+  wsState.centerId = null;
+  wsState.grid = null;
+  assert.equal(wsWithCenter("/work-schedule/7/facts"), "/work-schedule/7/facts", "без медцентра путь не меняется");
+
+  for (const name of ["days", "absences", "first-shift", "facts"]) {
+    assert.ok(scheduleSource.includes(`wsWithCenter(\`/work-schedule/\${encodeURIComponent(userId)}/${name}`), name);
+  }
+  assert.ok(scheduleSource.includes("center_id: wsCenterId()"), "«Создать график» — для медцентра таблицы");
+  assert.ok(scheduleSource.includes('${query ? `&${query}` : ""}'), "месяц и статистика — с медцентром");
+});
+
 test("app.js: меню, загрузка и страница ведут на модуль графика, старой страницы нет", () => {
   assert.match(appSource, /if \(item\.id === "schedule"\) return canViewWorkSchedule\(\);/);
   assert.match(appSource, /\(appState\.page === "schedule" && !canViewWorkSchedule\(\)\) \|\|/);
@@ -282,6 +351,8 @@ test("styles.css: стили таблицы, окна дня и статисти
   assert.match(stylesSource, /\.ws__table \{/);
   assert.match(stylesSource, /\.ws-chart__plan \{/);
   assert.match(stylesSource, /#actionModal\.modal--schedule-day \.modal__card \{/);
+  assert.match(stylesSource, /\.ws__tab\.is-active \{/);
+  assert.match(stylesSource, /\.ws__cell\.is-conflict \{/);
 });
 
 test("API графика: пути совпадают с маршрутами backend", () => {

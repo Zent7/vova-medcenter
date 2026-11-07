@@ -4,6 +4,7 @@
 Запись появляется, только если правка что-то поменяла: повторное сохранение того же дня, того же
 отпуска или той же ставки в журнал не попадает, и отказ в правке (ошибка проверки) тоже ничего
 не пишет. «Назначить первую смену» — отдельное действие админа, оно пишется каждый раз.
+График у каждого медцентра свой: запись несет медцентр, которого касается правка.
 Читать журнал может только админ (см. test_admin_only_access).
 """
 
@@ -29,8 +30,9 @@ from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models.audit_log import AuditLog  # noqa: E402
 from app.models.center import Center  # noqa: E402
+from app.models.staff_center_schedule import StaffCenterSchedule  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
-from app.schemas.user_admin import StaffScheduleCreate, StaffScheduleUpdate, StaffUserCreate  # noqa: E402
+from app.schemas.user_admin import StaffCenterScheduleCreate, StaffScheduleUpdate, StaffUserCreate  # noqa: E402
 from app.schemas.work_schedule import (  # noqa: E402
     WorkScheduleAbsenceCreate,
     WorkScheduleDayUpdate,
@@ -70,10 +72,12 @@ class ScheduleAuditTests(unittest.TestCase):
                 full_name="Борис Врачов",
                 is_active=True,
                 center_id=center.id,
-                schedule_pattern="2/2",
-                schedule_start=time(9),
-                schedule_end=time(20),
                 hourly_rate=Decimal("300"),
+                center_schedules=[
+                    StaffCenterSchedule(
+                        center_id=center.id, schedule_pattern="2/2", schedule_start=time(9), schedule_end=time(20)
+                    )
+                ],
             )
             db.add_all([admin, boris])
             db.commit()
@@ -97,10 +101,16 @@ class ScheduleAuditTests(unittest.TestCase):
     def _boris(self, db):
         return db.get(User, self.boris_id)
 
-    def _update_schedule(self, db, schedule):
-        staff_routes.update_staff_schedule(
+    def _boris_schedule(self, db):
+        return self._boris(db).schedule_in(self.center_id)
+
+    def _item(self, pattern="2/2", start=time(9), end=time(20)) -> StaffCenterScheduleCreate:
+        return StaffCenterScheduleCreate(center_id=self.center_id, pattern=pattern, shift_start=start, shift_end=end)
+
+    def _update_schedules(self, db, schedules, hourly_rate=None):
+        return staff_routes.update_staff_schedules(
             user_id=self.boris_id,
-            payload=StaffScheduleUpdate(schedule=schedule),
+            payload=StaffScheduleUpdate(schedules=schedules, hourly_rate=hourly_rate),
             background_tasks=BackgroundTasks(),
             admin=self._admin(db),
             db=db,
@@ -112,6 +122,7 @@ class ScheduleAuditTests(unittest.TestCase):
             work_date=work_date,
             payload=WorkScheduleDayUpdate(kind=kind, start_time=None, end_time=None),
             background_tasks=BackgroundTasks(),
+            center_id=self.center_id,
             admin=self._admin(db),
             db=db,
         )
@@ -121,11 +132,12 @@ class ScheduleAuditTests(unittest.TestCase):
             user_id=self.boris_id,
             work_date=work_date,
             background_tasks=BackgroundTasks(),
+            center_id=self.center_id,
             admin=self._admin(db),
             db=db,
         )
 
-    def test_new_schedule_is_logged_with_pattern_hours_and_rate(self):
+    def test_new_schedule_is_logged_with_center_pattern_hours_and_rate(self):
         with self.Session() as db:
             payload = StaffUserCreate(
                 login="viktor",
@@ -133,9 +145,8 @@ class ScheduleAuditTests(unittest.TestCase):
                 full_name="Виктор",
                 role_code="doctor",
                 center_ids=[self.center_id],
-                schedule=StaffScheduleCreate(
-                    pattern="3/3", shift_start=time(8), shift_end=time(20), hourly_rate=Decimal("250")
-                ),
+                schedules=[self._item("3/3", time(8), time(20))],
+                hourly_rate=Decimal("250"),
             )
             created = staff_routes.create_staff(
                 payload=payload, background_tasks=BackgroundTasks(), current_user=self._admin(db), db=db
@@ -145,7 +156,10 @@ class ScheduleAuditTests(unittest.TestCase):
             self.assertEqual(entry.entity_id, created.id)
             self.assertEqual(entry.user_id, self.admin_id)
             self.assertEqual(entry.center_id, self.center_id)
-            self.assertEqual(entry.payload_json, {"staff": "Виктор", "schedule": "3/3, 08:00-20:00", "hourly_rate": 250.0})
+            self.assertEqual(
+                entry.payload_json,
+                {"staff": "Виктор", "center": "Центр А", "schedule": "3/3, 08:00-20:00", "hourly_rate": 250.0},
+            )
 
     def test_staff_without_schedule_is_not_logged(self):
         with self.Session() as db:
@@ -158,30 +172,29 @@ class ScheduleAuditTests(unittest.TestCase):
     def test_changed_times_and_rate_are_logged_as_separate_entries(self):
         with self.Session() as db:
             # Первая смена уже назначена: сохранение того же графика ничего не пишет.
-            self._boris(db).schedule_anchor_date = date(2026, 11, 2)
+            self._boris_schedule(db).schedule_anchor_date = date(2026, 11, 2)
             db.commit()
             # Те же время и ставка: правки нет, записи нет.
-            self._update_schedule(
-                db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("300"))
-            )
+            self._update_schedules(db, [self._item()], Decimal("300"))
             self.assertEqual(self._entries(db), [])
 
             # Только ставка: одна запись rate_update.
-            self._update_schedule(
-                db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("320"))
-            )
+            self._update_schedules(db, [self._item()], Decimal("320"))
             self.assertEqual(self._entries(db, "schedule_update"), [])
             (rate,) = self._entries(db, "rate_update")
             self.assertEqual(rate.payload_json, {"staff": "Борис Врачов", "before": 300.0, "after": 320.0})
 
             # Время и ставка вместе: две записи, у каждой свое было и стало.
-            self._update_schedule(
-                db, StaffScheduleCreate(pattern="3/3", shift_start=time(8), shift_end=time(20), hourly_rate=Decimal("350"))
-            )
+            self._update_schedules(db, [self._item("3/3", time(8), time(20))], Decimal("350"))
             (schedule,) = self._entries(db, "schedule_update")
             self.assertEqual(
                 schedule.payload_json,
-                {"staff": "Борис Врачов", "before": "2/2, 09:00-20:00", "after": "3/3, 08:00-20:00"},
+                {
+                    "staff": "Борис Врачов",
+                    "center": "Центр А",
+                    "before": "2/2, 09:00-20:00",
+                    "after": "3/3, 08:00-20:00",
+                },
             )
             self.assertEqual(
                 self._entries(db, "rate_update")[-1].payload_json,
@@ -189,7 +202,7 @@ class ScheduleAuditTests(unittest.TestCase):
             )
 
             # График снят целиком: ставка тоже пустеет.
-            self._update_schedule(db, None)
+            self._update_schedules(db, [], None)
             self.assertEqual(self._entries(db, "schedule_update")[-1].payload_json["after"], "без графика")
             self.assertEqual(
                 self._entries(db, "rate_update")[-1].payload_json,
@@ -198,7 +211,7 @@ class ScheduleAuditTests(unittest.TestCase):
 
     def test_day_edit_is_logged_with_what_it_was_and_what_it_is_now(self):
         with self.Session() as db:
-            service.put_day(db, self._boris(db), date(2026, 11, 5), "shift", time(9), time(20))
+            service.put_day(db, self._boris(db), self.center_id, date(2026, 11, 5), "shift", time(9), time(20))
             db.commit()
 
             self._update_day(db, date(2026, 11, 5), "dayoff")
@@ -206,6 +219,7 @@ class ScheduleAuditTests(unittest.TestCase):
             self.assertEqual(
                 entry.payload_json,
                 {
+                    "center": "Центр А",
                     "date": "2026-11-05",
                     "before": {"kind": "shift", "start": "09:00", "end": "20:00", "fact_start": None, "fact_end": None},
                     "after": {"kind": "dayoff", "start": None, "end": None, "fact_start": None, "fact_end": None},
@@ -224,7 +238,7 @@ class ScheduleAuditTests(unittest.TestCase):
 
     def test_cleared_day_is_logged_once(self):
         with self.Session() as db:
-            service.put_day(db, self._boris(db), date(2026, 11, 6), "shift", time(9), time(20))
+            service.put_day(db, self._boris(db), self.center_id, date(2026, 11, 6), "shift", time(9), time(20))
             db.commit()
 
             self._clear_day(db, date(2026, 11, 6))
@@ -238,8 +252,8 @@ class ScheduleAuditTests(unittest.TestCase):
     def test_absence_records_how_the_period_looked_before(self):
         with self.Session() as db:
             boris = self._boris(db)
-            service.put_day(db, boris, date(2026, 11, 10), "shift", time(9), time(20))
-            service.put_day(db, boris, date(2026, 11, 11), "dayoff", None, None)
+            service.put_day(db, boris, self.center_id, date(2026, 11, 10), "shift", time(9), time(20))
+            service.put_day(db, boris, self.center_id, date(2026, 11, 11), "dayoff", None, None)
             db.commit()
 
             schedule_routes.add_absence(
@@ -248,6 +262,7 @@ class ScheduleAuditTests(unittest.TestCase):
                     kind="vacation", date_from=date(2026, 11, 10), date_to=date(2026, 11, 12)
                 ),
                 background_tasks=BackgroundTasks(),
+                center_id=self.center_id,
                 admin=self._admin(db),
                 db=db,
             )
@@ -255,6 +270,7 @@ class ScheduleAuditTests(unittest.TestCase):
             self.assertEqual(
                 entry.payload_json,
                 {
+                    "center": "Центр А",
                     "from": "2026-11-10",
                     "to": "2026-11-12",
                     "kind": "vacation",
@@ -271,6 +287,7 @@ class ScheduleAuditTests(unittest.TestCase):
                     user_id=self.boris_id,
                     payload=request,
                     background_tasks=BackgroundTasks(),
+                    center_id=self.center_id,
                     admin=self._admin(db),
                     db=db,
                 )
@@ -281,19 +298,15 @@ class ScheduleAuditTests(unittest.TestCase):
     def test_first_shift_started_by_saving_the_schedule_is_logged_once(self):
         with self.Session() as db, mock.patch("app.services.work_schedule.local_today", return_value=date(2026, 11, 7)):
             # График есть, первой смены нет: сохранение ставит ее на сегодня и пишет в журнал.
-            self._update_schedule(
-                db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("300"))
-            )
+            self._update_schedules(db, [self._item()], Decimal("300"))
             (entry,) = self._entries(db, "first_shift")
             self.assertIsNone(entry.payload_json["anchor_before"])
             self.assertEqual(entry.payload_json["work_date"], "2026-11-07")
             self.assertGreater(entry.payload_json["created"], 0)
-            self.assertEqual(self._boris(db).schedule_anchor_date, date(2026, 11, 7))
+            self.assertEqual(self._boris_schedule(db).schedule_anchor_date, date(2026, 11, 7))
 
             # Второе сохранение первую смену не трогает и в журнал ничего не добавляет.
-            self._update_schedule(
-                db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("300"))
-            )
+            self._update_schedules(db, [self._item()], Decimal("300"))
             self.assertEqual(len(self._entries(db, "first_shift")), 1)
 
     def test_first_shift_is_logged_with_the_previous_start(self):
@@ -303,6 +316,7 @@ class ScheduleAuditTests(unittest.TestCase):
                     user_id=self.boris_id,
                     payload=WorkScheduleFirstShift(work_date=work_date),
                     background_tasks=BackgroundTasks(),
+                    center_id=self.center_id,
                     admin=self._admin(db),
                     db=db,
                 )
@@ -316,10 +330,13 @@ class ScheduleAuditTests(unittest.TestCase):
     def test_fact_is_logged_only_for_days_whose_fact_changed(self):
         with self.Session() as db:
             boris = self._boris(db)
-            service.put_day(db, boris, date(2026, 11, 3), "shift", time(9), time(20))
-            service.put_day(db, boris, date(2026, 11, 4), "shift", time(9), time(20))
+            service.put_day(db, boris, self.center_id, date(2026, 11, 3), "shift", time(9), time(20))
+            service.put_day(db, boris, self.center_id, date(2026, 11, 4), "shift", time(9), time(20))
             service.put_facts(
-                db, boris, [{"work_date": date(2026, 11, 3), "start_time": time(9, 30), "end_time": time(20)}]
+                db,
+                boris,
+                self.center_id,
+                [{"work_date": date(2026, 11, 3), "start_time": time(9, 30), "end_time": time(20)}],
             )
             db.commit()
 
@@ -332,17 +349,19 @@ class ScheduleAuditTests(unittest.TestCase):
                     ]
                 ),
                 background_tasks=BackgroundTasks(),
+                center_id=self.center_id,
                 admin=self._admin(db),
                 db=db,
             )
             (entry,) = self._entries(db, "facts_update")
             self.assertEqual(
-                entry.payload_json, {"items": [{"date": "2026-11-04", "before": None, "after": "09:00-21:00"}]}
+                entry.payload_json,
+                {"center": "Центр А", "items": [{"date": "2026-11-04", "before": None, "after": "09:00-21:00"}]},
             )
 
     def test_month_generation_is_logged_for_each_employee_who_got_shifts(self):
         with self.Session() as db:
-            self._boris(db).schedule_anchor_date = date(2026, 11, 1)
+            self._boris_schedule(db).schedule_anchor_date = date(2026, 11, 1)
             operator = db.execute(select(Role).where(Role.code == "operator")).scalar_one()
             # У Анны график есть, а первой смены нет: в журнал она не попадает, в ответе — в списке «без первой смены».
             db.add(
@@ -353,26 +372,29 @@ class ScheduleAuditTests(unittest.TestCase):
                     full_name="Анна Операторова",
                     is_active=True,
                     center_id=self.center_id,
-                    schedule_pattern="4/4",
-                    schedule_start=time(8),
-                    schedule_end=time(20),
+                    center_schedules=[
+                        StaffCenterSchedule(
+                            center_id=self.center_id, schedule_pattern="4/4", schedule_start=time(8), schedule_end=time(20)
+                        )
+                    ],
                 )
             )
             db.commit()
 
-            result = service.generate_month(db, 2026, 11, actor_id=self.admin_id)
+            result = service.generate_month(db, db.get(Center, self.center_id), 2026, 11, actor_id=self.admin_id)
 
             (entry,) = self._entries(db, "month_generate")
             self.assertEqual(entry.entity_id, self.boris_id)
             self.assertEqual(entry.user_id, self.admin_id)
-            self.assertEqual(entry.payload_json, {"year": 2026, "month": 11, "created": result["created"]})
+            self.assertEqual(
+                entry.payload_json,
+                {"center": "Центр А", "year": 2026, "month": 11, "created": result["created"]},
+            )
             self.assertEqual(result["users_without_start"], ["Анна Операторова"])
 
     def test_admin_reads_the_entries_with_the_author_name(self):
         with self.Session() as db:
-            self._update_schedule(
-                db, StaffScheduleCreate(pattern="2/2", shift_start=time(9), shift_end=time(20), hourly_rate=Decimal("320"))
-            )
+            self._update_schedules(db, [self._item()], Decimal("320"))
             rows = audit_routes.list_audit_logs(
                 entity_type="staff_schedule", entity_id=self.boris_id, action="rate_update", limit=10, db=db
             )
@@ -405,10 +427,12 @@ class StaffDeleteAuditTests(unittest.TestCase):
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         with self.Session() as db:
+            center = Center(code="center-a", name="Центр А")
             admin_role = Role(code="admin", name="admin")
             doctor_role = Role(code="doctor", name="doctor")
-            db.add_all([admin_role, doctor_role])
+            db.add_all([center, admin_role, doctor_role])
             db.flush()
+            self.center_id = center.id
             db.add(
                 User(
                     role_id=admin_role.id,
@@ -430,10 +454,20 @@ class StaffDeleteAuditTests(unittest.TestCase):
                         password_hash=hash_password("secret123"),
                         full_name=full_name,
                         is_active=True,
-                        schedule_pattern="2/2" if scheduled else None,
-                        schedule_start=time(9) if scheduled else None,
-                        schedule_end=time(20) if scheduled else None,
+                        center_id=center.id,
                         hourly_rate=Decimal("300") if scheduled else None,
+                        center_schedules=(
+                            [
+                                StaffCenterSchedule(
+                                    center_id=center.id,
+                                    schedule_pattern="2/2",
+                                    schedule_start=time(9),
+                                    schedule_end=time(20),
+                                )
+                            ]
+                            if scheduled
+                            else []
+                        ),
                     )
                 )
             db.commit()
@@ -458,9 +492,10 @@ class StaffDeleteAuditTests(unittest.TestCase):
             (entry,) = self._staff_delete_entries(db)
             self.assertEqual(entry.entity_id, clean_id)
             self.assertEqual(entry.user_id, admin_id)
+            self.assertEqual(entry.center_id, self.center_id)
             self.assertEqual(
                 entry.payload_json,
-                {"staff": "Без записей", "schedule": "2/2, 09:00-20:00", "hourly_rate": 300.0},
+                {"staff": "Без записей", "schedule": "Центр А: 2/2, 09:00-20:00", "hourly_rate": 300.0},
             )
 
     def test_deleted_account_without_schedule_is_not_logged(self):
@@ -475,7 +510,7 @@ class StaffDeleteAuditTests(unittest.TestCase):
     def test_account_kept_as_disabled_is_not_logged_as_deleted(self):
         with self.Session() as db:
             worked = self._user(db, "worked")
-            service.put_day(db, worked, date(2026, 11, 5), "dayoff", None, None)
+            service.put_day(db, worked, self.center_id, date(2026, 11, 5), "dayoff", None, None)
             db.commit()
             worked_id = worked.id
 

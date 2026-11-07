@@ -3520,13 +3520,13 @@ async function updateDemoStaffCenters(userId, centerIds) {
   }
 }
 
-// Сохраняет график существующего сотрудника; null снимает его. Ошибку возвращает, а не
-// выводит через перерисовку: форма остается с тем, что ввел админ.
-async function updateDemoStaffSchedule(userId, schedule) {
+// Сохраняет графики сотрудника по медцентрам и ставку целиком: пустой список снимает все графики.
+// Ошибку возвращает, а не выводит через перерисовку: форма остается с тем, что ввел админ.
+async function updateDemoStaffSchedule(userId, payload) {
   try {
-    const updatedUser = await apiRequest(`/staff/${encodeURIComponent(userId)}/schedule`, {
+    const updatedUser = await apiRequest(`/staff/${encodeURIComponent(userId)}/schedules`, {
       method: "PUT",
-      body: JSON.stringify({ schedule }),
+      body: JSON.stringify(payload),
       headers: {},
     });
     data.staffUsers = (data.staffUsers || []).map((user) => (Number(user.id) === Number(userId) ? updatedUser : user));
@@ -3534,7 +3534,8 @@ async function updateDemoStaffSchedule(userId, schedule) {
     persistDemoState();
     renderApp();
     const name = updatedUser.full_name || updatedUser.login || userId;
-    showToast(schedule ? `График сотрудника ${name} сохранен` : `График сотрудника ${name} снят`);
+    const hasSchedules = (payload.schedules || []).length > 0;
+    showToast(hasSchedules ? `График сотрудника ${name} сохранен` : `График сотрудника ${name} снят`);
     return "";
   } catch (error) {
     return humanizeApiError(error, "Не удалось сохранить график");
@@ -7362,30 +7363,42 @@ function formatStaffTime(value) {
   return String(value || "").slice(0, 5);
 }
 
-// Сводка графика по полям формы, пока их заполняют.
-function describeStaffScheduleDraft(form) {
-  const pattern = String(form.elements.schedule_pattern?.value || "");
-  const start = String(form.elements.schedule_start?.value || "");
-  const end = String(form.elements.schedule_end?.value || "");
-  const rate = String(form.elements.hourly_rate?.value || "").trim();
-  if (!pattern && !start && !end && !rate) return "График не задан";
-  return [
-    pattern || "смена не выбрана",
-    start && end ? `${start}–${end}` : "время не задано",
-    rate ? `${rate.replace(",", ".")} ₽/ч` : "ставка не задана",
-  ].join(" · ");
+// Медцентры, отмеченные в форме создания: в них и задают графики. Для админа центров нет.
+function checkedStaffCenters(form) {
+  if (form.elements.role_code?.value === "admin") return [];
+  const checked = new Set(Array.from(form.querySelectorAll('input[name="center_ids"]:checked')).map((box) => Number(box.value)));
+  return getAssignableCenters().filter((center) => checked.has(Number(center.id)));
 }
 
-// График заполняют вручную: смена, «со скольки – до скольки» и ставка часа (по желанию).
-// Ничего не заполнено — графика нет; заполнено частично — сообщаем, чего не хватает.
-function readStaffScheduleFromForm(form) {
-  const pattern = String(form.elements.schedule_pattern?.value || "").trim();
-  const start = String(form.elements.schedule_start?.value || "").trim();
-  const end = String(form.elements.schedule_end?.value || "").trim();
-  const rawRate = String(form.elements.hourly_rate?.value || "").trim().replace(",", ".");
-  if (!pattern && !start && !end && !rawRate) return { schedule: null };
-  if (!pattern) return { error: "Выберите смену: 2/2, 3/3, 4/4, 5/2 или 6/1." };
-  if (!start || !end) return { error: "Укажите, со скольки и до скольки работает сотрудник." };
+// Значения полей графика по медцентрам и общая ставка. Из формы их собирает collectStaffScheduleValues.
+function collectStaffScheduleValues(form, centers = []) {
+  const byCenter = {};
+  for (const center of centers) {
+    const names = staffScheduleNames(center.id);
+    byCenter[center.id] = {
+      pattern: form.elements[names.pattern]?.value || "",
+      start: form.elements[names.start]?.value || "",
+      end: form.elements[names.end]?.value || "",
+    };
+  }
+  return { byCenter, rate: form.elements.hourly_rate?.value || "" };
+}
+
+// Графики: в медцентрах, где поля заполнены, и ставка. Пустой медцентр графика не имеет; заполнен частично —
+// сообщаем, чего не хватает. Ничего не заполнено — графиков нет, сохранение их снимает.
+function readStaffSchedulesFromValues(centers, values) {
+  const schedules = [];
+  for (const center of centers) {
+    const entry = values.byCenter?.[center.id] || {};
+    const pattern = String(entry.pattern || "").trim();
+    const start = String(entry.start || "").trim();
+    const end = String(entry.end || "").trim();
+    if (!pattern && !start && !end) continue;
+    if (!pattern) return { error: `${center.name}: выберите смену: 2/2, 3/3, 4/4, 5/2 или 6/1.` };
+    if (!start || !end) return { error: `${center.name}: укажите, со скольки и до скольки работает сотрудник.` };
+    schedules.push({ center_id: Number(center.id), pattern, shift_start: start, shift_end: end });
+  }
+  const rawRate = String(values.rate || "").trim().replace(",", ".");
   let hourlyRate = null;
   if (rawRate) {
     if (!/^\d+(\.\d{1,2})?$/.test(rawRate)) {
@@ -7393,7 +7406,34 @@ function readStaffScheduleFromForm(form) {
     }
     hourlyRate = Number(rawRate);
   }
-  return { schedule: { pattern, shift_start: start, shift_end: end, hourly_rate: hourlyRate } };
+  return { schedules, hourly_rate: hourlyRate };
+}
+
+// Сводка по полям, пока их заполняют: строка на медцентр и ставка.
+function describeStaffScheduleValues(centers, values) {
+  const lines = [];
+  for (const center of centers) {
+    const entry = values.byCenter?.[center.id] || {};
+    const pattern = String(entry.pattern || "").trim();
+    const start = String(entry.start || "").trim();
+    const end = String(entry.end || "").trim();
+    if (!pattern && !start && !end) continue;
+    lines.push(`${center.name}: ${pattern || "смена не выбрана"} · ${start && end ? `${start}–${end}` : "время не задано"}`);
+  }
+  const rate = String(values.rate || "").trim();
+  if (rate) lines.push(`${rate.replace(",", ".")} ₽/ч`);
+  return lines.length ? lines.join("; ") : "График не задан";
+}
+
+// Сводка для формы создания: только медцентры, отмеченные выше.
+function describeStaffScheduleDraft(form) {
+  const centers = checkedStaffCenters(form);
+  return describeStaffScheduleValues(centers, collectStaffScheduleValues(form, centers));
+}
+
+// Читает графики из формы: для создания — отмеченные медцентры, для изменения — медцентры сотрудника.
+function readStaffScheduleFromForm(form, centers = []) {
+  return readStaffSchedulesFromValues(centers, collectStaffScheduleValues(form, centers));
 }
 
 // Панель графика открывается сама, если при отправке в ней что-то не так.
@@ -7407,52 +7447,87 @@ function showStaffScheduleError(message) {
   }
 }
 
-// Поля графика одинаковы при создании и при изменении: смена, время и ставка.
-// schedule — график сотрудника из GET /staff или null, если поля пустые.
-function renderStaffScheduleFields(schedule = null) {
+// Имена полей графика одного медцентра: у каждого медцентра свои поля, в одной форме их несколько.
+function staffScheduleNames(centerId) {
+  return {
+    pattern: `schedule_pattern_${centerId}`,
+    start: `schedule_start_${centerId}`,
+    end: `schedule_end_${centerId}`,
+  };
+}
+
+// График в одном медцентре: смена и время «со скольки – до скольки». Выключенный блок — медцентр,
+// который в форме не отмечен: заполнить его нельзя, пока он не отмечен.
+function renderStaffCenterScheduleBlock(center, schedule = null, disabled = false) {
+  const names = staffScheduleNames(center.id);
   const pattern = schedule?.pattern || "";
   const start = schedule ? formatStaffTime(schedule.shift_start) : "";
   const end = schedule ? formatStaffTime(schedule.shift_end) : "";
-  const rate = schedule && schedule.hourly_rate != null ? String(Number(schedule.hourly_rate)) : "";
   return `
-    <div class="employee-schedule__patterns" role="radiogroup" aria-label="Смена">
-      ${["2/2", "3/3", "4/4", "5/2", "6/1"]
-        .map(
-          (value) => `
-            <label class="employee-schedule__pattern">
-              <input type="radio" name="schedule_pattern" value="${value}" ${value === pattern ? "checked" : ""} />
-              <span>${value}</span>
-            </label>`,
-        )
-        .join("")}
+    <fieldset class="employee-schedule__center" data-schedule-center="${escapeHtml(center.id)}" ${disabled ? "disabled" : ""}>
+      <legend>${escapeHtml(center.name)}</legend>
+      <div class="employee-schedule__patterns" role="radiogroup" aria-label="Смена: ${escapeHtml(center.name)}">
+        ${["2/2", "3/3", "4/4", "5/2", "6/1"]
+          .map(
+            (value) => `
+              <label class="employee-schedule__pattern">
+                <input type="radio" name="${names.pattern}" value="${value}" ${value === pattern ? "checked" : ""} />
+                <span>${value}</span>
+              </label>`,
+          )
+          .join("")}
+      </div>
+      <div class="employee-schedule__times">
+        <label class="field">
+          <span>Со скольки</span>
+          <input type="time" name="${names.start}" value="${escapeHtml(start)}" />
+        </label>
+        <label class="field">
+          <span>До скольки</span>
+          <input type="time" name="${names.end}" value="${escapeHtml(end)}" />
+        </label>
+      </div>
+    </fieldset>
+  `;
+}
+
+// Поля графика: блок на каждый медцентр и одна ставка на учетную запись.
+// centers — медцентры для блоков; schedules — графики из GET /staff; enabledIds — медцентры с открытыми полями
+// (null — все открыты).
+function renderStaffScheduleFields(centers = [], schedules = [], hourlyRate = null, enabledIds = null) {
+  const byCenter = new Map((schedules || []).map((item) => [Number(item.center_id), item]));
+  const enabled = enabledIds ? new Set(enabledIds.map(Number)) : null;
+  const blocks = (centers || [])
+    .map((center) =>
+      renderStaffCenterScheduleBlock(
+        center,
+        byCenter.get(Number(center.id)) || null,
+        enabled ? !enabled.has(Number(center.id)) : false,
+      ),
+    )
+    .join("");
+  const rate = hourlyRate != null ? String(Number(hourlyRate)) : "";
+  return `
+    <div class="employee-schedule__centers">
+      ${blocks || `<div class="employee-schedule__hint">Сначала отметьте медцентры, в которых работает сотрудник.</div>`}
     </div>
-    <div class="employee-schedule__times">
-      <label class="field">
-        <span>Со скольки</span>
-        <input type="time" name="schedule_start" value="${escapeHtml(start)}" />
-      </label>
-      <label class="field">
-        <span>До скольки</span>
-        <input type="time" name="schedule_end" value="${escapeHtml(end)}" />
-      </label>
-      <label class="field">
-        <span>Ставка, ₽ в час</span>
-        <input type="text" name="hourly_rate" inputmode="decimal" placeholder="например, 350" value="${escapeHtml(rate)}" />
-      </label>
-    </div>
+    <label class="field employee-schedule__rate">
+      <span>Ставка, ₽ в час (одна на сотрудника)</span>
+      <input type="text" name="hourly_rate" inputmode="decimal" placeholder="например, 350" value="${escapeHtml(rate)}" />
+    </label>
     <div class="employee-schedule__hint">Смену выбирают вручную. Время может идти через полночь, например с 20:00 до 08:00.</div>
   `;
 }
 
-// Панель графика у уже созданного сотрудника: та же панель, что в форме создания,
-// с его текущими значениями. Пустые поля при сохранении снимают график.
+// Панель графика у уже созданного сотрудника: блок на каждый его медцентр с текущими значениями.
+// Пустые поля медцентра при сохранении снимают его график; пустая ставка ее убирает.
 function renderStaffScheduleEditForm(user) {
   return `
     <form class="employee-schedule-edit" data-staff-schedule-form="${escapeHtml(user.id)}">
       <fieldset class="employee-schedule">
-        <legend>График работы</legend>
-        ${renderStaffScheduleFields(user.schedule)}
-        <div class="employee-schedule__hint">Если смена и время пустые, график снимается.</div>
+        <legend>График работы по медцентрам</legend>
+        ${renderStaffScheduleFields(user.centers || [], user.schedules || [], user.hourly_rate)}
+        <div class="employee-schedule__hint">Если смена и время в медцентре пустые, его график снимается.</div>
         <div class="note employee-note employee-note--error hidden" data-staff-schedule-error></div>
         <div class="actions">
           <button class="primary-button" type="submit">Сохранить график</button>
@@ -7464,14 +7539,17 @@ function renderStaffScheduleEditForm(user) {
   `;
 }
 
-// Очищает поля графика в любой форме, где они есть: и в создании, и в изменении.
+// Очищает поля графика во всех блоках медцентров и ставку в любой форме, где они есть.
 function clearStaffScheduleFields(form) {
-  form.querySelectorAll('input[name="schedule_pattern"]').forEach((radio) => {
+  form.querySelectorAll('input[type="radio"][name^="schedule_pattern_"]').forEach((radio) => {
     radio.checked = false;
   });
-  form.elements.schedule_start.value = "";
-  form.elements.schedule_end.value = "";
-  form.elements.hourly_rate.value = "";
+  form.querySelectorAll('input[type="time"][name^="schedule_"]').forEach((input) => {
+    input.value = "";
+  });
+  form.querySelectorAll('input[name="hourly_rate"]').forEach((input) => {
+    input.value = "";
+  });
 }
 
 function showStaffScheduleEditError(form, message) {
@@ -7591,7 +7669,7 @@ function renderEmployeePage() {
                   </div>
                   <fieldset class="employee-schedule field--wide hidden" id="employeeSchedule">
                     <legend>График работы</legend>
-                    ${renderStaffScheduleFields()}
+                    ${renderStaffScheduleFields(getAssignableCenters(), [], null, [])}
                     <div class="note employee-note employee-note--error hidden" id="employeeScheduleError"></div>
                     <div class="actions">
                       <button class="ghost-button" type="button" id="employeeScheduleClear">Очистить график</button>
@@ -13661,6 +13739,20 @@ function bindContentEvents() {
       if (scheduleSummary) scheduleSummary.textContent = describeStaffScheduleDraft(employeeCreateForm);
       scheduleNote?.classList.add("hidden");
     };
+    // Заполнять график можно только в медцентрах, которые отмечены: остальные блоки выключены.
+    const syncScheduleCenters = () => {
+      const enabled = new Set(checkedStaffCenters(employeeCreateForm).map((center) => String(center.id)));
+      employeeCreateForm.querySelectorAll("[data-schedule-center]").forEach((block) => {
+        block.disabled = !enabled.has(String(block.dataset.scheduleCenter));
+      });
+    };
+    const onCentersChanged = () => {
+      syncScheduleCenters();
+      refreshScheduleSummary();
+    };
+    centerBoxes.forEach((box) => box.addEventListener("change", onCentersChanged));
+    employeeCreateForm.elements.role_code?.addEventListener("change", onCentersChanged);
+    syncScheduleCenters();
     schedulePanel?.addEventListener("input", refreshScheduleSummary);
     schedulePanel?.addEventListener("change", refreshScheduleSummary);
     document.getElementById("employeeScheduleClear")?.addEventListener("click", () => {
@@ -13672,7 +13764,7 @@ function bindContentEvents() {
       event.preventDefault();
       const formData = new FormData(employeeCreateForm);
       const roleCode = String(formData.get("role_code") || "").trim();
-      const staffSchedule = readStaffScheduleFromForm(employeeCreateForm);
+      const staffSchedule = readStaffScheduleFromForm(employeeCreateForm, checkedStaffCenters(employeeCreateForm));
       if (staffSchedule.error) {
         showStaffScheduleError(staffSchedule.error);
         return;
@@ -13684,7 +13776,8 @@ function bindContentEvents() {
         email: String(formData.get("email") || "").trim(),
         role_code: roleCode,
         center_ids: roleCode === "admin" ? [] : orderStaffCenterIds(formData.getAll("center_ids")),
-        schedule: staffSchedule.schedule,
+        schedules: staffSchedule.schedules,
+        hourly_rate: staffSchedule.hourly_rate,
       });
     });
   }
@@ -13751,14 +13844,18 @@ function bindContentEvents() {
       event.preventDefault();
       const userId = Number(form.dataset.staffScheduleForm || 0);
       if (!userId) return;
-      const staffSchedule = readStaffScheduleFromForm(form);
+      const user = (data.staffUsers || []).find((item) => Number(item.id) === userId);
+      const staffSchedule = readStaffScheduleFromForm(form, user?.centers || []);
       if (staffSchedule.error) {
         showStaffScheduleEditError(form, staffSchedule.error);
         return;
       }
       const submitButton = form.querySelector('button[type="submit"]');
       if (submitButton) submitButton.disabled = true;
-      const error = await updateDemoStaffSchedule(userId, staffSchedule.schedule);
+      const error = await updateDemoStaffSchedule(userId, {
+        schedules: staffSchedule.schedules,
+        hourly_rate: staffSchedule.hourly_rate,
+      });
       if (error) {
         if (submitButton) submitButton.disabled = false;
         showStaffScheduleEditError(form, error);

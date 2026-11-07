@@ -29,8 +29,8 @@ from app.models.center import Center  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
 from app.schemas.client import ClientCreate, ClientUpdate  # noqa: E402
 from app.schemas.user_admin import (  # noqa: E402
+    StaffCenterScheduleCreate,
     StaffEmailUpdate,
-    StaffScheduleCreate,
     StaffScheduleUpdate,
     StaffUserCreate,
 )
@@ -42,8 +42,8 @@ from app.services import notifications  # noqa: E402
 REAL_SEND_EMAIL = notifications.send_email
 
 
-def schedule(pattern: str = "2/2", start: time = time(9), end: time = time(20)) -> StaffScheduleCreate:
-    return StaffScheduleCreate(pattern=pattern, shift_start=start, shift_end=end)
+def schedule(pattern: str = "2/2", start: time = time(9), end: time = time(20), center_id: int = 1) -> StaffCenterScheduleCreate:
+    return StaffCenterScheduleCreate(center_id=center_id, pattern=pattern, shift_start=start, shift_end=end)
 
 
 def client_create(last_name: str, center_ids: list[int]) -> ClientCreate:
@@ -202,6 +202,7 @@ class NotificationTests(unittest.TestCase):
                 work_date=date(2026, 11, 5),
                 payload=WorkScheduleDayUpdate(kind="shift", start_time=time(9), end_time=time(20)),
                 background_tasks=background,
+                center_id=1,
                 admin=self._user(db, "admin"),
                 db=db,
             )
@@ -210,6 +211,7 @@ class NotificationTests(unittest.TestCase):
         _, subject, body = self.sent[0]
         self.assertEqual(subject, "Медцентр: Изменен график работы")
         self.assertIn("Сотрудник: Борис", body)
+        self.assertIn("Медцентр: Мед-Авто", body)
         self.assertIn("Дата: 05.11.2026", body)
         self.assertIn("Стало: смена 09:00-20:00", body)
 
@@ -224,7 +226,7 @@ class NotificationTests(unittest.TestCase):
                     full_name="Иван Сотрудников",
                     role_code="doctor",
                     center_ids=[1],
-                    schedule=schedule(),
+                    schedules=[schedule()],
                 ),
                 background_tasks=background,
                 current_user=admin,
@@ -235,7 +237,7 @@ class NotificationTests(unittest.TestCase):
         _, subject, body = self.sent[0]
         self.assertEqual(subject, "Медцентр: Создан график работы")
         self.assertIn("Сотрудник: Иван Сотрудников", body)
-        self.assertIn("График: 2/2, 09:00-20:00", body)
+        self.assertIn("Медцентр: Мед-Авто, график: 2/2, 09:00-20:00", body)
         # Первая смена по умолчанию — сегодня: в письме она указана, чтобы админ мог ее поправить.
         self.assertIn("Первая смена: ", body)
 
@@ -262,9 +264,9 @@ class NotificationTests(unittest.TestCase):
             boris = self._user(db, "boris")
             admin = self._user(db, "admin")
             background = BackgroundTasks()
-            staff_routes.update_staff_schedule(
+            staff_routes.update_staff_schedules(
                 user_id=boris.id,
-                payload=StaffScheduleUpdate(schedule=schedule()),
+                payload=StaffScheduleUpdate(schedules=[schedule()]),
                 background_tasks=background,
                 admin=admin,
                 db=db,
@@ -272,9 +274,9 @@ class NotificationTests(unittest.TestCase):
             self._run(background)
 
             again = BackgroundTasks()
-            staff_routes.update_staff_schedule(
+            staff_routes.update_staff_schedules(
                 user_id=boris.id,
-                payload=StaffScheduleUpdate(schedule=schedule()),
+                payload=StaffScheduleUpdate(schedules=[schedule()]),
                 background_tasks=again,
                 admin=admin,
                 db=db,
@@ -282,8 +284,7 @@ class NotificationTests(unittest.TestCase):
 
         _, subject, body = self.sent[0]
         self.assertEqual(subject, "Медцентр: Изменено время работы")
-        self.assertIn("Было: без графика", body)
-        self.assertIn("Стало: 2/2, 09:00-20:00", body)
+        self.assertIn("Медцентр: Мед-Авто, было: без графика, стало: 2/2, 09:00-20:00", body)
         self.assertEqual(again.tasks, [])
 
     def test_a_client_name_change_is_reported_after_the_client_is_added(self):

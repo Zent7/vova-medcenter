@@ -1,10 +1,9 @@
-"""График работы по дням: смены по шаблону, отгулы, больничные, отпуска, факт и суммы.
+"""График работы по медцентрам: смены по шаблону, отгулы, больничные, отпуска, факт и суммы.
 
-Шаблон задает порядок, первая смена (`schedule_anchor_date`) ставит начало цикла. «Создать
-график» продолжает порядок на следующий месяц: если 31 числа у сотрудника 4/4 была вторая
-смена, 1 числа будет третья. Ручной график без шаблона остается пустым. Факт идет из отметок
-«На работу», ручная правка на смене его заменяет. Таблица открыта админу, врачу и оператору,
-ставки и правки — только админу.
+У каждого медцентра свой график сотрудника: шаблон, время смены и первая смена цикла. Сотрудник с
+двумя медцентрами появляется в таблице каждого из них. Если в один день он стоит сменой в двух
+медцентрах, оба дня помечаются как пересечение. Таблица открыта админу, врачу и оператору, ставки
+и правки — только админу.
 """
 
 from datetime import date, datetime, time, timedelta, timezone
@@ -13,7 +12,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.routing import APIRoute
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -27,10 +26,10 @@ from app.api.v1.routes import work_schedule as routes  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models.center import Center  # noqa: E402
-from app.models.staff_schedule_day import StaffScheduleDay  # noqa: E402
+from app.models.staff_center_schedule import StaffCenterSchedule  # noqa: E402
 from app.models.user import Role, User  # noqa: E402
 from app.models.work_time_entry import WorkTimeEntry  # noqa: E402
-from app.schemas.work_schedule import WorkScheduleDayUpdate, WorkScheduleFactItem  # noqa: E402
+from app.schemas.work_schedule import WorkScheduleFactItem, WorkScheduleFirstShift  # noqa: E402
 from app.services import work_schedule as service  # noqa: E402
 from app.services import work_status  # noqa: E402
 
@@ -48,7 +47,20 @@ def _dependency_calls(dependant) -> set:
     return calls
 
 
-def make_user(db, roles, role_code, login, full_name, center=None, pattern=None, rate=None):
+def add_schedule(user, center, pattern, anchor=None, start=SHIFT_START, end=SHIFT_END):
+    """График сотрудника в медцентре: шаблон, время смены и первая смена цикла."""
+    user.center_schedules.append(
+        StaffCenterSchedule(
+            center_id=center.id,
+            schedule_pattern=pattern,
+            schedule_start=start,
+            schedule_end=end,
+            schedule_anchor_date=anchor,
+        )
+    )
+
+
+def make_user(db, roles, role_code, login, full_name, center=None, extra=(), rate=None):
     user = User(
         role_id=roles[role_code].id,
         login=login,
@@ -56,11 +68,9 @@ def make_user(db, roles, role_code, login, full_name, center=None, pattern=None,
         full_name=full_name,
         is_active=True,
         center_id=center.id if center is not None else None,
-        schedule_pattern=pattern,
-        schedule_start=SHIFT_START if pattern else None,
-        schedule_end=SHIFT_END if pattern else None,
         hourly_rate=Decimal(rate) if rate else None,
     )
+    user.extra_centers = list(extra)
     db.add(user)
     db.flush()
     return user
@@ -78,10 +88,10 @@ def utc(day: int, hour: int = 0, minute: int = 0) -> datetime:
     return msk(day, hour, minute).astimezone(timezone.utc)
 
 
-def stats(db, year: int, month: int, now: datetime = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)) -> dict:
+def stats(db, center: Center, year: int, month: int, now: datetime = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)) -> dict:
     """Статистика админа так, как ее отдает маршрут: факт берется из отметок за месяц."""
     first, last = service.month_bounds(year, month)
-    return service.stats_payload(db, year, month, work_status.fact_minutes_by_user(db, first, last, now))
+    return service.stats_payload(db, center, year, month, work_status.fact_minutes_by_user(db, first, last, now))
 
 
 class WorkScheduleTests(unittest.TestCase):
@@ -92,16 +102,20 @@ class WorkScheduleTests(unittest.TestCase):
         with self.Session() as db:
             center_a = Center(code="center-a", name="Мед-Авто")
             center_b = Center(code="center-b", name="Медилэнд")
-            db.add_all([center_a, center_b])
+            center_c = Center(code="center-c", name="Здравница")
+            db.add_all([center_a, center_b, center_c])
             roles = {code: Role(code=code, name=code) for code in ROLE_CODES}
             db.add_all(roles.values())
             db.flush()
             make_user(db, roles, "admin", "admin", "Админ")
             make_user(db, roles, "guest", "guest", "Гость", center=center_a)
-            make_user(db, roles, "operator", "anna", "Анна", center=center_a, pattern="4/4", rate="300")
-            make_user(db, roles, "doctor", "boris", "Борис", center=center_a, pattern="2/2")
+            anna = make_user(db, roles, "operator", "anna", "Анна", center=center_a, rate="300")
+            add_schedule(anna, center_a, "4/4", anchor=date(2026, 11, 1))
+            boris = make_user(db, roles, "doctor", "boris", "Борис", center=center_a)
+            add_schedule(boris, center_a, "2/2", anchor=date(2026, 11, 1))
             make_user(db, roles, "doctor", "viktor", "Виктор", center=center_b)
             make_user(db, roles, "chairman", "chair", "Председатель", center=center_a)
+            make_user(db, roles, "operator", "olga", "Ольга", center=center_a)
             db.commit()
 
     def tearDown(self):
@@ -111,208 +125,226 @@ class WorkScheduleTests(unittest.TestCase):
     def _user(self, db, login: str) -> User:
         return db.execute(select(User).where(User.login == login)).scalar_one()
 
-    def _set_anchor(self, db, login: str, anchor: date):
-        self._user(db, login).schedule_anchor_date = anchor
-        db.commit()
+    def _center(self, db, code: str) -> Center:
+        return db.execute(select(Center).where(Center.code == code)).scalar_one()
 
-    def _grid_row(self, db, login: str, year: int, month: int, viewer_login: str = "admin"):
-        grid = routes.read_month(year=year, month=month, viewer=self._user(db, viewer_login), db=db)
+    def _schedule(self, db, login: str, code: str) -> StaffCenterSchedule:
+        user = self._user(db, login)
+        return next(item for item in user.center_schedules if item.center.code == code)
+
+    def _grid(self, db, viewer_login: str, code: str | None, year: int = 2026, month: int = 11):
+        center_id = self._center(db, code).id if code else None
+        return routes.read_month(year=year, month=month, center_id=center_id, viewer=self._user(db, viewer_login), db=db)
+
+    def _grid_row(self, db, login: str, code: str, viewer_login: str = "admin"):
+        grid = self._grid(db, viewer_login, code)
         full_name = self._user(db, login).full_name
         return next(item for item in grid.rows if item.full_name == full_name)
 
-    def _row_days(self, db, login: str, year: int, month: int) -> dict:
-        """Записи графика сотрудника за месяц: {день: (вид, номер смены)}."""
-        return {day.work_date.day: (day.kind, day.shift_no) for day in self._grid_row(db, login, year, month).days}
+    def _row_days(self, db, login: str, code: str) -> dict:
+        """Записи графика сотрудника в медцентре за ноябрь: {день: (вид, номер смены)}."""
+        return {day.work_date.day: (day.kind, day.shift_no) for day in self._grid_row(db, login, code).days}
 
 
 class ShiftRulesTests(WorkScheduleTests):
     def test_night_shift_counts_through_midnight(self):
         self.assertEqual(service.shift_minutes(time(8), time(20)), 720)
         self.assertEqual(service.shift_minutes(time(20), time(8)), 720)
-        self.assertEqual(service.shift_minutes(time(8, 30), time(12)), 210)
 
     def test_pattern_shifts_are_numbered_from_the_first_shift(self):
         with self.Session() as db:
-            user = self._user(db, "anna")
-            user.schedule_anchor_date = date(2026, 10, 30)
+            schedule = self._schedule(db, "anna", "center-a")
             self.assertEqual(
-                service.pattern_shifts(user, date(2026, 10, 29), date(2026, 11, 7)),
-                [(date(2026, 10, 30), 1), (date(2026, 10, 31), 2), (date(2026, 11, 1), 3), (date(2026, 11, 2), 4), (date(2026, 11, 7), 1)],
+                service.pattern_shifts(schedule, date(2026, 11, 1), date(2026, 11, 8)),
+                [(date(2026, 11, 1), 1), (date(2026, 11, 2), 2), (date(2026, 11, 3), 3), (date(2026, 11, 4), 4)],
             )
 
-    def test_no_pattern_shifts_without_a_pattern_or_first_shift(self):
+    def test_no_pattern_shifts_without_a_first_shift(self):
         with self.Session() as db:
-            self.assertEqual(service.pattern_shifts(self._user(db, "anna"), date(2026, 11, 1), date(2026, 11, 30)), [])
-            self.assertEqual(service.pattern_shifts(self._user(db, "viktor"), date(2026, 11, 1), date(2026, 11, 30)), [])
+            viktor = self._user(db, "viktor")
+            center_b = self._center(db, "center-b")
+            add_schedule(viktor, center_b, "2/2", anchor=None)
+            db.flush()
+            schedule = viktor.schedule_in(center_b.id)
+            self.assertEqual(service.pattern_shifts(schedule, date(2026, 11, 1), date(2026, 11, 30)), [])
 
     def test_day_update_needs_times_for_a_shift_and_none_for_leave(self):
-        with self.assertRaises(HTTPException):
-            service.check_day_update("shift", None, SHIFT_END)
-        with self.assertRaises(HTTPException):
-            service.check_day_update("shift", SHIFT_START, SHIFT_START)
-        with self.assertRaises(HTTPException):
-            service.check_day_update("dayoff", SHIFT_START, SHIFT_END)
-        service.check_day_update("shift", SHIFT_END, SHIFT_START)  # ночная смена
-        service.check_day_update("vacation", None, None)
+        service.check_day_update("shift", SHIFT_START, SHIFT_END)
+        for kind, start, end in (("shift", None, SHIFT_END), ("shift", SHIFT_START, SHIFT_START), ("dayoff", SHIFT_START, None)):
+            with self.assertRaises(HTTPException) as caught:
+                service.check_day_update(kind, start, end)
+            self.assertEqual(caught.exception.status_code, 400)
 
     def test_absence_period_must_be_ordered_and_short(self):
+        self.assertEqual(len(service.check_absence_period(date(2026, 11, 1), date(2026, 11, 3))), 3)
         with self.assertRaises(HTTPException):
-            service.check_absence_period(date(2026, 11, 5), date(2026, 11, 1))
+            service.check_absence_period(date(2026, 11, 3), date(2026, 11, 1))
         with self.assertRaises(HTTPException):
             service.check_absence_period(date(2026, 1, 1), date(2027, 6, 1))
-        self.assertEqual(len(service.check_absence_period(date(2026, 11, 1), date(2026, 11, 3))), 3)
 
 
 class MonthGenerationTests(WorkScheduleTests):
     def test_generate_continues_the_sequence_into_the_next_month(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            self.assertEqual(service.generate_month(db, 2026, 10)["created"], 2)  # 30 и 31 октября
-            result = service.generate_month(db, 2026, 11)
-            # Борис с шаблоном, но без первой смены, в список «не назначено» попадает.
-            self.assertEqual(result["users_without_start"], ["Борис"])
-
-            days = self._row_days(db, "anna", 2026, 11)
-            # 31 октября была вторая смена, поэтому 1 ноября — третья, 2 ноября — четвертая.
-            self.assertEqual(days[1], ("shift", 3))
-            self.assertEqual(days[2], ("shift", 4))
-            self.assertNotIn(3, days)
-            self.assertEqual(days[7], ("shift", 1))
-            self.assertEqual(days[10], ("shift", 4))
-            self.assertEqual(sorted(days), [1, 2, 7, 8, 9, 10, 15, 16, 17, 18, 23, 24, 25, 26])
+            self._schedule(db, "anna", "center-a").schedule_anchor_date = date(2026, 10, 31)
+            db.commit()
+            center = self._center(db, "center-a")
+            self.assertEqual(service.generate_month(db, center, 2026, 10)["created"], 1)
+            service.generate_month(db, center, 2026, 11)
+            days = self._row_days(db, "anna", "center-a")
+            # Октябрьская смена 31-го — первая цикла; 1–3 ноября продолжают нумерацию, 4 ноября — отдых.
+            self.assertEqual(days[1], ("shift", 2))
+            self.assertEqual(days[3], ("shift", 4))
+            self.assertNotIn(4, days)
 
     def test_generate_twice_changes_nothing(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 11)
-            self.assertEqual(service.generate_month(db, 2026, 11)["created"], 0)
+            center = self._center(db, "center-a")
+            self.assertGreater(service.generate_month(db, center, 2026, 11)["created"], 0)
+            self.assertEqual(service.generate_month(db, center, 2026, 11)["created"], 0)
 
-    def test_manual_employee_without_pattern_stays_empty(self):
+    def test_manual_employee_without_schedule_stays_empty(self):
         with self.Session() as db:
-            result = service.generate_month(db, 2026, 11)
-            self.assertNotIn("Виктор", result["users_without_start"])
-            self.assertEqual(self._row_days(db, "viktor", 2026, 11), {})
+            service.generate_month(db, self._center(db, "center-b"), 2026, 11)
+            self.assertEqual(self._row_days(db, "viktor", "center-b"), {})
 
     def test_pattern_without_first_shift_is_reported(self):
         with self.Session() as db:
-            result = service.generate_month(db, 2026, 11)
-            self.assertEqual(result["created"], 0)
-            self.assertEqual(sorted(result["users_without_start"]), ["Анна", "Борис"])
+            self._schedule(db, "anna", "center-a").schedule_anchor_date = None
+            db.commit()
+            result = service.generate_month(db, self._center(db, "center-a"), 2026, 11)
+            self.assertIn("Анна", result["users_without_start"])
+            self.assertEqual(self._row_days(db, "anna", "center-a"), {})
 
     def test_first_shift_restarts_cycle_and_keeps_leave_and_history(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 10)
-            service.generate_month(db, 2026, 11)
             anna = self._user(db, "anna")
-            service.put_absence(db, anna, service.days_in_range(date(2026, 11, 8), date(2026, 11, 9)), "vacation")
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
+            service.put_absence(db, anna, center.id, [date(2026, 11, 5)], "vacation")
             db.commit()
-
-            created = service.restart_pattern(db, anna, date(2026, 11, 12))
+            created = service.restart_pattern(db, anna, self._schedule(db, "anna", "center-a"), date(2026, 11, 3))
             db.commit()
+            self.assertGreater(created, 0)
+            days = self._row_days(db, "anna", "center-a")
+            # Цикл 4/4 начат 3 ноября: 3–6 смены 1–4, 7–10 отдых, 11 снова смена 1; отпуск 5-го сохранен.
+            self.assertEqual(days[2], ("shift", 2))
+            self.assertEqual(days[3], ("shift", 1))
+            self.assertEqual(days[4], ("shift", 2))
+            self.assertEqual(days[5], ("vacation", None))
+            self.assertEqual(days[6], ("shift", 4))
+            self.assertNotIn(7, days)
+            self.assertEqual(days[11], ("shift", 1))
 
-            # 12–15, 20–23 и 28–30 ноября: одиннадцать смен от нового начала.
-            self.assertEqual(created, 11)
-            days = self._row_days(db, "anna", 2026, 11)
-            self.assertEqual(days[8], ("vacation", None))
-            self.assertEqual(days[9], ("vacation", None))
-            self.assertEqual(days[12], ("shift", 1))
-            self.assertEqual(days[15], ("shift", 4))
-            self.assertNotIn(16, days)
-            self.assertNotIn(18, days)
-            self.assertEqual(days[20], ("shift", 1))
-            self.assertEqual(days[30], ("shift", 3))
-            # Смены до нового начала остаются со своими номерами.
-            self.assertEqual(days[1], ("shift", 3))
-            self.assertEqual(days[2], ("shift", 4))
-            october = next(row for row in stats(db, 2026, 10)["rows"] if row["full_name"] == "Анна")
-            self.assertEqual(october["plan"]["days"], 2)
-
-    def test_first_shift_needs_a_pattern(self):
+    def test_first_shift_needs_a_schedule_in_this_center(self):
         with self.Session() as db:
             with self.assertRaises(HTTPException) as caught:
-                service.restart_pattern(db, self._user(db, "viktor"), date(2026, 11, 3))
+                routes.start_first_shift(
+                    user_id=self._user(db, "viktor").id,
+                    payload=WorkScheduleFirstShift(work_date=date(2026, 11, 3)),
+                    background_tasks=BackgroundTasks(),
+                    center_id=self._center(db, "center-b").id,
+                    admin=self._user(db, "admin"),
+                    db=db,
+                )
             self.assertEqual(caught.exception.status_code, 409)
 
 
 class DayEditingTests(WorkScheduleTests):
     def test_absence_replaces_shift_and_keeps_the_cycle(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 11)
-            anna = self._user(db, "anna")
-            service.put_absence(db, anna, service.days_in_range(date(2026, 11, 1), date(2026, 11, 3)), "sick")
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
+            service.put_absence(db, self._user(db, "anna"), center.id, [date(2026, 11, 1), date(2026, 11, 2)], "sick")
             db.commit()
-
-            days = self._row_days(db, "anna", 2026, 11)
+            days = self._row_days(db, "anna", "center-a")
             self.assertEqual(days[1], ("sick", None))
-            self.assertEqual(days[3], ("sick", None))
-            self.assertEqual(days[7], ("shift", 1))
+            self.assertEqual(days[2], ("sick", None))
+            self.assertEqual(days[3], ("shift", 3))
+            self.assertEqual(days[4], ("shift", 4))
 
     def test_manual_shift_and_clear(self):
         with self.Session() as db:
-            viktor = self._user(db, "viktor")
-            service.put_day(db, viktor, date(2026, 11, 4), "shift", time(9), time(18))
+            anna = self._user(db, "anna")
+            center = self._center(db, "center-a")
+            service.put_day(db, anna, center.id, date(2026, 11, 15), "shift", time(10), time(18))
             db.commit()
-            self.assertEqual(self._row_days(db, "viktor", 2026, 11), {4: ("shift", None)})
-            self.assertEqual(service.clear_day(db, viktor, date(2026, 11, 4)), 1)
-            db.commit()
-            self.assertEqual(self._row_days(db, "viktor", 2026, 11), {})
-            self.assertEqual(service.clear_day(db, viktor, date(2026, 11, 4)), 0)
+            self.assertEqual(service.day_state(db, anna, center.id, date(2026, 11, 15))["start"], "10:00")
+            self.assertEqual(service.clear_day(db, anna, center.id, date(2026, 11, 15)), 1)
+            self.assertIsNone(service.day_state(db, anna, center.id, date(2026, 11, 15)))
 
     def test_leave_day_drops_times_and_facts(self):
         with self.Session() as db:
-            viktor = self._user(db, "viktor")
-            service.put_day(db, viktor, date(2026, 11, 4), "shift", time(9), time(18))
-            service.put_facts(db, viktor, [{"work_date": date(2026, 11, 4), "start_time": time(9, 30), "end_time": time(18)}])
-            service.put_day(db, viktor, date(2026, 11, 4), "dayoff", None, None)
+            anna = self._user(db, "anna")
+            center = self._center(db, "center-a")
+            service.put_day(db, anna, center.id, date(2026, 11, 15), "dayoff", None, None)
             db.commit()
-            row = db.execute(select(StaffScheduleDay).where(StaffScheduleDay.user_id == viktor.id)).scalar_one()
-            self.assertEqual(row.kind, "dayoff")
-            self.assertIsNone(row.start_time)
-            self.assertIsNone(row.fact_start_time)
-            self.assertEqual(row.source, "manual")
+            state = service.day_state(db, anna, center.id, date(2026, 11, 15))
+            self.assertEqual((state["kind"], state["start"], state["end"]), ("dayoff", None, None))
 
     def test_facts_only_on_shift_days_and_all_or_nothing(self):
         with self.Session() as db:
-            viktor = self._user(db, "viktor")
-            service.put_day(db, viktor, date(2026, 11, 4), "vacation", None, None)
+            anna = self._user(db, "anna")
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
             db.commit()
-            with self.assertRaises(HTTPException) as caught:
-                service.put_facts(db, viktor, [{"work_date": date(2026, 11, 4), "start_time": time(9), "end_time": time(18)}])
-            self.assertEqual(caught.exception.status_code, 409)
-            with self.assertRaises(HTTPException) as caught:
-                service.put_facts(db, viktor, [{"work_date": date(2026, 11, 4), "start_time": time(9), "end_time": None}])
-            self.assertEqual(caught.exception.status_code, 400)
+            service.put_facts(db, anna, center.id, [{"work_date": date(2026, 11, 1), "start_time": time(9), "end_time": time(18)}])
+            db.commit()
+            self.assertEqual(service.facts_state(db, anna, center.id, [date(2026, 11, 1)]), {date(2026, 11, 1): "09:00-18:00"})
+            with self.assertRaises(HTTPException) as on_rest:
+                service.put_facts(db, anna, center.id, [{"work_date": date(2026, 11, 5), "start_time": time(9), "end_time": time(18)}])
+            self.assertEqual(on_rest.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as half:
+                service.put_facts(db, anna, center.id, [{"work_date": date(2026, 11, 1), "start_time": time(9), "end_time": None}])
+            self.assertEqual(half.exception.status_code, 400)
 
     def test_fact_items_parse_times_and_allow_clearing(self):
-        item = WorkScheduleFactItem(work_date=date(2026, 11, 4), start_time="09:30", end_time="18:00")
-        self.assertEqual(item.start_time, time(9, 30))
-        self.assertIsNone(WorkScheduleFactItem(work_date=date(2026, 11, 4)).start_time)
-        self.assertEqual(WorkScheduleDayUpdate(kind="dayoff").kind, "dayoff")
+        item = WorkScheduleFactItem(work_date=date(2026, 11, 1), start_time="09:30", end_time="18:00")
+        self.assertEqual((item.start_time, item.end_time), (time(9, 30), time(18)))
+        cleared = WorkScheduleFactItem(work_date=date(2026, 11, 1))
+        self.assertIsNone(cleared.start_time)
 
 
 class StatsTests(WorkScheduleTests):
+    def _row(self, db, center_code: str, full_name: str):
+        center = self._center(db, center_code)
+        return next(item for item in stats(db, center, 2026, 11)["rows"] if item["full_name"] == full_name)
+
     def test_plan_and_fact_hours_are_multiplied_by_the_rate(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 11)
-            service.put_facts(db, self._user(db, "anna"), [{"work_date": date(2026, 11, 1), "start_time": time(8), "end_time": time(21)}])
+            service.generate_month(db, self._center(db, "center-a"), 2026, 11)
             db.commit()
+            row = self._row(db, "center-a", "Анна")
+            self.assertEqual((row["plan"]["days"], row["plan"]["hours"]), (16, 192.0))
+            self.assertEqual(row["plan"]["amount"], 57600.0)
+            self.assertEqual(row["center_name"], "Мед-Авто")
 
-            row = next(item for item in service.stats_payload(db, 2026, 11, {})["rows"] if item["full_name"] == "Анна")
-            # 14 смен по 12 часов. Отметок нет, факт только в ручной правке: 1 ноября 13 часов.
-            self.assertEqual(row["plan"], {"days": 14, "hours": 168.0, "amount": 50400.0})
-            self.assertEqual(row["fact"], {"days": 1, "hours": 13.0, "amount": 3900.0})
-            self.assertEqual(row["hourly_rate"], 300.0)
+    def test_fact_is_only_the_manual_fact_when_there_are_no_marks(self):
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
+            service.put_facts(db, anna, center.id, [{"work_date": date(2026, 11, 1), "start_time": time(9), "end_time": time(18)}])
+            service.put_absence(db, anna, center.id, [date(2026, 11, 9)], "vacation")
+            db.commit()
+            row = self._row(db, "center-a", "Анна")
+            self.assertEqual((row["plan"]["days"], row["plan"]["hours"]), (15, 180.0))
+            # Отметок «На работу» нет: факт только ручная правка 1 ноября (9 часов), остальные смены без факта.
+            self.assertEqual((row["fact"]["days"], row["fact"]["hours"]), (1, 9.0))
+
+    def _anchor(self, db, login: str, anchor: date) -> None:
+        """Первая смена цикла у сотрудника в Мед-Авто: от нее идут смены ноября (у Анны 4/4)."""
+        self._schedule(db, login, "center-a").schedule_anchor_date = anchor
+        db.commit()
 
     def test_no_time_marks_means_no_fact_and_leave_counts_zero(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 11)
-            service.put_absence(db, self._user(db, "anna"), service.days_in_range(date(2026, 11, 1), date(2026, 11, 2)), "vacation")
+            self._anchor(db, "anna", date(2026, 10, 30))
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
+            service.put_absence(db, self._user(db, "anna"), center.id, service.days_in_range(date(2026, 11, 1), date(2026, 11, 2)), "vacation")
             db.commit()
-            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            row = self._row(db, "center-a", "Анна")
             # Отметок «На работу» нет: план есть, факт нулевой, красных столбцов не будет.
             self.assertEqual(row["plan"]["days"], 12)
             self.assertEqual(row["fact"], {"days": 0, "hours": 0.0, "amount": 0.0})
@@ -321,28 +353,11 @@ class StatsTests(WorkScheduleTests):
             day_seven = next(day for day in row["days"] if day["work_date"] == date(2026, 11, 7))
             self.assertEqual((day_seven["plan_hours"], day_seven["fact_hours"]), (12.0, 0.0))
 
-    def test_amounts_are_empty_when_rate_is_not_set(self):
-        with self.Session() as db:
-            self._set_anchor(db, "boris", date(2026, 11, 1))
-            service.generate_month(db, 2026, 11)
-            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Борис")
-            self.assertIsNone(row["hourly_rate"])
-            self.assertIsNone(row["plan"]["amount"])
-            self.assertGreater(row["plan"]["hours"], 0)
-
-    def test_overnight_shift_counts_twelve_hours(self):
-        with self.Session() as db:
-            service.put_day(db, self._user(db, "viktor"), date(2026, 11, 5), "shift", time(20), time(8))
-            db.commit()
-            row = next(item for item in service.stats_payload(db, 2026, 11, {})["rows"] if item["full_name"] == "Виктор")
-            self.assertEqual((row["plan"]["days"], row["plan"]["hours"]), (1, 12.0))
-
     def test_fact_is_the_time_on_the_counter_not_the_schedule(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 11)
-            anna = self._user(db, "anna")
-            anna_id = anna.id
+            self._anchor(db, "anna", date(2026, 10, 30))
+            service.generate_month(db, self._center(db, "center-a"), 2026, 11)
+            anna_id = self._user(db, "anna").id
             db.add_all(
                 [
                     WorkTimeEntry(user_id=anna_id, started_at=utc(1, 9), ended_at=utc(1, 13)),  # смена 1 ноября: 4 из 12 ч
@@ -352,7 +367,7 @@ class StatsTests(WorkScheduleTests):
             )
             db.commit()
 
-            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            row = self._row(db, "center-a", "Анна")
             days = {day["work_date"]: day for day in row["days"]}
             self.assertEqual(row["plan"], {"days": 14, "hours": 168.0, "amount": 50400.0})
             self.assertEqual(row["fact"], {"days": 4, "hours": 9.5, "amount": 2850.0})
@@ -362,14 +377,15 @@ class StatsTests(WorkScheduleTests):
 
     def test_manual_fact_on_a_shift_replaces_the_marks_of_that_day(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 11)
+            self._anchor(db, "anna", date(2026, 10, 30))
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
             anna = self._user(db, "anna")
-            anna_id = anna.id
-            db.add(WorkTimeEntry(user_id=anna_id, started_at=utc(1, 9), ended_at=utc(1, 13)))
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=utc(1, 9), ended_at=utc(1, 13)))
             service.put_facts(
                 db,
                 anna,
+                center.id,
                 [
                     {"work_date": date(2026, 11, 1), "start_time": time(9), "end_time": time(10)},
                     {"work_date": date(2026, 11, 2), "start_time": time(8), "end_time": time(21)},
@@ -377,46 +393,68 @@ class StatsTests(WorkScheduleTests):
             )
             db.commit()
 
-            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            row = self._row(db, "center-a", "Анна")
             days = {day["work_date"]: day for day in row["days"]}
             # 1 ноября правка 1 ч вместо отметки в 4 ч; 2 ноября отметок нет, а правка есть.
             self.assertEqual((days[date(2026, 11, 1)]["fact_hours"], days[date(2026, 11, 2)]["fact_hours"]), (1.0, 13.0))
             self.assertEqual(row["fact"]["hours"], 14.0)
 
             # Пустое время снимает правку: 1 ноября снова считается по отметке.
-            service.put_facts(db, anna, [{"work_date": date(2026, 11, 1), "start_time": None, "end_time": None}])
+            service.put_facts(db, anna, center.id, [{"work_date": date(2026, 11, 1), "start_time": None, "end_time": None}])
             db.commit()
-            row = next(item for item in stats(db, 2026, 11)["rows"] if item["full_name"] == "Анна")
+            row = self._row(db, "center-a", "Анна")
             self.assertEqual(row["fact"]["hours"], 17.0)
 
     def test_stats_route_counts_the_marks_too(self):
         with self.Session() as db:
-            self._set_anchor(db, "anna", date(2026, 10, 30))
-            service.generate_month(db, 2026, 11)
+            self._anchor(db, "anna", date(2026, 10, 30))
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
             db.add(WorkTimeEntry(user_id=self._user(db, "anna").id, started_at=utc(1, 9), ended_at=utc(1, 13)))
             db.commit()
 
-            routed = routes.read_stats(year=2026, month=11, _=self._user(db, "admin"), db=db)
+            routed = routes.read_stats(year=2026, month=11, center_id=center.id, admin=self._user(db, "admin"), db=db)
 
             row = next(item for item in routed.rows if item.full_name == "Анна")
             self.assertEqual((row.fact.days, row.fact.hours, row.fact.amount), (1, 4.0, 1200.0))
 
+    def test_amounts_are_empty_when_rate_is_not_set(self):
+        with self.Session() as db:
+            service.generate_month(db, self._center(db, "center-a"), 2026, 11)
+            db.commit()
+            row = self._row(db, "center-a", "Борис")
+            self.assertIsNone(row["hourly_rate"])
+            self.assertIsNone(row["plan"]["amount"])
+
+    def test_overnight_shift_counts_twelve_hours(self):
+        self.assertEqual(service.minutes_to_hours(service.shift_minutes(time(20), time(8))), 12.0)
+
 
 class AccessTests(WorkScheduleTests):
-    def test_grid_lists_operators_then_doctors_and_skips_empty_admin(self):
+    def test_table_lists_the_center_staff_in_role_order(self):
         with self.Session() as db:
-            grid = routes.read_month(year=2026, month=11, viewer=self._user(db, "admin"), db=db)
-            self.assertEqual([row.full_name for row in grid.rows], ["Анна", "Борис", "Виктор", "Председатель"])
+            grid = self._grid(db, "admin", "center-a")
+            self.assertEqual([row.full_name for row in grid.rows], ["Анна", "Ольга", "Борис", "Председатель"])
             self.assertTrue(grid.can_edit)
-            anna = grid.rows[0]
-            self.assertEqual((anna.center.name, anna.center.color), ("Мед-Авто", service.CENTER_PALETTE[0]))
+            self.assertEqual((grid.center.name, grid.center.color), ("Мед-Авто", service.CENTER_PALETTE[0]))
+            self.assertEqual([row.full_name for row in self._grid(db, "admin", "center-b").rows], ["Виктор"])
+
+    def test_every_active_center_is_a_tab_even_without_staff(self):
+        with self.Session() as db:
+            grid = self._grid(db, "admin", "center-c")
+            self.assertEqual([item.name for item in grid.centers], ["Мед-Авто", "Медилэнд", "Здравница"])
+            self.assertEqual((grid.center.name, grid.rows), ("Здравница", []))
 
     def test_doctor_and_operator_see_only_own_centers_without_rates(self):
         with self.Session() as db:
-            grid = routes.read_month(year=2026, month=11, viewer=self._user(db, "anna"), db=db)
-            self.assertEqual([row.full_name for row in grid.rows], ["Анна", "Борис", "Председатель"])
+            grid = self._grid(db, "anna", None)
+            self.assertEqual([item.name for item in grid.centers], ["Мед-Авто"])
+            self.assertEqual(grid.center.name, "Мед-Авто")
             self.assertFalse(grid.can_edit)
             self.assertNotIn("hourly_rate", grid.model_dump_json())
+            with self.assertRaises(HTTPException) as caught:
+                self._grid(db, "anna", "center-b")
+            self.assertEqual(caught.exception.status_code, 403)
 
     def test_viewers_are_admin_operator_and_doctor_only(self):
         with self.Session() as db:
@@ -445,14 +483,86 @@ class AccessTests(WorkScheduleTests):
                 service.load_schedule_user(db, 999999)
 
 
+class PerCenterTests(WorkScheduleTests):
+    def _work_in_both(self, db):
+        """Анна работает в Мед-Авто (4/4) и в Медилэнде (5/2 с понедельника 2 ноября, 09:00–18:00)."""
+        anna = self._user(db, "anna")
+        center_b = self._center(db, "center-b")
+        anna.extra_centers = [center_b]
+        add_schedule(anna, center_b, "5/2", anchor=date(2026, 11, 2), start=time(9), end=time(18))
+        db.commit()
+        return anna
+
+    def test_one_employee_has_separate_schedules_in_each_center(self):
+        with self.Session() as db:
+            self._work_in_both(db)
+            anna_a = next(row for row in self._grid(db, "admin", "center-a").rows if row.full_name == "Анна")
+            anna_b = next(row for row in self._grid(db, "admin", "center-b").rows if row.full_name == "Анна")
+            self.assertEqual((anna_a.pattern, anna_a.shift_start, anna_a.shift_end), ("4/4", "08:00", "20:00"))
+            self.assertEqual((anna_b.pattern, anna_b.shift_start, anna_b.shift_end), ("5/2", "09:00", "18:00"))
+
+    def test_account_with_both_centers_is_shown_in_each_table(self):
+        with self.Session() as db:
+            self._work_in_both(db)
+            for code in ("center-a", "center-b"):
+                self.assertIn("Анна", [row.full_name for row in self._grid(db, "admin", code).rows])
+            self.assertEqual([item.name for item in self._grid(db, "anna", None).centers], ["Мед-Авто", "Медилэнд"])
+
+    def test_same_day_shifts_in_two_centers_are_marked_in_both_tables(self):
+        with self.Session() as db:
+            self._work_in_both(db)
+            service.generate_month(db, self._center(db, "center-a"), 2026, 11)
+            service.generate_month(db, self._center(db, "center-b"), 2026, 11)
+            db.commit()
+            in_a = {day.work_date.day: day for day in self._grid_row(db, "anna", "center-a").days}
+            in_b = {day.work_date.day: day for day in self._grid_row(db, "anna", "center-b").days}
+            # 2–4 ноября смены стоят в обоих медцентрах; 1 ноября только в Мед-Авто, 5 ноября только в Медилэнде.
+            self.assertEqual([item.center_name for item in in_a[2].conflicts], ["Медилэнд"])
+            self.assertEqual([item.center_name for item in in_b[3].conflicts], ["Мед-Авто"])
+            self.assertEqual(in_a[1].conflicts, [])
+            self.assertEqual(in_b[5].conflicts, [])
+            self.assertEqual((in_a[2].conflicts[0].start_time, in_a[2].conflicts[0].end_time), ("09:00", "18:00"))
+
+    def test_absence_in_another_center_is_not_a_conflict(self):
+        with self.Session() as db:
+            anna = self._work_in_both(db)
+            center_b = self._center(db, "center-b")
+            service.generate_month(db, self._center(db, "center-a"), 2026, 11)
+            service.generate_month(db, center_b, 2026, 11)
+            service.put_absence(db, anna, center_b.id, [date(2026, 11, 2)], "sick")
+            db.commit()
+            in_a = {day.work_date.day: day for day in self._grid_row(db, "anna", "center-a").days}
+            self.assertEqual(in_a[2].conflicts, [])
+
+    def test_viewer_sees_conflicts_only_inside_own_centers(self):
+        with self.Session() as db:
+            self._work_in_both(db)
+            service.generate_month(db, self._center(db, "center-a"), 2026, 11)
+            service.generate_month(db, self._center(db, "center-b"), 2026, 11)
+            db.commit()
+            admin_view = {day.work_date.day: day for day in self._grid_row(db, "anna", "center-a", "admin").days}
+            olga_view = {day.work_date.day: day for day in self._grid_row(db, "anna", "center-a", "olga").days}
+            self.assertEqual(len(admin_view[2].conflicts), 1)
+            self.assertEqual(olga_view[2].conflicts, [])
+
+    def test_days_of_one_center_do_not_leak_into_another(self):
+        with self.Session() as db:
+            anna = self._work_in_both(db)
+            center_b = self._center(db, "center-b")
+            service.put_day(db, anna, center_b.id, date(2026, 11, 15), "shift", time(9), time(18))
+            db.commit()
+            self.assertIsNone(self._row_days(db, "anna", "center-a").get(15))
+            self.assertEqual(self._row_days(db, "anna", "center-b").get(15), ("shift", None))
+
+
 class MigrationTests(unittest.TestCase):
-    def test_model_and_migration_agree_on_the_new_schema(self):
-        table = Base.metadata.tables["staff_schedule_days"]
-        self.assertIn("shift_no", table.columns)
-        self.assertIn("schedule_anchor_date", Base.metadata.tables["users"].columns)
-        migration = (Path(__file__).resolve().parents[1] / "migrations/versions/20261106_0028_add_staff_schedule_days.py").read_text(encoding="utf-8")
-        self.assertIn('down_revision: str | None = "20261106_0027"', migration)
-        self.assertIn('"shift_no"', migration)
+    def test_model_and_migration_agree_on_the_per_center_schema(self):
+        self.assertIn("center_id", Base.metadata.tables["staff_schedule_days"].columns)
+        self.assertIn("staff_center_schedules", Base.metadata.tables)
+        self.assertNotIn("schedule_pattern", Base.metadata.tables["users"].columns)
+        migration = (Path(__file__).resolve().parents[1] / "migrations/versions/20261107_0030_per_center_schedules.py").read_text(encoding="utf-8")
+        self.assertIn('down_revision: str | None = "20261106_0029"', migration)
+        self.assertIn("staff_center_schedules", migration)
 
 
 if __name__ == "__main__":

@@ -26,22 +26,23 @@ class StaffCenterRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class StaffScheduleRead(BaseModel):
-    pattern: str
-    shift_start: time
-    shift_end: time
-    hourly_rate: Decimal | None = None
+class StaffCenterScheduleRead(BaseModel):
+    # График сотрудника в одном медцентре: у каждого медцентра свой шаблон и время смены.
+    center_id: int
+    center_name: str
+    pattern: str = Field(validation_alias="schedule_pattern")
+    shift_start: time = Field(validation_alias="schedule_start")
+    shift_end: time = Field(validation_alias="schedule_end")
 
     model_config = {"from_attributes": True}
 
 
-class StaffScheduleCreate(BaseModel):
+class StaffCenterScheduleCreate(BaseModel):
+    center_id: int
     pattern: SchedulePattern
-    # Время «со скольки — до скольки»; конец может быть раньше начала (ночная смена).
+    # Время «со скольку — до скольки»; конец может быть раньше начала (ночная смена).
     shift_start: time
     shift_end: time
-    # Ставка за час в рублях, до копеек; можно не указывать.
-    hourly_rate: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
 
 
 class StaffUserRead(BaseModel):
@@ -58,8 +59,10 @@ class StaffUserRead(BaseModel):
     all_centers: bool = Field(default=False, validation_alias="sees_all_centers")
     # Все центры, где сотрудник может работать, основной первым; у админа пусто.
     centers: list[StaffCenterRead] = Field(default_factory=list, validation_alias="work_centers")
-    # График смен; None, если его не задали.
-    schedule: StaffScheduleRead | None = None
+    # Графики по медцентрам; в медцентре без графика строки нет.
+    schedules: list[StaffCenterScheduleRead] = Field(default_factory=list, validation_alias="center_schedules")
+    # Ставка за час; None, если не задана.
+    hourly_rate: Decimal | None = None
 
     model_config = {"from_attributes": True}
 
@@ -75,8 +78,10 @@ class StaffUserCreate(BaseModel):
     # может прислать вкладка со старой версией страницы.
     center_ids: list[int] | None = None
     center_id: int | None = None
-    # График смен, если его задали кнопкой «График»; без него сотрудник создается без графика.
-    schedule: StaffScheduleCreate | None = None
+    # Графики по медцентрам: в каждом отмеченном медцентре свой шаблон и время смены.
+    schedules: list[StaffCenterScheduleCreate] = Field(default_factory=list)
+    # Ставка за час в рублях, до копеек; общая для учетки, можно не указывать.
+    hourly_rate: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
 
     @field_validator("login", "password", "full_name", "role_code", mode="before")
     @classmethod
@@ -113,9 +118,10 @@ class StaffCentersUpdate(BaseModel):
 
 
 class StaffScheduleUpdate(BaseModel):
-    # График существующего сотрудника; null снимает его целиком. Поле обязательно, чтобы
-    # пустой запрос не стер график молча.
-    schedule: StaffScheduleCreate | None
+    # Графики всех медцентров сотрудника целиком: медцентр, которого нет в списке, остается без графика.
+    # Поле обязательно, чтобы пустой запрос не стер графики молча.
+    schedules: list[StaffCenterScheduleCreate]
+    hourly_rate: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
 
 
 class StaffEmailUpdate(BaseModel):

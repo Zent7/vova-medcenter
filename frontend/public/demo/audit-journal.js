@@ -81,10 +81,18 @@ function ajDayText(day) {
   return AJ_KIND_LABELS[day.kind] || String(day.kind ?? "");
 }
 
-// Что именно изменили, одной строкой без разметки: экранируется при выводе.
+// Что именно изменили, одной строкой без разметки: экранируется при выводе. Если запись относится к медцентру,
+// его название идет первым: «Медилэнд · 05.11.2026: смена 09:00-20:00 → отгул».
 function ajDescribe(entry) {
   const payload = entry.payload_json || {};
-  switch (entry.action) {
+  const text = ajDescribeChange(entry.action, payload);
+  const center = typeof payload.center === "string" ? payload.center.trim() : "";
+  if (!center) return text;
+  return text ? `${center} · ${text}` : center;
+}
+
+function ajDescribeChange(action, payload) {
+  switch (action) {
     case "schedule_create":
       return `${payload.schedule || "без графика"}, ставка ${ajRate(payload.hourly_rate)}`;
     case "schedule_update":

@@ -13,6 +13,14 @@ class WorkScheduleCenterRead(BaseModel):
     color: str | None = None
 
 
+class WorkScheduleConflictRead(BaseModel):
+    # Смена того же сотрудника в другом медцентре в тот же день.
+    center_id: int
+    center_name: str
+    start_time: str | None = None
+    end_time: str | None = None
+
+
 class WorkScheduleDayRead(BaseModel):
     work_date: date
     kind: Literal["shift", "dayoff", "sick", "vacation"]
@@ -23,6 +31,8 @@ class WorkScheduleDayRead(BaseModel):
     source: Literal["pattern", "manual"]
     # Номер смены в цикле шаблона: 1 — первая смена цикла. Пусто у ручных смен без шаблона.
     shift_no: int | None = None
+    # Пустой список — пересечения нет; иначе клетка подсвечивается красным.
+    conflicts: list[WorkScheduleConflictRead] = Field(default_factory=list)
 
 
 class WorkScheduleRowRead(BaseModel):
@@ -31,7 +41,7 @@ class WorkScheduleRowRead(BaseModel):
     role_code: str
     role_name: str
     is_active: bool
-    center: WorkScheduleCenterRead | None = None
+    # График этого медцентра; пусто, если его не задали.
     pattern: str | None = None
     shift_start: str | None = None
     shift_end: str | None = None
@@ -44,6 +54,8 @@ class WorkScheduleMonthRead(BaseModel):
     days_in_month: int
     # Админ редактирует таблицу; врач и оператор только смотрят.
     can_edit: bool
+    # Таблица одного медцентра; centers — вкладки, которые видит смотрящий.
+    center: WorkScheduleCenterRead
     centers: list[WorkScheduleCenterRead] = Field(default_factory=list)
     rows: list[WorkScheduleRowRead] = Field(default_factory=list)
 
@@ -79,6 +91,7 @@ class WorkScheduleStatsRead(BaseModel):
     year: int
     month: int
     days_in_month: int
+    center: WorkScheduleCenterRead
     rows: list[WorkScheduleStatsRowRead] = Field(default_factory=list)
 
 
@@ -92,12 +105,13 @@ class WorkScheduleChangeRead(BaseModel):
     changed: int
 
 
-# Тела запросов.
+# Тела запросов. Медцентр правок передается параметром center_id в адресе.
 
 
 class WorkScheduleGenerate(BaseModel):
     year: int = Field(ge=2000, le=2100)
     month: int = Field(ge=1, le=12)
+    center_id: int
 
 
 class WorkScheduleDayUpdate(BaseModel):
