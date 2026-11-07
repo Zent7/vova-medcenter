@@ -233,5 +233,68 @@ class MarksTests(WorkStatusTests):
             self.assertEqual(len(month.days), 30)
 
 
+class EarlyLeaveRoundingTests(WorkStatusTests):
+    """Уход раньше конца смены не больше чем на 15 минут считается по плану; дальше время идет как есть."""
+
+    def _day_3_november(self, leave, start=(9, 0), now=msk(7, 12)) -> dict:
+        """Смена 3 ноября с 09:00 до 18:00; отметка с start до leave (часы, минуты), без leave — открыта."""
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            db.add(
+                StaffScheduleDay(
+                    user_id=anna.id, work_date=date(2026, 11, 3), kind="shift",
+                    start_time=time(9), end_time=time(18), source="manual",
+                )
+            )
+            ended = None if leave is None else utc(3, *leave)
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=utc(3, *start), ended_at=ended))
+            db.commit()
+
+            payload = service.month_payload(db, anna, 2026, 11, now)
+
+        return {day["work_date"]: day for day in payload["days"]}[date(2026, 11, 3)]
+
+    def test_leaving_ten_minutes_early_counts_the_whole_shift(self):
+        day = self._day_3_november((17, 50))
+
+        self.assertEqual((day["plan_hours"], day["fact_hours"], day["overtime_hours"]), (9.0, 9.0, 0.0))
+
+    def test_leaving_exactly_fifteen_minutes_early_counts_the_whole_shift(self):
+        self.assertEqual(self._day_3_november((17, 45))["fact_hours"], 9.0)
+
+    def test_leaving_sixteen_minutes_early_counts_the_time_on_the_counter(self):
+        self.assertEqual(self._day_3_november((17, 44))["fact_hours"], 8.73)  # 8 ч 44 мин
+
+    def test_leaving_after_the_end_is_overtime_as_before(self):
+        day = self._day_3_november((18, 20))
+
+        self.assertEqual((day["fact_hours"], day["overtime_hours"]), (9.33, 0.33))
+
+    def test_a_mark_that_is_still_open_is_not_rounded(self):
+        # Сотрудник еще на работе: в 17:50 факт 8 ч 50 мин, а не конец смены.
+        self.assertEqual(self._day_3_november(None, now=msk(3, 17, 50))["fact_hours"], 8.83)
+
+    def test_a_mark_that_starts_in_the_last_fifteen_minutes_is_not_rounded(self):
+        self.assertEqual(self._day_3_november((17, 55), start=(17, 50))["fact_hours"], 0.08)  # 5 минут как есть
+
+    def test_night_shift_that_ends_early_in_the_next_month_is_rounded_too(self):
+        with self.Session() as db:
+            anna = self._user(db, "anna")
+            db.add(
+                StaffScheduleDay(
+                    user_id=anna.id, work_date=date(2026, 10, 31), kind="shift",
+                    start_time=time(20), end_time=time(8), source="manual",
+                )
+            )
+            # Смена 31 октября с 20:00 до 08:00; отметка кончилась 1 ноября в 07:50 и округляется до 08:00.
+            started = datetime(2026, 10, 31, 20, tzinfo=MSK).astimezone(timezone.utc)
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=started, ended_at=utc(1, 7, 50)))
+            db.commit()
+
+            payload = service.month_payload(db, anna, 2026, 11, msk(7, 12))
+
+        self.assertEqual({day["work_date"]: day for day in payload["days"]}[date(2026, 11, 1)]["fact_hours"], 8.0)
+
+
 if __name__ == "__main__":
     unittest.main()

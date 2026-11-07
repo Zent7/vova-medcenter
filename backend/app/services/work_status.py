@@ -2,6 +2,8 @@
 
 План дня берется из графика (`staff_schedule_days`) и складывается по медцентрам, в которых сотрудник стоит в этот день; факт — из отметок. Отметка, которая
 перешла через полночь, делится по местным дням. Переработка — факт сверх плана дня.
+
+Уход с работы не раньше чем за 15 минут до конца смены считается по плану: отметка «С работы» округляется до конца смены (`round_early_leave`).
 """
 
 from collections import defaultdict
@@ -18,6 +20,9 @@ from app.models.work_time_entry import WorkTimeEntry
 from app.services import work_schedule as schedule
 
 FALLBACK_TIMEZONE = "Europe/Moscow"
+
+# Уход раньше конца смены не больше чем на это время считается по плану: отметка «С работы» округляется до конца смены.
+EARLY_LEAVE_GRACE = timedelta(minutes=15)
 
 
 def local_zone() -> ZoneInfo:
@@ -95,6 +100,47 @@ def plan_minutes(row: StaffScheduleDay | None) -> int:
     return schedule.shift_minutes(row.start_time, row.end_time)
 
 
+def planned_ends(rows: list[StaffScheduleDay]) -> list[datetime]:
+    """Плановые концы смен в UTC. Ночная смена кончается в следующем местном дне."""
+    zone = local_zone()
+    ends = []
+    for row in rows:
+        if row.kind != "shift" or row.start_time is None or row.end_time is None:
+            continue
+        start = datetime.combine(row.work_date, row.start_time, tzinfo=zone)
+        end = start + timedelta(minutes=schedule.shift_minutes(row.start_time, row.end_time))
+        ends.append(end.astimezone(timezone.utc))
+    return ends
+
+
+def round_early_leave(started: datetime, ended: datetime, ends: list[datetime]) -> datetime:
+    """Уход не раньше чем за EARLY_LEAVE_GRACE до конца смены считается по плану: возвращает конец смены.
+
+    Отметка, которая началась уже в эти последние минуты смены, не округляется: ее время идет как есть.
+    Если концов несколько (смены в двух медцентрах), берется ближайший к уходу.
+    """
+    candidates = [
+        end
+        for end in ends
+        if ended <= end <= ended + EARLY_LEAVE_GRACE and started < end - EARLY_LEAVE_GRACE
+    ]
+    return min(candidates) if candidates else ended
+
+
+def planned_ends_by_user(db: Session, first: date, last: date, user_id: int | None = None) -> dict[int, list[datetime]]:
+    """Плановые концы смен по сотрудникам. Берем и соседние дни: ночная смена последнего дня кончается в следующем."""
+    query = select(StaffScheduleDay).where(
+        StaffScheduleDay.kind == "shift",
+        StaffScheduleDay.work_date.between(first - timedelta(days=1), last + timedelta(days=1)),
+    )
+    if user_id is not None:
+        query = query.where(StaffScheduleDay.user_id == user_id)
+    grouped: dict[int, list[StaffScheduleDay]] = defaultdict(list)
+    for row in db.execute(query).scalars():
+        grouped[row.user_id].append(row)
+    return {owner_id: planned_ends(rows) for owner_id, rows in grouped.items()}
+
+
 def period_entries(db: Session, first: date, last: date, user_id: int | None = None) -> list[WorkTimeEntry]:
     """Отметки, которые пересекают период с first по last по местным дням. user_id — один сотрудник."""
     zone = local_zone()
@@ -109,11 +155,16 @@ def period_entries(db: Session, first: date, last: date, user_id: int | None = N
     return list(db.execute(query).scalars())
 
 
-def fact_minutes_by_day(entries: list[WorkTimeEntry], first: date, last: date, now: datetime) -> dict[date, int]:
-    """Факт по местным дням: минуты отметок. Открытая отметка идет до now."""
+def fact_minutes_by_day(
+    entries: list[WorkTimeEntry], first: date, last: date, now: datetime, ends: list[datetime] | None = None
+) -> dict[date, int]:
+    """Факт по местным дням: минуты отметок. Открытая отметка идет до now; закрытая округляется по плану."""
     fact: dict[date, int] = {}
     for entry in entries:
-        ended = as_utc(entry.ended_at) if entry.ended_at is not None else now
+        if entry.ended_at is not None:
+            ended = round_early_leave(as_utc(entry.started_at), as_utc(entry.ended_at), ends or [])
+        else:
+            ended = now
         for day, minutes in minutes_by_local_day(entry.started_at, ended, first, last).items():
             fact[day] = fact.get(day, 0) + minutes
     return fact
@@ -124,7 +175,11 @@ def fact_minutes_by_user(db: Session, first: date, last: date, now: datetime) ->
     grouped: dict[int, list[WorkTimeEntry]] = defaultdict(list)
     for entry in period_entries(db, first, last):
         grouped[entry.user_id].append(entry)
-    return {user_id: fact_minutes_by_day(entries, first, last, now) for user_id, entries in grouped.items()}
+    planned = planned_ends_by_user(db, first, last)
+    return {
+        user_id: fact_minutes_by_day(entries, first, last, now, planned.get(user_id))
+        for user_id, entries in grouped.items()
+    }
 
 
 def day_kind(rows: list[StaffScheduleDay]) -> str | None:
@@ -150,7 +205,8 @@ def month_payload(db: Session, user: User, year: int, month: int, now: datetime)
     for row in plan_rows:
         by_date[row.work_date].append(row)
 
-    fact_minutes = fact_minutes_by_day(period_entries(db, first, last, user.id), first, last, now)
+    ends = planned_ends_by_user(db, first, last, user.id).get(user.id)
+    fact_minutes = fact_minutes_by_day(period_entries(db, first, last, user.id), first, last, now, ends)
 
     days = []
     total_plan = total_fact = total_over = 0
