@@ -443,6 +443,51 @@ test("список без отметок: пустое сообщение, та�
   assert.doesNotMatch(html, /wst-marks__table/);
 });
 
+test("ручная правка факта в списке: строка помечена «вручную», красной не бывает даже длиннее 12 часов", () => {
+  const { year, month } = currentMonth();
+  const mm = String(month).padStart(2, "0");
+  const admin = loadSchedule("admin");
+  admin.wsState.grid = sampleGrid({ year, month });
+  admin.wsState.year = year;
+  admin.wsState.month = month;
+  admin.wsState.selectedUserId = 1;
+  admin.wsState.statsOpen = true;
+  admin.wsState.statsView = "list";
+  admin.wsState.stats = sampleStats({
+    year,
+    month,
+    rows: [
+      statsRow({
+        year,
+        month,
+        userId: 1,
+        name: "Анна",
+        rate: 300,
+        planHours: 24,
+        factHours: 22,
+        // Как отдает сервер: правка 2 числа без отметки (09:00–22:00, 13 часов) и отметка 1 числа; новые сверху.
+        marks: [
+          { started_at: `${year}-${mm}-02T06:00:00Z`, ended_at: `${year}-${mm}-02T19:00:00Z`, duration_seconds: 13 * 3600, manual: true },
+          { started_at: `${year}-${mm}-01T05:50:00Z`, ended_at: `${year}-${mm}-01T10:00:00Z`, duration_seconds: 4 * 3600 + 600 },
+        ],
+      }),
+    ],
+  });
+  const html = admin.renderWorkScheduleContent();
+  const table = html.match(/<table class="ws__summary wst-marks__table">[\s\S]*?<\/table>/)?.[0] ?? "";
+  const stamp = (d, time) => `<span class="wst-marks__date">${String(d).padStart(2, "0")}-${mm}-${year}</span> ${time}`;
+  assert.match(
+    table,
+    new RegExp(
+      `<tr class="wst-marks__row" title="Ручная правка факта: в статистике день считается по ней, а не по отметкам"><td>Анна<span class="wst-marks__manual">вручную</span></td><td>${stamp(2, "09:00:00")}</td><td>${stamp(2, "22:00:00")}</td><td>13:00:00</td></tr>`,
+    ),
+  );
+  assert.match(table, new RegExp(`<tr class="wst-marks__row"><td>Анна</td><td>${stamp(1, "08:50:00")}</td><td>${stamp(1, "13:00:00")}</td><td>04:10:00</td></tr>`));
+  assert.doesNotMatch(table, /wst-marks__row--long/, "правка длиннее 12 часов не красная: это не отметка");
+  assert.equal((table.match(/вручную/g) || []).length, 1, "подпись только у правки");
+  assert.match(stylesSource, /\.wst-marks__manual \{/);
+});
+
 test("статистику открывают врач и оператор сами; админу без выбранного сотрудника — нет", () => {
   const doctor = loadSchedule("doctor", 2);
   doctor.wsState.statsOpen = true;
@@ -587,7 +632,7 @@ test("app.js: выход сбрасывает график, перерисовк
 });
 
 test("index.html: модуль графика грузится до app.js, токен у app.js, модуля и стилей один", () => {
-  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*marks-list-v1"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*manual-marks-v1"><\/script>/);
   assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
   assert.match(indexSource, /styles\.css\?v=[\w-]*audit-journal-v1/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("app.js?v="), "модуль раньше app.js");

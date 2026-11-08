@@ -75,6 +75,11 @@ class WorkScheduleTotalsRead(BaseModel):
     amount: float | None = None
 
 
+class WorkScheduleMarkRead(WorkStatusMarkRead):
+    # Ручная правка факта администратором («Редактировать факт»): время «со скольки — до скольки» в день смены.
+    manual: bool = False
+
+
 class WorkScheduleStatsRowRead(BaseModel):
     user_id: int
     full_name: str
@@ -86,8 +91,8 @@ class WorkScheduleStatsRowRead(BaseModel):
     # Ставка видна только админу: врачу и оператору отдается None.
     hourly_rate: float | None = None
     days: list[WorkScheduleHoursDayRead] = Field(default_factory=list)
-    # Отметки «На работу» за месяц; врачу и оператору приходят только свои.
-    marks: list[WorkStatusMarkRead] = Field(default_factory=list)
+    # Отметки «На работу» и ручные правки факта за месяц; врачу и оператору приходят только свои.
+    marks: list[WorkScheduleMarkRead] = Field(default_factory=list)
     plan: WorkScheduleTotalsRead
     fact: WorkScheduleTotalsRead
 

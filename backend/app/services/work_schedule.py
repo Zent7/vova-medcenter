@@ -11,7 +11,7 @@
 
 from calendar import monthrange
 from collections import Counter, defaultdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -43,13 +43,16 @@ def month_bounds(year: int, month: int) -> tuple[date, date]:
     return date(year, month, 1), date(year, month, monthrange(year, month)[1])
 
 
+def local_zone() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.xml_exports_timezone)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("Europe/Moscow")
+
+
 def local_today() -> date:
     """Сегодня по местному времени (Москва): план и отметки считаются по местным дням."""
-    try:
-        zone = ZoneInfo(settings.xml_exports_timezone)
-    except ZoneInfoNotFoundError:
-        zone = ZoneInfo("Europe/Moscow")
-    return datetime.now(zone).date()
+    return datetime.now(local_zone()).date()
 
 
 def days_in_range(first: date, last: date) -> list[date]:
@@ -309,6 +312,30 @@ def month_payload(db: Session, viewer: User, center: Center, year: int, month: i
     }
 
 
+def manual_fact_marks(rows: list[StaffScheduleDay]) -> list[dict]:
+    """Ручные правки факта по дням смены в виде отметок для списка: «со скольки — до скольки» по местному времени.
+
+    Правка заменяет отметки своего дня в факте (см. stats_payload), поэтому день без отметок в списке иначе не виден.
+    Ночная правка кончается в следующие сутки, так же как в факте (shift_minutes).
+    """
+    zone = local_zone()
+    marks = []
+    for row in rows:
+        if row.kind != "shift" or row.fact_start_time is None or row.fact_end_time is None:
+            continue
+        minutes = shift_minutes(row.fact_start_time, row.fact_end_time)
+        started = datetime.combine(row.work_date, row.fact_start_time, tzinfo=zone).astimezone(timezone.utc)
+        marks.append(
+            {
+                "started_at": started,
+                "ended_at": started + timedelta(minutes=minutes),
+                "duration_seconds": minutes * 60,
+                "manual": True,
+            }
+        )
+    return marks
+
+
 def stats_payload(
     db: Session,
     center: Center,
@@ -328,7 +355,8 @@ def stats_payload(
     Факт дня — ручная правка на смене этого медцентра, если она задана; иначе минуты отметок «На работу»
     за местный день (`counted_minutes` от work_status.fact_minutes_by_user). Отметки дня считаются один
     раз: в медцентре, где у сотрудника смена в этот день (см. _mark_owners). Без отметок факт нулевой.
-    `marks` — отметки каждого сотрудника за месяц (work_status.marks_by_user) для списка в статистике.
+    `marks` — отметки каждого сотрудника за месяц (work_status.marks_by_user) для списка в статистике. К ним
+    добавляются ручные правки факта этого медцентра (`manual`), чтобы каждый правленый день был в списке.
     """
     first, last = month_bounds(year, month)
     days_by_user = _days_by_user(db, first, last, center.id)
@@ -362,6 +390,12 @@ def stats_payload(
                 {"work_date": work_date, "plan_hours": minutes_to_hours(plan), "fact_hours": minutes_to_hours(fact)}
             )
         rate = user.hourly_rate if with_money else None
+        # Список за месяц: отметки «На работу» и ручные правки факта, новые сверху.
+        user_marks = sorted(
+            [*(marks or {}).get(user.id, []), *manual_fact_marks(days_by_user.get(user.id, []))],
+            key=lambda mark: mark["started_at"],
+            reverse=True,
+        )
         rows.append(
             {
                 "user_id": user.id,
@@ -373,7 +407,7 @@ def stats_payload(
                 "shift_end": format_time(schedule.schedule_end) if schedule else None,
                 "hourly_rate": float(rate) if rate is not None else None,
                 "days": day_items,
-                "marks": (marks or {}).get(user.id, []),
+                "marks": user_marks,
                 "plan": {
                     "days": plan_days,
                     "hours": minutes_to_hours(plan_minutes_total),

@@ -456,6 +456,42 @@ class StatsTests(WorkScheduleTests):
             self.assertEqual([row.user_id for row in staff_rows], [anna.id])
             self.assertEqual([mark.duration_seconds for mark in staff_rows[0].marks], [4 * 3600], "чужих отметок нет")
 
+    def test_manual_fact_days_are_listed_with_the_marks_and_marked_as_manual(self):
+        with self.Session() as db:
+            self._anchor(db, "anna", date(2026, 10, 30))
+            center = self._center(db, "center-a")
+            service.generate_month(db, center, 2026, 11)
+            anna = self._user(db, "anna")
+            db.add(WorkTimeEntry(user_id=anna.id, started_at=utc(1, 8, 50), ended_at=utc(1, 13)))
+            service.put_facts(
+                db,
+                anna,
+                center.id,
+                [
+                    {"work_date": date(2026, 11, 1), "start_time": time(9), "end_time": time(10)},  # поверх отметки
+                    {"work_date": date(2026, 11, 2), "start_time": time(9), "end_time": time(18)},  # день без отметок
+                    {"work_date": date(2026, 11, 7), "start_time": time(22), "end_time": time(6)},  # ночная правка
+                ],
+            )
+            db.commit()
+
+            routed = routes.read_stats(year=2026, month=11, center_id=center.id, viewer=self._user(db, "admin"), db=db)
+
+            anna_row = next(item for item in routed.rows if item.full_name == "Анна")
+            # Список новые сверху: каждая ручная правка видна, даже без отметок за тот день; отметка остается как была.
+            self.assertEqual(
+                [(mark.started_at, mark.ended_at, mark.duration_seconds, mark.manual) for mark in anna_row.marks],
+                [
+                    (utc(7, 22), utc(8, 6), 8 * 3600, True),
+                    (utc(2, 9), utc(2, 18), 9 * 3600, True),
+                    (utc(1, 9), utc(1, 10), 3600, True),
+                    (utc(1, 8, 50), utc(1, 13), 4 * 3600 + 600, False),
+                ],
+            )
+            # Факт тех же дней идет по правкам: 1 ноября 1 ч вместо отметки, 2 ноября 9 ч, 7 ноября 8 ч через полночь.
+            hours = {day.work_date: day.fact_hours for day in anna_row.days}
+            self.assertEqual((hours[date(2026, 11, 1)], hours[date(2026, 11, 2)], hours[date(2026, 11, 7)]), (1.0, 9.0, 8.0))
+
     def test_amounts_are_empty_when_rate_is_not_set(self):
         with self.Session() as db:
             service.generate_month(db, self._center(db, "center-a"), 2026, 11)

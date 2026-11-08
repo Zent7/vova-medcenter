@@ -508,8 +508,9 @@ function wsRenderStatsPanel() {
     </div>`;
 }
 
-// Список «Списки»: отметки месяца из поля marks (новые сверху, время как отмечено). Открытая отметка
-// и отметка длиннее 12 часов красные, как в блоке «Статуса»; сам вид строк и даты берется оттуда же (work-status.js).
+// Список «Списки»: отметки месяца из поля marks и ручные правки факта (mark.manual), новые сверху, время как отмечено.
+// Открытая отметка и отметка длиннее 12 часов красные, как в блоке «Статуса»; правка красной не бывает, она помечена
+// словом «вручную». Сам вид строк и даты берется из work-status.js.
 function wsRenderMarksTable(stat) {
   const marks = Array.isArray(stat.marks) ? stat.marks : [];
   if (!marks.length) {
@@ -517,14 +518,17 @@ function wsRenderMarksTable(stat) {
   }
   const lines = marks
     .map((mark) => {
-      const flag = wstMarkFlag(mark);
+      const flag = mark.manual ? "" : wstMarkFlag(mark);
       const rowClass = flag ? `wst-marks__row wst-marks__row--${flag}` : "wst-marks__row";
-      const hint =
-        flag === "open" ? "Нет отметки «С работы»" : flag === "long" ? "Дольше 12 часов: проверьте, не забыли ли отметить уход" : "";
+      let hint = "";
+      if (flag === "open") hint = "Нет отметки «С работы»";
+      else if (flag === "long") hint = "Дольше 12 часов: проверьте, не забыли ли отметить уход";
+      else if (mark.manual) hint = "Ручная правка факта: в статистике день считается по ней, а не по отметкам";
+      const name = `${wsEscape(stat.full_name)}${mark.manual ? '<span class="wst-marks__manual">вручную</span>' : ""}`;
       const end = mark.ended_at ? wstStampHtml(mark.ended_at) : "на работе";
       return (
         `<tr class="${rowClass}"${hint ? ` title="${wsEscape(hint)}"` : ""}>` +
-        `<td>${wsEscape(stat.full_name)}</td><td>${wstStampHtml(mark.started_at)}</td><td>${end}</td>` +
+        `<td>${name}</td><td>${wstStampHtml(mark.started_at)}</td><td>${end}</td>` +
         `<td>${wstFormatElapsed(mark.duration_seconds)}</td></tr>`
       );
     })
