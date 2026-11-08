@@ -895,11 +895,23 @@
     ].filter(Boolean).join("\n");
   }
 
+  // Дата рождения в карточках председателя и психиатра берётся только из записи клиента:
+  // поле карточки её не меняет, а печать читает дату клиента. Пустая дата и заглушка
+  // 01.01.1900 показываются как «не указана».
+  function birthDateStatic(client, tag = "span") {
+    const placeholder = "01.01.1900";
+    const value = client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
+    const known = Boolean(value) && value !== placeholder;
+    const classes = known
+      ? "doctor-classic-input doctor-classic-static"
+      : "doctor-classic-input doctor-classic-static doctor-classic-static--empty";
+    return `<${tag} class="${classes}">${known ? escapeHtml(value) : "не указана"}</${tag}>`;
+  }
+
   function renderSanatoriumChairmanClassic(template, exam, client, chairmanInfo) {
     const fields = exam.fields || {};
     const chairmanType = chairmanInfo.type || "certificate072";
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
     const therapistExam = window.getDoctorExam?.(exam.clientId, exam.visitId, "therapist") || null;
     const fieldValue = (key, fallback = "") => String(fields[key] ?? fallback ?? "");
     const textInput = (name, value = "", options = {}) => `
@@ -979,7 +991,7 @@
             </div>
 
             <div class="sanatorium-patient-strip">
-              <label><span>Дата рождения</span>${textInput("birthDate", birthDate, { dateMask: true })}</label>
+              <label><span>Дата рождения</span>${birthDateStatic(client)}</label>
               <label class="sanatorium-patient-strip__fio"><span>Ф.И.О.</span>${textInput("patientFullName", fullName, { readonly: true })}</label>
               <div class="sanatorium-patient-strip__flags">
                 ${renderCheckboxField("hasGlasses", !!fields.hasGlasses, "очки")}
@@ -1130,7 +1142,6 @@
   function renderCertificate082ChairmanClassic(template, exam, client, chairmanInfo) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
     const healthOptions = [
       "Здоров",
       "Не здоров",
@@ -1175,7 +1186,7 @@
             <div class="certificate082-patient-row">
               <label>
                 <span>Дата рождения</span>
-                <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
+                ${birthDateStatic(client)}
               </label>
               <label class="certificate082-patient-row__fio">
                 <span>Ф.И.О.</span>
@@ -1226,7 +1237,6 @@
   function renderGtoChairmanClassic(template, exam, client, chairmanInfo) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
     // В старых карточках этих полей нет. Допуск в них ко всему, ограничений нет — как в новой.
     const isAdmitted = (key) => fields[key] == null || fields[key] === "" || Boolean(fields[key]);
     const hasRestrictions = fields.gtoRestrictions === "ДА";
@@ -1264,7 +1274,7 @@
             <div class="gto-chairman-patient">
               <label>
                 <span>Дата рождения</span>
-                <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
+                ${birthDateStatic(client)}
               </label>
               <label>
                 <span>Ф.И.О.</span>
@@ -1324,7 +1334,6 @@
   function renderCertificate095ChairmanClassic(template, exam, client, chairmanInfo) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
     // В старых карточках этих полей нет: показываем то же, что по умолчанию печатает сервер.
     const isMarked = (key, byDefault) => (fields[key] == null || fields[key] === "" ? byDefault : Boolean(fields[key]));
     const hasContact = fields.certificate095InfectiousContact === "ДА";
@@ -1366,7 +1375,7 @@
               </label>
               <div>
                 <span>Дата рождения</span>
-                <div class="doctor-classic-input certificate095-static">${escapeHtml(birthDate)}</div>
+                ${birthDateStatic(client, "div")}
               </div>
             </div>
 
@@ -1441,7 +1450,6 @@
   function renderChairmanClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = fields.birthDate || client?.birthDate || window.formatApiDate?.(client?.rawApiClient?.birth_date) || "";
     const emptyLegacyValue = (value, legacyValues = []) => {
       const normalized = String(value ?? "");
       return legacyValues.includes(normalized) ? "" : normalized;
@@ -1561,7 +1569,7 @@
               <div class="chairman-top-left">
                 <div class="chairman-mini-row">
                   <label class="chairman-mini-label">дата рождения</label>
-                  <input class="doctor-classic-input" type="text" name="birthDate" data-date-mask value="${escapeHtml(birthDate)}" />
+                  ${birthDateStatic(client)}
                 </div>
               </div>
 
@@ -1778,7 +1786,6 @@
     function renderPsychiatristClassic(template, exam, client) {
     const fields = exam.fields || {};
     const fullName = client?.fullName || client?.name || client?.fio || "Клиент";
-    const birthDate = fields.birthDate || client?.birthDate || "";
     const address = fields.address || client?.address || "";
     const activeTab = fields.tab || "Анамнез";
 
@@ -1817,12 +1824,7 @@
               <div class="psy-row psy-row--meta-grid">
                 <div class="psy-meta-item">
                   <label class="psy-small-label">Дата рождения</label>
-                  <input
-                    class="doctor-classic-input"
-                    type="text"
-                    name="birthDate"
-                    value="${escapeHtml(birthDate)}"
-                  />
+                  ${birthDateStatic(client, "div")}
                 </div>
 
                 <div class="psy-meta-item psy-meta-item--address">
@@ -2594,8 +2596,9 @@
         el.addEventListener("focus", (e) => e.stopPropagation());
       });
 
+      // Поле «Мед. требования» открывает подбор уже по фокусу, поэтому при открытии карточки его пропускаем.
       const first = modal.querySelector(
-        'select, input:not([readonly]):not([type="radio"]), textarea'
+        'select, input:not([readonly]):not([type="radio"]), textarea:not([data-medical-requirements-input])'
       );
 
       if (first) {

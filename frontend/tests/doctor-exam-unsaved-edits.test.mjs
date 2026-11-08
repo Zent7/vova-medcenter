@@ -178,5 +178,5 @@ test("флаг несохранённого ввода ставит только
 
 test("index.html грузит app.js с токеном этой правки", () => {
   assert.match(indexHtml, /app\.js\?v=[\w-]*audit-journal-v1/);
-  assert.match(indexHtml, /doctor-exam-modal\.js\?v=20261024-doctor-unsaved-edits-v1/);
+  assert.match(indexHtml, /doctor-exam-modal\.js\?v=[\w-]*doctor-unsaved-edits-v1/);
 });

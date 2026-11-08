@@ -4599,7 +4599,6 @@ function applyCertificateDefaultsToChairmanFields(fields = {}, visit = null) {
     });
   }
 
-  setIfBlank("birthDate", client?.birthDate || formatApiDate(client?.rawApiClient?.birth_date) || "");
   setIfBlank("examDate", visitDate);
   setIfBlankOrAuto("ekg", buildChairmanAutoEkgText(ekgDate), isChairmanAutoEkgText);
   if (formType === "guard" && String(result.ekgConclusion ?? "").trim().startsWith(`${CHAIRMAN_AUTO_EKG_CONCLUSION_PREFIX} от `)) {
@@ -9537,7 +9536,7 @@ async function saveMedicalRecordForm() {
         last_name: fullName.lastName || raw.last_name || "Без фамилии",
         first_name: fullName.firstName || raw.first_name || "Без имени",
         middle_name: fullName.middleName || raw.middle_name || null,
-        birth_date: parseRuDateToIso(formData.get("birthDate")) || raw.birth_date || "1900-01-01",
+        birth_date: parseRuDateToIso(formData.get("birthDate"), "") || raw.birth_date || "1900-01-01",
         sex: formatMedicalRecordSexForApi(formData.get("sex")) ?? raw.sex ?? null,
         phone: getMedicalRecordTextValue(formData, "phone"),
         email: raw.email || null,

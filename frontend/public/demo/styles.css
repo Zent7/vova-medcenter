@@ -3471,11 +3471,6 @@ body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
   font-weight: 800;
 }
 
-.certificate095-static {
-  min-height: 34px;
-  background: #eef0f2;
-}
-
 .certificate095-section {
   display: grid;
   gap: 10px;
@@ -3847,6 +3842,22 @@ body[data-page="dashboard"] .sketch-table__grid--row > .excel-doctor-mark {
   background: #ffffff;
   color: var(--text);
   font: inherit;
+}
+
+/* Дата рождения в карточках председателя и психиатра: только показ, поле не редактируется.
+   Составной селектор перебивает `label > span` (подпись поля), иначе значение выглядело бы подписью. */
+.doctor-classic-input.doctor-classic-static {
+  display: block;
+  min-height: 34px;
+  background: #eef0f2;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: 400;
+}
+
+.doctor-classic-input.doctor-classic-static--empty {
+  color: #6b7280;
+  font-style: italic;
 }
 
 .doctor-classic-textarea,

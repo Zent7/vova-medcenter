@@ -62,7 +62,8 @@ test("карточка ГТО показывает ФИО, дату рожден
   const html = renderChairmanCard();
 
   assert.ok(html.includes("Иванов Иван Иванович"));
-  assert.match(inputTags(html, "birthDate")[0], /value="28\.01\.1990"/);
+  assert.equal(inputTags(html, "birthDate").length, 0, "дата рождения не поле ввода");
+  assert.match(html, /Дата рождения<\/span>\s*<span class="doctor-classic-input doctor-classic-static">28\.01\.1990<\/span>/);
   for (const key of TEXT_KEYS) {
     assert.equal(inputTags(html, key).length, 1, `нет поля ${key}`);
   }
