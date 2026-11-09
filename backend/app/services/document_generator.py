@@ -2364,6 +2364,16 @@ def _health_group_mark(value: object) -> str:
     return match.group(1).upper() if match else text
 
 
+def _prof_harmful_factors(context: dict[str, str], exams_by_role: dict[str, DoctorExam]) -> str:
+    """Строка «Вредный производственный фактор» в 29н: её председатель пишет
+    в «Пункты вредности» своей карточки (поле medicalRequirements). Пока там
+    пусто, печатаем вредные факторы клиента из его записи."""
+    chairman = exams_by_role.get("chairman")
+    requirement = _first_field_value(chairman.fields_json or {}, "medicalRequirements") if chairman else ""
+    harmfulness = requirement or context.get("Harmfulness", "")
+    return "" if harmfulness == "не указано" else harmfulness
+
+
 def _fill_prof_conclusion_29n_sheet(
     source_sheet,
     target_sheet,
@@ -2377,9 +2387,7 @@ def _fill_prof_conclusion_29n_sheet(
     position = _first_non_empty(context.get("Post"), context.get("PositionApplied"))
     if position == "не указано":
         position = ""
-    harmfulness = context.get("Harmfulness", "")
-    if harmfulness == "не указано":
-        harmfulness = ""
+    harmfulness = _prof_harmful_factors(context, exams_by_role)
     chairman = _build_exam_export(exams_by_role.get("chairman"))
     therapist = _exam_export_with_client_doctor(exams_by_role.get("therapist"), client, "therapist")
     psychiatrist = _exam_export_with_client_doctor(
@@ -3675,9 +3683,7 @@ def _fill_prof_extract_fields(
     position = _first_non_empty(context.get("Post"), context.get("PositionApplied"))
     if position == "не указано":
         position = ""
-    harmfulness = context.get("Harmfulness", "")
-    if harmfulness == "не указано":
-        harmfulness = ""
+    harmfulness = _prof_harmful_factors(context, exams_by_role)
     therapist = _exam_export_with_client_doctor(exams_by_role.get("therapist"), client, "therapist")
     chairman = _build_exam_export(exams_by_role.get("chairman"))
     signer = _first_non_empty(chairman.get("doctor"), therapist.get("doctor"), context.get("Doctor"))

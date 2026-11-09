@@ -7,6 +7,7 @@ import unittest
 import xlrd
 from xlutils.copy import copy as copy_xls_workbook
 
+from app.models.doctor_exam import DoctorExam
 from app.services.document_generator import _generate_runtime_xls, _health_group_mark
 from app.services.new_xls_templates import (
     LEGACY_XLS_TEMPLATE_BY_FILE,
@@ -38,7 +39,7 @@ EXPECTED_PRINTED_VALUES = {
 }
 
 
-def print_conclusion(template_path: Path, output_path: Path) -> None:
+def print_conclusion(template_path: Path, output_path: Path, exams=(), harmfulness="Приложение 1 п. 4.1") -> None:
     _generate_runtime_xls(
         template_path,
         output_path,
@@ -49,7 +50,7 @@ def print_conclusion(template_path: Path, output_path: Path) -> None:
             "CompanyName": "ООО Проверка",
             "Department": "Цех № 3",
             "Post": "Электрогазосварщик",
-            "Harmfulness": "Приложение 1 п. 4.1",
+            "Harmfulness": harmfulness,
             "HealthGroup": "II группа здоровья",
             "BlankNumber": "7654321",
         },
@@ -62,7 +63,7 @@ def print_conclusion(template_path: Path, output_path: Path) -> None:
             doctor_psychiatrist="Психиатров П.П.",
         ),
         SimpleNamespace(encounter_date=date(2026, 9, 21)),
-        {"exams": [], "service_names": []},
+        {"exams": list(exams), "service_names": []},
     )
 
 
@@ -167,6 +168,75 @@ class ProfConclusion29nPrintTests(unittest.TestCase):
             print_conclusion(customer_copy, output_path)
 
             self.assertEqual(printed_values(customer_copy, output_path), EXPECTED_PRINTED_VALUES)
+
+
+# Выписка из Амб карты (профа): строка «Наименование производственного фактора, вида работы с указанием пункта»
+EXTRACT_TEMPLATE = TEMPLATES_DIR / "Выписка из Амб карты (профа).xls"
+EXTRACT_HARMFUL_FACTOR_CELLS = ((49, 1), (74, 42))  # «Вредности» и «Вредности повтор»
+
+
+class ProfConclusion29nHarmfulFactorsTests(unittest.TestCase):
+    """Строка «Вредный производственный фактор или вид работы» (метка «Вредности»).
+
+    Председатель пишет в «Пункты вредности» карточки, например «приказ 29н п 11.2 п 18.3»;
+    пока там пусто, печатаются вредные факторы клиента.
+    """
+
+    def printed_harmful_factors(self, exams, harmfulness: str) -> str:
+        template_path = TEMPLATES_DIR / SPEC.file_name
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            output_path = Path(temporary_dir) / "printed.xls"
+
+            print_conclusion(template_path, output_path, exams=exams, harmfulness=harmfulness)
+
+            return printed_values(template_path, output_path)["harmfulness"]
+
+    def test_requirement_fills_the_line_when_the_client_has_no_factors(self):
+        exam = DoctorExam(doctor_role_id="chairman", fields_json={"medicalRequirements": "приказ 29н п 11.2 п 18.3"})
+
+        self.assertEqual(self.printed_harmful_factors([exam], "не указано"), "приказ 29н п 11.2 п 18.3")
+
+    def test_requirement_takes_precedence_over_the_client_factors(self):
+        exam = DoctorExam(doctor_role_id="chairman", fields_json={"medicalRequirements": "приказ 29н п 11.2 п 18.3"})
+
+        self.assertEqual(self.printed_harmful_factors([exam], "Приложение 1 п. 4.1"), "приказ 29н п 11.2 п 18.3")
+
+    def test_client_factors_print_when_the_requirement_is_blank(self):
+        exam = DoctorExam(doctor_role_id="chairman", fields_json={"medicalRequirements": "   "})
+
+        self.assertEqual(self.printed_harmful_factors([exam], "Приложение 1 п. 4.1"), "Приложение 1 п. 4.1")
+
+    def test_line_stays_empty_without_any_factors(self):
+        self.assertEqual(self.printed_harmful_factors([], "не указано"), "")
+
+
+class ProfExtractHarmfulFactorsTests(unittest.TestCase):
+    def test_requirement_prints_in_both_harmful_factor_cells(self):
+        exam = DoctorExam(doctor_role_id="chairman", fields_json={"medicalRequirements": "приказ 29н п 11.2 п 18.3"})
+        client = SimpleNamespace(
+            birth_date=date(1988, 4, 12),
+            document_type="Паспорт РФ",
+            admission_category="",
+            legacy_payload_json={},
+            doctor_therapist="",
+        )
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            output_path = Path(temporary_dir) / EXTRACT_TEMPLATE.name
+            _generate_runtime_xls(
+                EXTRACT_TEMPLATE,
+                output_path,
+                {"Harmfulness": "не указано", "Services": "периодический осмотр", "CompanyName": "ООО Тест"},
+                client,
+                SimpleNamespace(encounter_date=date(2026, 9, 25)),
+                {"exams": [exam]},
+                print_variant="ambulatory_extract",
+            )
+            sheet = xlrd.open_workbook(str(output_path)).sheet_by_name("ПЗ2")
+            printed = [
+                strip_new_xls_placeholder_padding(sheet.cell_value(*cell)) for cell in EXTRACT_HARMFUL_FACTOR_CELLS
+            ]
+
+        self.assertEqual(printed, ["приказ 29н п 11.2 п 18.3", "приказ 29н п 11.2 п 18.3"])
 
 
 if __name__ == "__main__":
