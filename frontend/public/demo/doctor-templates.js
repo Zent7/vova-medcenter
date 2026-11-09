@@ -757,7 +757,7 @@
   layout: "chairmanClassic",
   fields: [
     { key: "birthDate", label: "Дата рождения", type: "text", defaultValue: "" },
-    { key: "medicalRequirements", label: "Мед. требования", type: "textarea", defaultValue: "" },
+    { key: "medicalRequirements", label: "Пункты вредности", type: "textarea", defaultValue: "" },
 
     // Поля карточек председателя для справок 070/у и 072/у.
     { key: "omsPolicy", label: "Полис ОМС", type: "text", defaultValue: "" },

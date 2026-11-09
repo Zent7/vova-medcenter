@@ -1199,7 +1199,7 @@
             </div>
 
             <label class="certificate082-requirements">
-              <span>Мед. требования</span>
+              <span>Пункты вредности</span>
               <div class="chairman-requirements-control">
                 <textarea class="doctor-classic-textarea certificate082-requirements__input" name="medicalRequirements" data-medical-requirements-input>${escapeHtml(fields.medicalRequirements ?? "")}</textarea>
                 <button type="button" class="chairman-requirements-picker-btn" data-medical-requirements-open title="Выбрать из сохранённых" aria-label="Выбрать из сохранённых">...</button>
@@ -1580,7 +1580,7 @@
                 </div>
 
                 <div class="chairman-main-row chairman-main-row--requirements">
-                  <label class="chairman-main-label">Мед. требования:</label>
+                  <label class="chairman-main-label">Пункты вредности:</label>
                   <div class="chairman-requirements-control">
                     <textarea class="doctor-classic-textarea chairman-textarea chairman-textarea--big" name="medicalRequirements" data-medical-requirements-input>${escapeHtml(fields.medicalRequirements ?? "")}</textarea>
                     <button
@@ -2596,7 +2596,7 @@
         el.addEventListener("focus", (e) => e.stopPropagation());
       });
 
-      // Поле «Мед. требования» открывает подбор уже по фокусу, поэтому при открытии карточки его пропускаем.
+      // Поле «Пункты вредности» открывает подбор уже по фокусу, поэтому при открытии карточки его пропускаем.
       const first = modal.querySelector(
         'select, input:not([readonly]):not([type="radio"]), textarea:not([data-medical-requirements-input])'
       );

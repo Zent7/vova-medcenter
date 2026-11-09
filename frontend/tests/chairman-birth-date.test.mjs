@@ -86,6 +86,6 @@ test("статичное поле даты выглядит полем толь�
   assert.doesNotMatch(modalSource, /certificate095-static/);
 });
 
-test("при открытии карточки фокус не уходит в «Мед. требования» и не открывает подбор", () => {
+test("при открытии карточки фокус не уходит в «Пункты вредности» и не открывает подбор", () => {
   assert.match(modalSource, /textarea:not\(\[data-medical-requirements-input\]\)/);
 });
