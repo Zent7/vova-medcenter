@@ -5563,7 +5563,7 @@ function normalizeChairmanRecordValue(value) {
 
 function buildChairmanMedicalRecordNotes(fields = {}) {
   const notes = [
-    ["medicalRequirements", "Мед. требования"],
+    ["medicalRequirements", "Пункты вредности"],
     ["ekg", "ЭКГ"],
     ["ekgConclusion", "Заключение ЭКГ"],
     ["fluorography", "Флюорография"],
