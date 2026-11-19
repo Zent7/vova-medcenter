@@ -3013,7 +3013,9 @@ async function apiRequest(path, options = {}) {
       if (response.status === 401 && !path.startsWith("/auth/login")) {
         window.setTimeout(handleSessionEndedByServer, 0);
       }
-      throw new Error(detail || `HTTP ${response.status}`);
+      const requestError = new Error(detail || `HTTP ${response.status}`);
+      requestError.status = response.status;
+      throw requestError;
     }
 
     if (response.status === 204) return null;
@@ -3862,6 +3864,81 @@ async function requestGeneratedDocumentPrintTicket(documentItem) {
     ...ticket,
     file_url: resolveApiUrl(ticket?.file_url),
   };
+}
+
+const SILENT_PRINT_POLL_MS = 1500;
+const SILENT_PRINT_WAIT_MS = 120000;
+
+function waitForSilentPrint(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function closeDocumentTargetWindow(targetWindow) {
+  if (targetWindow && !targetWindow.closed) {
+    targetWindow.close();
+  }
+}
+
+// Тихая печать. Документ ставится в очередь печатного агента рабочего места и печатается без окна выбора принтера.
+// Если агента нет в сети, документ открывается, как раньше, и печатается вручную.
+// Возвращает: "printed" — напечатано агентом; "opened" — открыт для ручной печати; "pending" — агент взял задание,
+// но не подтвердил печать: второй раз не отправляем, проверяем принтер.
+async function printGeneratedDocumentDirectly(documentItem, options = {}) {
+  const targetWindow = options.targetWindow || null;
+  const fileName = documentItem?.fileName || documentItem?.file_name || "";
+  const title = documentItem?.title || fileName || "документ";
+  const openManually = async (message) => {
+    if (message) showToast(message);
+    await openGeneratedDocumentDirectly(documentItem, options);
+    return "opened";
+  };
+
+  if (!fileName) {
+    return openManually();
+  }
+
+  let job;
+  try {
+    job = await apiRequest("/print-jobs", {
+      method: "POST",
+      body: { file_name: fileName, copies: 1 },
+    });
+  } catch (error) {
+    // 409 — печатный агент не в сети. Тогда печатаем по-старому, без лишних сообщений.
+    return openManually();
+  }
+
+  showToast(`Отправили на печать: ${title}`);
+  const deadline = Date.now() + SILENT_PRINT_WAIT_MS;
+  while (Date.now() < deadline) {
+    await waitForSilentPrint(SILENT_PRINT_POLL_MS);
+    let current;
+    try {
+      current = await apiRequest(`/print-jobs/${job.id}`);
+    } catch (error) {
+      continue;
+    }
+    if (current.status === "done") {
+      closeDocumentTargetWindow(targetWindow);
+      showToast(`Напечатано: ${title}`);
+      return "printed";
+    }
+    if (current.status === "failed" || current.status === "cancelled") {
+      return openManually(`Печать не удалась: ${current.error || "ошибка печатного агента"}. Документ открыт для ручной печати.`);
+    }
+  }
+
+  try {
+    const cancelled = await apiRequest(`/print-jobs/${job.id}/cancel`, { method: "POST" });
+    if (cancelled?.status === "cancelled") {
+      return openManually("Печатный агент не ответил. Документ открыт для ручной печати.");
+    }
+  } catch (error) {
+    // Агент уже взял задание: отменить его нельзя, и второй раз отправлять документ не будем.
+  }
+  closeDocumentTargetWindow(targetWindow);
+  showToast(`Агент взял «${title}», но не подтвердил печать. Проверьте принтер; второй раз не отправляйте.`);
+  return "pending";
 }
 
 function buildTemplateFileUrl(templateId, centerId = null) {
@@ -10579,7 +10656,7 @@ async function printDocumentForVisit(type, client, visit, options = {}) {
     printOptions.printVariant = xlsPrintVariant;
   }
   const documentItem = await createDocumentForVisit(type, client, visit, { ...printOptions, print: true });
-  await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
+  documentItem.printOutcome = await printGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
   return documentItem;
 }
 
@@ -10644,7 +10721,9 @@ async function printChairmanDocumentFromExam(examId, options = {}) {
     const directPrintType = printType === "driver" ? "medical" : printType;
     const documentItem = await printDocumentForVisit(directPrintType, client, visit, { targetWindow });
     window.closeSportCard?.();
-    showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
+    if (documentItem?.printOutcome === "opened") {
+      showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
+    }
     return documentItem;
   } catch (error) {
     if (targetWindow && !targetWindow.closed) {
@@ -11779,13 +11858,16 @@ async function openDriverPrintFlow(options = {}) {
         generated_document_id: result.generated_document_id ?? null,
       };
       const printedDocument = registerGeneratedDocument(result, "driver", flowState.client, flowState.visit);
-      await openGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
+      const printOutcome = await printGeneratedDocumentDirectly(printedDocument, { targetWindow: options.targetWindow });
       await refreshDocumentWorkflowState(flowState.clientId, flowState.visit.backendId || null);
-      if (skipConfirmation) {
+      // Если агент не подтвердил печать, оператор сам подтвердит результат на листе — автоподтверждения не будет.
+      if (skipConfirmation && printOutcome !== "pending") {
         try {
           await markPrintedDocument(result.generated_document_id, true);
           actionModal.classList.add("hidden");
-          showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
+          if (printOutcome === "opened") {
+            showToast(`Документ открыт: ${printedDocument.blankNumber || printedDocument.title}`);
+          }
         } catch (error) {
           showToast(humanizeApiError(error, "Не удалось подтвердить открытие оборота"));
         }
@@ -11828,8 +11910,10 @@ async function openDriverPrintFlow(options = {}) {
         status: "issued",
         generated_document_id: documentItem?.id ?? null,
       };
-      await openGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
-      showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
+      const printOutcome = await printGeneratedDocumentDirectly(documentItem, { targetWindow: options.targetWindow });
+      if (printOutcome === "opened") {
+        showToast(`Документ открыт: ${documentItem?.title || "документ"}`);
+      }
     } catch (error) {
       if (options.targetWindow && !options.targetWindow.closed) {
         options.targetWindow.close();
@@ -13212,7 +13296,9 @@ async function printContractForCurrentVisit({ rerender = true, centerName = "" }
       targetWindow,
       ...(centerName ? { templateCenterName: centerName } : {}),
     });
-    showToast(`Договор открыт: ${documentItem?.title || "документ"}${centerName ? ` (${centerName})` : ""}`);
+    if (documentItem?.printOutcome === "opened") {
+      showToast(`Договор открыт: ${documentItem?.title || "документ"}${centerName ? ` (${centerName})` : ""}`);
+    }
   } catch (error) {
     showDocumentTargetError(targetWindow, humanizeApiError(error, "Не удалось открыть договор"));
     console.error(error);
@@ -15109,7 +15195,14 @@ function bindContentEvents() {
           actionModal?.classList.add("hidden");
           window.closeDoctorExamCard?.();
           const assignedNumber = String(documentItem?.blankNumber || "").trim();
-          showToast(`Документ открыт: ${documentItem?.title || actionLabel}${assignedNumber ? `. Номер: ${assignedNumber}` : ""}`);
+          if (documentItem?.printOutcome === "opened") {
+            showToast(`Документ открыт: ${documentItem?.title || actionLabel}${assignedNumber ? `. Номер: ${assignedNumber}` : ""}`);
+          } else if (documentItem?.printOutcome === "printed") {
+            showToast(`Напечатано: ${documentItem?.title || actionLabel}${assignedNumber ? `. Номер: ${assignedNumber}` : ""}`);
+          } else if (documentItem?.printOutcome !== "pending" && assignedNumber) {
+            // При «pending» предупреждение о принтере уже показано — номер его не должен перебить.
+            showToast(`Номер бланка: ${assignedNumber}`);
+          }
         } catch (error) {
           showDocumentTargetError(targetWindow, humanizeApiError(error, `Не удалось отправить ${actionLabel} в печать`));
           console.error(error);

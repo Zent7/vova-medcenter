@@ -1,25 +1,75 @@
+"""Печатный агент Vova Medcenter: сам опрашивает сервер и печатает задания без диалога.
+
+Агент работает на рабочем месте клиники, где установлены Word и Excel. Он только ходит наружу:
+сообщает, что он в сети (heartbeat), забирает задание (claim), скачивает файл по временной
+ссылке, печатает его и сообщает результат. Входящих подключений агент не принимает, поэтому
+браузер и локальные адреса в печати не участвуют.
+
+Настройки лежат в agent.json рядом с программой:
+    {"server": "https://vova-medcenter.ravil.space", "token": "<токен агента>"}
+Токен создает backend/scripts/create_print_agent.py на сервере и показывает его один раз.
+Принтер для агента задается на сервере; если он не задан, печатает принтер по умолчанию.
+"""
+
 from __future__ import annotations
 
 import argparse
 import json
-import os
+import logging
 from pathlib import Path
 import re
 import tempfile
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import time
+from dataclasses import dataclass
+from typing import Any, Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8765
 SUPPORTED_WORD_EXTENSIONS = {".doc", ".docx"}
 SUPPORTED_EXCEL_EXTENSIONS = {".xls", ".xlsx"}
 SUPPORTED_EXTENSIONS = SUPPORTED_WORD_EXTENSIONS | SUPPORTED_EXCEL_EXTENSIONS
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("agent.json")
+HEARTBEAT_SECONDS = 20
+IDLE_POLL_SECONDS = 2
+ERROR_RETRY_SECONDS = 10
+REPORT_ATTEMPTS = 3
+HTTP_TIMEOUT_SECONDS = 20
+DOWNLOAD_TIMEOUT_SECONDS = 60
+MAX_COPIES = 20
+TOKEN_HEADER = "X-Print-Agent-Token"
+USER_AGENT = "VovaPrintAgent/2.0"
+PRINT_TICKET_PATH = "/api/v1/documents/print-ticket/"
+
+log = logging.getLogger("vova-print-agent")
 
 
 class PrintAgentError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    server: str
+    token: str
+
+
+def load_config(path: Path) -> AgentConfig:
+    if not path.is_file():
+        raise PrintAgentError(f"Не найден файл настроек {path}. Создайте его по образцу agent.example.json.")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise PrintAgentError(f"Файл настроек {path} не читается как JSON") from exc
+    server = str(raw.get("server") or "").strip().rstrip("/")
+    token = str(raw.get("token") or "").strip()
+    parsed = urlparse(server)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
+        raise PrintAgentError("В настройках server должен быть адрес сайта вида https://сервер (без пути)")
+    if not token:
+        raise PrintAgentError("В настройках не указан token агента")
+    return AgentConfig(server=f"{parsed.scheme}://{parsed.netloc}", token=token)
 
 
 def sanitize_file_name(file_name: str) -> str:
@@ -28,27 +78,71 @@ def sanitize_file_name(file_name: str) -> str:
     return name or "document"
 
 
-def download_print_file(file_url: str, file_name: str) -> Path:
-    parsed = urlparse(file_url)
-    if parsed.scheme not in {"http", "https"}:
-        raise PrintAgentError("file_url must be http or https")
+def print_file_url(config: AgentConfig, file_url: str) -> str:
+    """Скачиваем только с настроенного сервера: из ссылки берем путь, сервер берем из настроек."""
+    path = urlparse(file_url).path
+    if not path.startswith(PRINT_TICKET_PATH):
+        raise PrintAgentError("Сервер прислал ссылку, которая не похожа на файл печати")
+    return f"{config.server}{path}"
 
-    safe_name = sanitize_file_name(file_name or Path(parsed.path).name)
-    suffix = Path(safe_name).suffix.lower()
+
+class ServerClient:
+    """Вызовы API печатного агента. Все запросы идут наружу, к серверу клиники."""
+
+    def __init__(self, config: AgentConfig) -> None:
+        self._config = config
+
+    def _post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = json.dumps(payload or {}).encode("utf-8")
+        request = Request(
+            f"{self._config.server}/api/v1/print-agent{path}",
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+                TOKEN_HEADER: self._config.token,
+            },
+        )
+        try:
+            with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                return json.loads(response.read().decode("utf-8") or "{}")
+        except HTTPError as exc:
+            detail = ""
+            try:
+                detail = str(json.loads(exc.read().decode("utf-8")).get("detail", ""))
+            except (ValueError, AttributeError):
+                pass
+            raise PrintAgentError(f"Сервер ответил {exc.code}: {detail or exc.reason}") from exc
+
+    def heartbeat(self) -> dict[str, Any]:
+        return self._post("/heartbeat")
+
+    def claim(self) -> dict[str, Any] | None:
+        return self._post("/jobs/claim").get("job")
+
+    def report(self, job_id: int, *, ok: bool, error: str | None = None) -> None:
+        self._post(f"/jobs/{job_id}/result", {"ok": ok, "error": error})
+
+    def download(self, url: str, target: Path) -> None:
+        request = Request(url, headers={"User-Agent": USER_AGENT})
+        with urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+            target.write_bytes(response.read())
+
+
+def download_path(file_name: str) -> Path:
+    suffix = Path(sanitize_file_name(file_name)).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
-        raise PrintAgentError(f"Unsupported file type: {suffix or 'unknown'}")
-
+        raise PrintAgentError(f"Неподдерживаемый тип файла: {suffix or 'без расширения'}")
     temp_dir = Path(tempfile.gettempdir()) / "vova-print-agent"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    target_path = temp_dir / safe_name
+    stem = Path(sanitize_file_name(file_name)).stem
+    target = temp_dir / f"{stem}{suffix}"
     counter = 1
-    while target_path.exists():
-        target_path = temp_dir / f"{Path(safe_name).stem}-{counter}{suffix}"
+    while target.exists():
+        target = temp_dir / f"{stem}-{counter}{suffix}"
         counter += 1
-
-    with urlopen(file_url, timeout=30) as response:
-        target_path.write_bytes(response.read())
-    return target_path
+    return target
 
 
 def print_word_document(file_path: Path, printer_name: str | None, copies: int) -> None:
@@ -117,102 +211,121 @@ def print_file(file_path: Path, printer_name: str | None, copies: int) -> None:
     if suffix in SUPPORTED_EXCEL_EXTENSIONS:
         print_excel_workbook(file_path, printer_name, copies)
         return
-    raise PrintAgentError(f"Unsupported file type: {suffix or 'unknown'}")
+    raise PrintAgentError(f"Неподдерживаемый тип файла: {suffix or 'без расширения'}")
 
 
-class PrintAgentHandler(BaseHTTPRequestHandler):
-    server_version = "VovaPrintAgent/1.0"
+PrintFn = Callable[[Path, str | None, int], None]
 
-    def end_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Cache-Control", "no-store")
-        super().end_headers()
 
-    def do_OPTIONS(self) -> None:
-        self.send_response(204)
-        self.end_headers()
-
-    def do_GET(self) -> None:
-        if self.path == "/health":
-            self.write_json(200, {"ok": True, "service": "vova-print-agent"})
-            return
-        self.write_json(404, {"ok": False, "error": "Not found"})
-
-    def do_POST(self) -> None:
-        if self.path != "/print":
-            self.write_json(404, {"ok": False, "error": "Not found"})
-            return
-
+def _report_with_retries(client: ServerClient, job_id: int, *, ok: bool, error: str | None = None) -> None:
+    for attempt in range(1, REPORT_ATTEMPTS + 1):
         try:
-            payload = self.read_json_body()
-            file_url = str(payload.get("file_url") or "").strip()
-            file_name = str(payload.get("file_name") or "").strip()
-            printer_name = str(payload.get("printer_name") or "").strip() or None
-            copies = int(payload.get("copies") or 1)
-            if copies < 1 or copies > 20:
-                raise PrintAgentError("copies must be between 1 and 20")
-            if not file_url:
-                raise PrintAgentError("file_url is required")
-
-            file_path = download_print_file(file_url, file_name)
-            print_file(file_path, printer_name, copies)
-            self.write_json(
-                200,
-                {
-                    "ok": True,
-                    "file_name": file_path.name,
-                    "printer_name": printer_name or "default",
-                    "copies": copies,
-                },
-            )
-        except Exception as exc:
-            self.write_json(500, {"ok": False, "error": str(exc)})
-
-    def read_json_body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or "0")
-        if length <= 0:
-            return {}
-        raw = self.rfile.read(length)
-        try:
-            value = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise PrintAgentError("Invalid JSON body") from exc
-        if not isinstance(value, dict):
-            raise PrintAgentError("JSON body must be an object")
-        return value
-
-    def write_json(self, status_code: int, payload: dict) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args) -> None:
-        if os.environ.get("VOVA_PRINT_AGENT_QUIET") == "1":
+            client.report(job_id, ok=ok, error=error)
             return
-        super().log_message(format, *args)
+        except (URLError, OSError, PrintAgentError) as exc:
+            log.warning("Не удалось отправить результат задания %s (попытка %s): %s", job_id, attempt, exc)
+            time.sleep(ERROR_RETRY_SECONDS)
+    log.error("Результат задания %s не отправлен; сервер снимет задание по таймауту", job_id)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Local silent print agent for Vova Medcenter")
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    return parser.parse_args()
+def handle_job(
+    job: dict[str, Any],
+    *,
+    config: AgentConfig,
+    client: ServerClient,
+    print_fn: PrintFn,
+    dry_run: bool = False,
+) -> None:
+    """Печатает одно задание и сообщает результат серверу. Ошибку печати тоже отправляем на сервер."""
+    job_id = int(job["id"])
+    file_name = str(job.get("file_name") or "")
+    copies = int(job.get("copies") or 1)
+    if not 1 <= copies <= MAX_COPIES:
+        copies = 1
+    printer_name = str(job.get("printer_name") or "").strip() or None
+    target: Path | None = None
+    try:
+        target = download_path(file_name)
+        client.download(print_file_url(config, str(job["file_url"])), target)
+        if dry_run:
+            log.info("Тестовый режим: задание %s (%s) не отправлено на принтер", job_id, file_name)
+        else:
+            print_fn(target, printer_name, copies)
+            log.info("Напечатано: задание %s, %s, копий %s", job_id, file_name, copies)
+        _report_with_retries(client, job_id, ok=True)
+    except Exception as exc:  # любая ошибка печати возвращается на сервер и видна сотруднику
+        message = str(exc) or exc.__class__.__name__
+        log.error("Задание %s не напечатано: %s", job_id, message)
+        _report_with_retries(client, job_id, ok=False, error=message)
+    finally:
+        if target is not None:
+            target.unlink(missing_ok=True)
 
 
-def main() -> None:
-    args = parse_args()
-    if args.host not in {"127.0.0.1", "localhost"}:
-        raise SystemExit("For safety the print agent must bind only to 127.0.0.1/localhost")
+def poll_once(
+    *,
+    config: AgentConfig,
+    client: ServerClient,
+    print_fn: PrintFn,
+    dry_run: bool = False,
+) -> bool:
+    """Одна проверка очереди. Возвращает True, если задание было взято и обработано."""
+    job = client.claim()
+    if job is None:
+        return False
+    handle_job(job, config=config, client=client, print_fn=print_fn, dry_run=dry_run)
+    return True
 
-    server = ThreadingHTTPServer((args.host, args.port), PrintAgentHandler)
-    print(f"Vova print agent listening on http://{args.host}:{args.port}")
-    server.serve_forever()
+
+def run_forever(config: AgentConfig, *, dry_run: bool) -> None:
+    client = ServerClient(config)
+    last_heartbeat = 0.0
+    log.info("Печатный агент запущен, сервер %s", config.server)
+    while True:
+        try:
+            if time.monotonic() - last_heartbeat >= HEARTBEAT_SECONDS:
+                client.heartbeat()
+                last_heartbeat = time.monotonic()
+            if poll_once(config=config, client=client, print_fn=print_file, dry_run=dry_run):
+                continue
+            time.sleep(IDLE_POLL_SECONDS)
+        except (URLError, OSError, PrintAgentError) as exc:
+            log.warning("Нет связи с сервером или ошибка ответа: %s", exc)
+            time.sleep(ERROR_RETRY_SECONDS)
+
+
+def check_connection(config: AgentConfig) -> int:
+    try:
+        info = ServerClient(config).heartbeat()
+    except (URLError, OSError, PrintAgentError) as exc:
+        print(f"Сервер не отвечает: {exc}")
+        return 1
+    center = info.get("center_id") or "все центры"
+    print(f"Связь есть: агент «{info.get('name')}», центр {center}, принтер {info.get('printer_name') or 'по умолчанию'}")
+    return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Печатный агент Vova Medcenter: тихая печать из очереди сервера")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="путь к agent.json")
+    parser.add_argument("--check", action="store_true", help="проверить связь с сервером и выйти")
+    parser.add_argument("--dry-run", action="store_true", help="забирать задания, но не отправлять их на принтер")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    try:
+        config = load_config(args.config)
+    except PrintAgentError as exc:
+        print(exc)
+        return 2
+    if args.check:
+        return check_connection(config)
+    run_forever(config, dry_run=args.dry_run)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

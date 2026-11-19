@@ -15,6 +15,7 @@ from app.models.import_batch import ImportBatch
 from app.models.medical_record import MedicalRecord, MedicalRecordEntry
 from app.models.patient_consent import PatientConsent
 from app.models.payment import Payment
+from app.models.print_queue import PrintAgent, PrintJob
 from app.models.recall import Recall
 from app.models.service import DoctorRole, Service, ServiceCategory, ServiceDoctorRole
 from app.models.staff_center_schedule import StaffCenterSchedule
@@ -46,6 +47,8 @@ __all__ = [
     "MedicalRecordEntry",
     "PatientConsent",
     "Payment",
+    "PrintAgent",
+    "PrintJob",
     "Recall",
     "Role",
     "Service",

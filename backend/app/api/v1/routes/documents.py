@@ -454,6 +454,11 @@ def create_generated_file_print_ticket(
     if file_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ")
 
+    return issue_print_ticket(file_path, request)
+
+
+def issue_print_ticket(file_path: Path, request: Request) -> DocumentPrintTicketResponse:
+    """Выдает временную публичную ссылку на файл. Ею пользуются браузер и печатный агент."""
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=_PRINT_TICKET_TTL_SECONDS)
     token = secrets.token_urlsafe(32)

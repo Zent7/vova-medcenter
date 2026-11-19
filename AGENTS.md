@@ -163,6 +163,17 @@ The core business feature. Entry point: `app/services/document_generator.py::gen
 
 **The customer prints from Excel 2021.** Excel lays columns and rows out on paper from the workbook font: the first FONT record, or the theme font when the Normal style uses one. Every workbook of the customer's old program uses Arial Cyr 10 with the default Office theme, and its theme-font cells are Calibri. A workbook saved in Microsoft 365 carries the Office 2023 theme with Aptos Narrow, which Excel 2021 does not have: it substitutes Arial, and the blank prints about 10% wider and spills onto a second sheet. Even with Aptos installed the print is 2% wider and 8% taller than the customer's, and Excel prints theme-font cells by the name in their FONT record, so they stay Aptos. Every free-layout print therefore restores the customer's fonts in place (`_use_customer_xls_fonts`): Arial Cyr 10 (Arial 10 in ЛМК) as the workbook font, Calibri instead of Aptos in cells, the default theme. The bundled templates carry the same fonts, and both template extraction scripts in `backend/scripts` apply the function to their output, because the Excel on the development machine is Microsoft 365. `backend/tests/test_xls_customer_fonts.py` guards this. To check a blank against the customer's workbook, export both to PDF through Excel and compare text coordinates: after the fix they match to the point where the page setup is the same.
 
+## Silent Printing (Print Queue)
+
+Generated documents print without a dialog through a server queue and a Windows agent on the workstation (`print_agent/`, see its README).
+
+- The agent only calls out to the server (`/api/v1/print-agent/*`, header `X-Print-Agent-Token`). The server never connects to a workstation, and the browser never calls `localhost`.
+- `POST /api/v1/print-jobs` queues a generated file by name. It returns 409 when no agent for the document's center has sent a heartbeat in the last 60 s (`AGENT_ONLINE_WINDOW`). The frontend then opens the document for manual printing, as before.
+- Job states: `queued` → `claimed` → `done` or `failed`. Claiming is a conditional UPDATE, so one agent takes each job. A claim that is never reported fails after 5 minutes (`CLAIM_TIMEOUT`). The frontend cancels a job that is still `queued` after 120 s. A claimed job cannot be cancelled and is never resent, because that could print twice.
+- Agent tokens: `python scripts/create_print_agent.py --name ... --center center-a --printer ...`, run in `backend/`, prints the token once; the database keeps only its SHA-256. `--list` and `--revoke ID` manage agents.
+- Frontend entry point: `printGeneratedDocumentDirectly()` in `frontend/public/demo/app.js`. It resolves to `printed`, `opened` (manual fallback) or `pending`. `pending` means the agent took the job but never confirmed it: the operator checks the printer, and the turnover is not confirmed automatically.
+- Migration `20261119_0031` creates `print_agents` and `print_jobs`. On an empty database the first migration already creates every table from the current models (`Base.metadata.create_all`), so a migration that adds tables must check for existing tables and indexes first, as `20261119_0031` does.
+
 ## Frontend Architecture
 
 **Stack**: Vite serving the approved delivery demo UI.
@@ -212,6 +223,7 @@ Located in `backend/scripts/`, run directly with Python (not as package modules)
 - `audit_all_document_templates.py` — scan all templates for unknown tokens
 - `scan_document_tokens.py` — extract all tokens from a template file
 - `runtime_api_smoke_check.py` — quick health check against a running backend
+- `create_print_agent.py` — issue, list or revoke the print agent tokens of workstations (see Silent Printing)
 - `build_client_import_template.py` — rebuild `frontend/public/demo/client-import-template.xlsx`, the Excel file employers fill in for the client import; its headers must stay in sync with `CLIENT_IMPORT_HEADERS` in `app/api/v1/routes/imports.py`
 
 ## Domain Model Key Relationships

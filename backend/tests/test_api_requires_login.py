@@ -1,7 +1,9 @@
-"""Без токена работают только вход, проверка здоровья и ссылки печати.
+"""Без токена работают только вход, проверка здоровья, ссылки печати и маршруты печатного агента.
 
 Тест проходит по всем маршрутам API и требует get_current_user в дереве зависимостей
 каждого маршрута, кроме разрешенных. Новый открытый маршрут сначала нужно внести в список.
+Маршруты печатного агента открыты для входа сотрудника, но требуют токен агента
+(X-Print-Agent-Token): их проверяет test_print_queue.py.
 """
 
 from pathlib import Path
@@ -23,6 +25,9 @@ PUBLIC_PATHS = {
     "/health",
     "/documents/print-ticket/{token}",
     "/documents/print-ticket/{token}/{file_name}",
+    "/print-agent/heartbeat",
+    "/print-agent/jobs/claim",
+    "/print-agent/jobs/{job_id}/result",
 }
 
 

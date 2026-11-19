@@ -16,6 +16,9 @@ frontend/node_modules/
 .env.*
 !.env.example
 
+# Printing agent settings: they hold the agent token
+print_agent/agent.json
+
 # Build
 dist/
 build/

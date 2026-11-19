@@ -20,6 +20,7 @@ from app.api.v1.routes.imports import router as imports_router
 from app.api.v1.routes.medical_records import router as medical_records_router
 from app.api.v1.routes.patient_consents import router as patient_consents_router
 from app.api.v1.routes.payments import router as payments_router
+from app.api.v1.routes.print_queue import agent_router as print_agent_router, router as print_jobs_router
 from app.api.v1.routes.recalls import router as recalls_router
 from app.api.v1.routes.reports import router as reports_router
 from app.api.v1.routes.services import router as services_router
@@ -62,10 +63,13 @@ protected_router.include_router(certificate_number_ranges_router, prefix="/certi
 protected_router.include_router(template_phrases_router, prefix="/template-phrases", tags=["template-phrases"])
 protected_router.include_router(doctor_exams_router, prefix="/doctor-exams", tags=["doctor-exams"])
 protected_router.include_router(recalls_router, prefix="/recalls", tags=["recalls"])
+protected_router.include_router(print_jobs_router, prefix="/print-jobs", tags=["print-jobs"])
 
-# Без токена доступны только вход, проверка здоровья и ссылки печати.
+# Без токена доступны только вход, проверка здоровья и ссылки печати. Печатные агенты
+# входят по своему токену агента (X-Print-Agent-Token), а не по токену сотрудника.
 api_router = APIRouter()
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(documents_public_router, prefix="/documents", tags=["documents"])
+api_router.include_router(print_agent_router, prefix="/print-agent", tags=["print-agent"])
 api_router.include_router(protected_router)

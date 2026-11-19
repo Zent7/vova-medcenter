@@ -1,3 +1,8 @@
+param(
+    [switch]$Check,
+    [switch]$DryRun
+)
+
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -10,4 +15,8 @@ if (-not (Test-Path $Python)) {
     & $Python -m pip install -r (Join-Path $ScriptDir "requirements.txt")
 }
 
-& $Python (Join-Path $ScriptDir "main.py") --host 127.0.0.1 --port 8765
+$AgentArgs = @()
+if ($Check) { $AgentArgs += "--check" }
+if ($DryRun) { $AgentArgs += "--dry-run" }
+
+& $Python (Join-Path $ScriptDir "main.py") @AgentArgs

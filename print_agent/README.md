@@ -1,39 +1,83 @@
 # Vova Medcenter Print Agent
 
-Local Windows-only helper for silent printing generated Word and Excel forms.
+Windows-агент тихой печати. Он стоит на рабочем месте клиники, где установлены Microsoft Word и Excel.
+Сотрудник нажимает «Печать» в программе, задание попадает в очередь сервера, а агент сам забирает его
+и печатает на принтере без диалога. Агент только ходит наружу, к серверу: входящих подключений он не
+принимает, а браузер к компьютеру не обращается.
 
-## Requirements
+Как это устроено на сервере: [backend/app/services/print_queue.py](../backend/app/services/print_queue.py).
 
-- Windows workstation.
-- Python 3.11+.
-- Microsoft Word and Excel installed.
+## Требования
 
-## Start manually
+- Windows-рабочее место.
+- Python 3.11+ (нужен только для установки агента).
+- Microsoft Word и Excel.
+- Доступ к сайту клиники по https.
+
+## Выдача токена (делает администратор на сервере)
+
+Токен создается один раз, в базе хранится только его хеш. Агент привязывается к центру;
+без центра он печатает задания всех центров.
+
+```bash
+cd backend
+python scripts/create_print_agent.py --name "Регистратура, ПК 1" --center center-a --printer "HP LaserJet"
+```
+
+Команда выведет токен. Сохраните его сразу: повторно он не показывается. Список агентов и отзыв:
+
+```bash
+python scripts/create_print_agent.py --list
+python scripts/create_print_agent.py --revoke 3
+```
+
+## Настройка на рабочем месте
+
+1. Скопируйте `agent.example.json` в `agent.json` в этой папке.
+2. Впишите адрес сайта и токен:
+
+```json
+{
+  "server": "https://vova-medcenter.ravil.space",
+  "token": "токен, который выдал create_print_agent.py"
+}
+```
+
+Файл `agent.json` содержит токен, поэтому он не попадает в git (см. `.gitignore`).
+
+3. Проверьте связь:
+
+```powershell
+cd print_agent
+.\start-print-agent.ps1 -Check
+```
+
+Должно появиться «Связь есть». Если сервер не отвечает, проверьте адрес и интернет на этом ПК.
+
+## Запуск
 
 ```powershell
 cd print_agent
 .\start-print-agent.ps1
 ```
 
-The agent listens only on `http://127.0.0.1:8765`.
-
-## Install autostart task
+Агент работает, пока открыто окно. Чтобы он запускался при входе в Windows:
 
 ```powershell
 cd print_agent
 .\install-print-agent-task.ps1
 ```
 
-## API
+Режим `-DryRun` забирает задания, но не отправляет их на принтер. Его удобно использовать для проверки
+связи без бумаги.
 
-- `GET /health`
-- `POST /print`
+## Что делает агент
 
-```json
-{
-  "file_url": "https://server/api/v1/documents/print-ticket/...",
-  "file_name": "generated.docx",
-  "printer_name": "",
-  "copies": 1
-}
-```
+- Раз в 20 секунд сообщает серверу, что он в сети.
+- Раз в 2 секунды спрашивает серверу, нет ли задания для его центра.
+- Скачивает файл по временной ссылке с сервера, печатает его (Word для .doc и .docx, Excel для .xls и .xlsx)
+  и сообщает результат. Ошибка печати тоже уходит на сервер, и сотрудник ее видит.
+- Скачивает файлы только с адреса из `agent.json`, любые другие адреса отклоняет.
+
+Если агент выключен или не в сети, сайт не ставит задание в очередь и открывает документ для ручной печати,
+как раньше. Поэтому выключенный агент не приводит к тому, что документ «пропадает».
