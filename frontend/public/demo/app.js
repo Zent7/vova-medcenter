@@ -3744,6 +3744,11 @@ function isWordDocumentFile(fileName = "") {
   return String(fileName || "").toLowerCase().endsWith(".docx");
 }
 
+function isExcelDocumentFile(fileName = "") {
+  const name = String(fileName || "").toLowerCase();
+  return name.endsWith(".xls") || name.endsWith(".xlsx");
+}
+
 function isXmlGeneratedDocument(documentItem) {
   const type = String(documentItem?.type || documentItem?.templateType || "").toLowerCase();
   const fileName = String(documentItem?.fileName || documentItem?.file_name || "").toLowerCase();
@@ -3759,23 +3764,40 @@ function buildWordProtocolUrl(fileUrl) {
   return `ms-word:ofv|u|${encodeURI(fileUrl)}`;
 }
 
+function buildExcelProtocolUrl(fileUrl) {
+  return `ms-excel:ofv|u|${encodeURI(fileUrl)}`;
+}
+
+// Офисный файл открываем в самой программе по протоколу: печать тогда обычная, через Ctrl+P.
+// Скачанный файл пришлось бы искать в загрузках и открывать вручную.
+function getOfficeDocumentTarget(fileName = "", fileUrl = "") {
+  if (isWordDocumentFile(fileName)) {
+    return { appName: "Word", message: "Открываем справку в Microsoft Word.", url: buildWordProtocolUrl(fileUrl) };
+  }
+  if (isExcelDocumentFile(fileName)) {
+    return { appName: "Excel", message: "Открываем документ в Microsoft Excel.", url: buildExcelProtocolUrl(fileUrl) };
+  }
+  return null;
+}
+
 function renderDocumentTargetWindow(targetWindow, options = {}) {
   if (!targetWindow || targetWindow.closed) return false;
   const {
     title = "Подготовка документа",
     message = "Документ формируется. Не закрывайте это окно.",
     fileUrl = "",
-    wordUrl = "",
+    officeAppName = "",
+    officeUrl = "",
     error = false,
   } = options;
   const actions =
-    fileUrl || wordUrl
+    fileUrl || officeUrl
       ? `
         <div class="actions">
-          ${wordUrl ? `<a class="primary" href="${escapeHtml(wordUrl)}">Открыть в Microsoft Word</a>` : ""}
+          ${officeUrl ? `<a class="primary" href="${escapeHtml(officeUrl)}">Открыть в Microsoft ${escapeHtml(officeAppName)}</a>` : ""}
           ${fileUrl ? `<a href="${escapeHtml(fileUrl)}">Скачать документ</a>` : ""}
         </div>
-        <p class="hint">Если Word не открылся автоматически, нажмите кнопку выше.</p>
+        ${officeUrl ? `<p class="hint">Если ${escapeHtml(officeAppName)} не открылся автоматически, нажмите кнопку выше.</p>` : ""}
       `
       : "";
   try {
@@ -3834,15 +3856,16 @@ function showDocumentTargetError(targetWindow, message) {
 
 function openDocumentFileUrl(fileUrl, documentItem = null, targetWindow = null) {
   const fileName = documentItem?.fileName || documentItem?.file_name || fileUrl;
-  const wordDocument = isWordDocumentFile(fileName);
-  const destinationUrl = wordDocument ? buildWordProtocolUrl(fileUrl) : fileUrl;
+  const officeDocument = getOfficeDocumentTarget(fileName, fileUrl);
+  const destinationUrl = officeDocument ? officeDocument.url : fileUrl;
   if (targetWindow && !targetWindow.closed) {
-    if (wordDocument) {
+    if (officeDocument) {
       renderDocumentTargetWindow(targetWindow, {
         title: "Документ готов",
-        message: "Открываем справку в Microsoft Word.",
+        message: officeDocument.message,
         fileUrl,
-        wordUrl: destinationUrl,
+        officeAppName: officeDocument.appName,
+        officeUrl: destinationUrl,
       });
     }
     targetWindow.location.href = destinationUrl;
