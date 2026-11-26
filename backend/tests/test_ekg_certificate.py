@@ -110,6 +110,17 @@ class EkgCertificateTests(unittest.TestCase):
         self.assertIn("ЭКГ от 22.10.2026 г.", text)
         self.assertNotRegex(text, r"\[[A-Za-z][^\]]*\]")
 
+    def test_full_doctor_name_prints_surname_and_initials(self):
+        # Полное ФИО не помещается в строку «М.П … Врач:» и переносится; в бланке заказчика — инициалы.
+        self.add_exam("therapist", "Сибирцев Вячеслав Александрович")
+        self.add_exam("chairman", "Председателев П.П.", ekgConclusion="Норма")
+        result = self.generate()
+        text = document_text(result.output_file_path)
+
+        self.assertEqual(result.generated_fields["EkgTherapistDoctor"], "Сибирцев В.А.")
+        self.assertIn("Врач: Сибирцев В.А.", text)
+        self.assertNotIn("Александрович", text)
+
     def test_empty_conclusion_prints_the_standard_one(self):
         self.add_exam("chairman", "Председателев П.П.")
         result = self.generate()
@@ -169,6 +180,22 @@ class EkgCertificateTests(unittest.TestCase):
         self.assertFalse(alignment.shrink_to_fit)
         # Стандартный текст печатается в четыре строки шрифта 14 pt: строка 22 — 75 pt (1500 twips).
         self.assertGreaterEqual(sheet.rowinfo_map[22].height, 1500)
+
+
+class EkgDoctorShortNameTests(unittest.TestCase):
+    def test_doctor_is_printed_as_surname_and_initials(self):
+        cases = {
+            "Сибирцев Вячеслав Александрович": "Сибирцев В.А.",
+            "Иванов Иван": "Иванов И.",
+            "Тестов Т.Т.": "Тестов Т.Т.",
+            "Тестов Т. Т.": "Тестов Т.Т.",
+            "Председателев П.П.": "Председателев П.П.",
+            "Тестов": "Тестов",
+            "   ": "",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(generator._ekg_doctor_short_name(raw), expected)
 
 
 if __name__ == "__main__":

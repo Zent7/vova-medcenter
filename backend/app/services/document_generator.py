@@ -5667,6 +5667,29 @@ def _ekg_print_conclusion(raw: object) -> str:
     return conclusion
 
 
+def _ekg_doctor_short_name(raw: object) -> str:
+    """Врач в строке «М.П … Врач:» бланка ЭКГ — «Фамилия И.О.», как в бланке заказчика.
+
+    Полное ФИО в эту строку не помещается: «Сибирцев Вячеслав Александрович» уходит
+    на вторую строку (шрифт Calibri 14 pt, строка 467,75 pt), поэтому печатаем инициалы.
+    """
+    words = str(raw or "").split()
+    if not words:
+        return ""
+    surname, given_names = words[0], words[1:]
+    initials: list[str] = []
+    for word in given_names:
+        letters = [char for char in word if char.isalpha()]
+        if "." in word:
+            initials.extend(letters)  # уже инициалы: «Т.Т.»
+        elif letters:
+            initials.append(letters[0])  # имя или отчество целиком
+    if not initials:
+        return surname
+    joined = ".".join(initials)
+    return f"{surname} {joined}."
+
+
 def _ekg_context_overrides(
     template: DocumentTemplate,
     exams: list[DoctorExam],
@@ -5677,7 +5700,7 @@ def _ekg_context_overrides(
     Дата и заключение — из карточки ЭКГ председателя (поля «ЭКГ» и «Заключение ЭКГ»),
     без даты ЭКГ — дата осмотра, без неё — дата обращения. Пустое заключение и прежнее
     автозаключение печатаются стандартным текстом. Врач — терапевт обращения,
-    без осмотра терапевта — врач карточки.
+    без осмотра терапевта — врач карточки; печатается фамилия с инициалами.
     """
     if "экг_шаблон.docx" not in _template_file_names(template):
         return {}
@@ -5692,9 +5715,11 @@ def _ekg_context_overrides(
     return {
         "EkgDate": ekg_date.strftime("%d.%m.%Y") if ekg_date else "",
         "EkgConclusion": _ekg_print_conclusion(_first_field_value(fields, "ekgConclusion", "EKGConclusion", "ecgConclusion")),
-        "EkgTherapistDoctor": _first_non_empty(
-            _exam_doctor_name(exam_map.get("therapist")),
-            _exam_doctor_name(chairman),
+        "EkgTherapistDoctor": _ekg_doctor_short_name(
+            _first_non_empty(
+                _exam_doctor_name(exam_map.get("therapist")),
+                _exam_doctor_name(chairman),
+            )
         ),
     }
 
