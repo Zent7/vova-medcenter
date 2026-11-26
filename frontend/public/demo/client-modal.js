@@ -827,8 +827,18 @@ function getClientServiceDetailKey(service) {
   return String(getServiceToken(service) || service?.name || "");
 }
 
-// Лишение прав: водительская комиссия стоит 1500 ₽ вместо цены категорий.
+// Лишение прав: водительская комиссия стоит 1500 ₽ вместо цены категорий. Цену
+// берём из услуги «Водительская после лишения» в «Услугах»; без неё — 1500 ₽.
 const LICENSE_REVOCATION_PRICE = 1500;
+const LICENSE_REVOCATION_SERVICE_NAMES = ["водительская после лишения", "ву после лишения"];
+
+function getLicenseRevocationPrice() {
+  const service = (data.serverServices || []).find((item) =>
+    LICENSE_REVOCATION_SERVICE_NAMES.includes(String(item.name || "").trim().toLowerCase()),
+  );
+  const catalogPrice = Number(service?.price);
+  return service && Number.isFinite(catalogPrice) ? catalogPrice : LICENSE_REVOCATION_PRICE;
+}
 
 function isLicenseRevocationChecked() {
   return Boolean(actionModalContent.querySelector('input[name="clientDriverLicenseRevoked"]')?.checked);
@@ -836,7 +846,7 @@ function isLicenseRevocationChecked() {
 
 function getDefaultServiceUnitPrice(service) {
   if (service && isDriverService(service)) {
-    if (isLicenseRevocationChecked()) return LICENSE_REVOCATION_PRICE;
+    if (isLicenseRevocationChecked()) return getLicenseRevocationPrice();
     return getDriverCategoryPrice(normalizeDriverCategories(getClientDriverCategoriesFromForm()));
   }
   return Number(service?.price || 0);

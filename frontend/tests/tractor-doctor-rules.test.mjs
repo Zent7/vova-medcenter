@@ -18,6 +18,7 @@ function sourceBetween(startMarker, endMarker) {
 
 const context = vm.createContext({
   doctorRoles: [],
+  data: { serverServices: [] },
   getServicesForVisit: (visit) => visit.services,
   getClientSexKey: () => "",
   isChairmanMarkedService: () => false,

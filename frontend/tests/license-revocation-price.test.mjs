@@ -15,8 +15,9 @@ function sourceBetween(startMarker, endMarker) {
   return modalSource.slice(start, end);
 }
 
-// Цена водительской комиссии при галочке «Лишение прав»: 1500 ₽ вместо цены категорий.
-function loadDefaultUnitPrice({ revoked, categories }) {
+// Цена водительской комиссии при галочке «Лишение прав»: цена услуги «Водительская после
+// лишения» из каталога, а без неё 1500 ₽ вместо цены категорий.
+function loadDefaultUnitPrice({ revoked, categories, serverServices = [] }) {
   const source = sourceBetween("// Лишение прав:", "function syncClientPaymentRowsFromDom");
   const actionModalContent = {
     querySelector: (selector) =>
@@ -24,6 +25,7 @@ function loadDefaultUnitPrice({ revoked, categories }) {
   };
   return new Function(
     "actionModalContent",
+    "data",
     "isDriverService",
     "normalizeDriverCategories",
     "getClientDriverCategoriesFromForm",
@@ -31,6 +33,7 @@ function loadDefaultUnitPrice({ revoked, categories }) {
     `${source}\nreturn getDefaultServiceUnitPrice;`,
   )(
     actionModalContent,
+    { serverServices },
     () => true,
     (value) => value,
     () => categories,
@@ -41,6 +44,15 @@ function loadDefaultUnitPrice({ revoked, categories }) {
 test("при лишении прав водительская комиссия стоит 1500 вместо цены категорий", () => {
   const getPrice = loadDefaultUnitPrice({ revoked: true, categories: ["A", "B", "C"] });
   assert.equal(getPrice({ name: "Водительская справка" }), 1500);
+});
+
+test("при лишении прав цена берётся из услуги «Водительская после лишения»", () => {
+  const getPrice = loadDefaultUnitPrice({
+    revoked: true,
+    categories: ["A", "B", "C"],
+    serverServices: [{ name: "Водительская после лишения", price: 1700 }],
+  });
+  assert.equal(getPrice({ name: "Водительская справка" }), 1700);
 });
 
 test("без лишения прав цена считается по категориям", () => {

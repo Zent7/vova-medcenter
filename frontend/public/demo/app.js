@@ -1999,10 +1999,20 @@ function normalizeTractorCategories(categories) {
   return TRACTOR_CATEGORY_OPTIONS.filter((category) => selected.has(category));
 }
 
+// Цены водительской справки берутся из «Услуг»: базовые категории — услуга
+// legacy 29, остальные — legacy 8. Если такой услуги нет в каталоге, остаются
+// прежние 3500 и 4000.
+const DRIVER_BASE_PRICE_LEGACY_ID = 29;
+const DRIVER_ADVANCED_PRICE_LEGACY_ID = 8;
+
 function getDriverCategoryPrice(categories = []) {
   const normalized = normalizeDriverCategories(categories);
   if (!normalized.length) return 0;
   const isBase = normalized.length > 0 && normalized.every((item) => DRIVER_BASE_CATEGORIES.has(item));
+  const legacySourceId = isBase ? DRIVER_BASE_PRICE_LEGACY_ID : DRIVER_ADVANCED_PRICE_LEGACY_ID;
+  const service = (data.serverServices || []).find((item) => Number(item.legacySourceId) === legacySourceId);
+  const catalogPrice = Number(service?.price);
+  if (service && Number.isFinite(catalogPrice)) return catalogPrice;
   return isBase ? 3500 : 4000;
 }
 
