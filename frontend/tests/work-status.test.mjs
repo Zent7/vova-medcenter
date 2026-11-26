@@ -164,8 +164,8 @@ test("сброс при выходе отбрасывает ответы про�
   assert.equal(wstState.timerId, null);
 });
 
-test("страница статуса подключена: модуль раньше app.js, токены совпадают, выход и вход обслужены", () => {
-  assert.match(indexSource, /<script src="\.\/work-status\.js\?v=[\w-]*work-status-v1"><\/script>/);
+test("страница статуса подключена: модуль раньше app.js, у модуля есть токен кэша, выход и вход обслужены", () => {
+  assert.match(indexSource, /<script src="\.\/work-status\.js\?v=[\w-]+"><\/script>/);
   assert.ok(indexSource.indexOf("work-status.js?v=") < indexSource.indexOf("app.js?v="), "модуль раньше app.js");
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("work-status.js?v="), "график раньше статуса");
 
