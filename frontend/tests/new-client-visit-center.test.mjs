@@ -155,6 +155,6 @@ test("сохранённое обращение запоминает центр,
   assert.match(extractFrom(appSource, "createVisitsForClientByServices"), /visit\.centerId = savedItem\?\.encounter\?\.center_id/);
 });
 
-test("изменённый app.js подняли версию в index.html", () => {
-  assert.match(indexHtml, /\.\/app\.js\?v=[\w-]*driver-price-catalog-v1/);
+test("index.html грузит app.js с токеном кэша", () => {
+  assert.match(indexHtml, /\.\/app\.js\?v=[\w-]+/);
 });

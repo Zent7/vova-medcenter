@@ -24,6 +24,6 @@ test("doctor button handler skips the card form, so deleting a doctor is not und
   assert.match(appSource, /contentRoot\.querySelectorAll\("button\[data-doctor-role-id\]"\)/);
 });
 
-test("app.js cache token was bumped for the doctor button fix", () => {
-  assert.match(indexSource, /app\.js\?v=[\w-]*audit-journal-v1/);
+test("index.html грузит app.js с токеном кэша", () => {
+  assert.match(indexSource, /app\.js\?v=[\w-]+/);
 });

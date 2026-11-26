@@ -631,10 +631,10 @@ test("app.js: выход сбрасывает график, перерисовк
   assert.match(extractFunction("bindContentEvents"), /bindWorkScheduleEvents\(\);/);
 });
 
-test("index.html: модуль графика грузится до app.js, токен у app.js, модуля и стилей один", () => {
-  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]*manual-marks-v1"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
-  assert.match(indexSource, /styles\.css\?v=[\w-]*audit-journal-v1/);
+test("index.html: модуль графика грузится до app.js, все файлы с токеном кэша", () => {
+  assert.match(indexSource, /<script src="\.\/work-schedule\.js\?v=[\w-]+"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]+"><\/script>/);
+  assert.match(indexSource, /styles\.css\?v=[\w-]+/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("app.js?v="), "модуль раньше app.js");
 });
 

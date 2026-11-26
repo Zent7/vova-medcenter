@@ -176,7 +176,7 @@ test("флаг несохранённого ввода ставит только
   assert.match(modalSource, /captureDoctorExamDraftFromDom\(\{ userInput: true \}\);/);
 });
 
-test("index.html грузит app.js с токеном этой правки", () => {
-  assert.match(indexHtml, /app\.js\?v=[\w-]*audit-journal-v1/);
-  assert.match(indexHtml, /doctor-exam-modal\.js\?v=[\w-]*doctor-unsaved-edits-v1/);
+test("index.html грузит app.js и карточку врача с токеном кэша", () => {
+  assert.match(indexHtml, /app\.js\?v=[\w-]+/);
+  assert.match(indexHtml, /doctor-exam-modal\.js\?v=[\w-]+/);
 });

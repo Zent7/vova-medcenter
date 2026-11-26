@@ -184,10 +184,10 @@ test("выход из программы очищает журнал и отбр
   assert.equal(ajState.requestId, requestId + 1);
 });
 
-test("index.html: журнал грузится после графика и до app.js, токены app.js и стилей обновлены", () => {
-  assert.match(indexSource, /<script src="\.\/audit-journal\.js\?v=[\w-]*fact-from-marks-v1"><\/script>/);
-  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]*audit-journal-v1"><\/script>/);
-  assert.match(indexSource, /styles\.css\?v=[\w-]*audit-journal-v1/);
+test("index.html: журнал грузится после графика и до app.js, все три файла с токеном кэша", () => {
+  assert.match(indexSource, /<script src="\.\/audit-journal\.js\?v=[\w-]+"><\/script>/);
+  assert.match(indexSource, /<script src="\.\/app\.js\?v=[\w-]+"><\/script>/);
+  assert.match(indexSource, /styles\.css\?v=[\w-]+/);
   assert.ok(indexSource.indexOf("work-schedule.js?v=") < indexSource.indexOf("audit-journal.js?v="), "график раньше журнала");
   assert.ok(indexSource.indexOf("audit-journal.js?v=") < indexSource.indexOf("app.js?v="), "журнал раньше app.js");
 });

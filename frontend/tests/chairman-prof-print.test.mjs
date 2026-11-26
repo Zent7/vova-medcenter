@@ -18,6 +18,11 @@ function sourceBetween(startMarker, endMarker) {
 const menuSource = sourceBetween("const openChairmanPrintMenu = () =>", "const runChairmanPrint = async");
 const printSource = sourceBetween("const runChairmanPrint = async", "printButton.addEventListener");
 
+// Строки и комментарии не считаются обращениями к переменным: в печати есть "pending" как значение статуса.
+function codeOnly(source) {
+  return source.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, " ");
+}
+
 function declaredNames(source) {
   return new Set([...source.matchAll(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=/g)].map((match) => match[1]));
 }
@@ -33,9 +38,10 @@ test("chairman printing never reaches into the print-menu closure", () => {
     menuOnly.delete(parameter.trim().split(/[\s=]/)[0]);
   }
 
+  const printCode = codeOnly(printSource);
   const leaked = [...menuOnly].filter((name) => {
     const usage = new RegExp(`(?<![.\\w$])${name}\\b(?!\\s*:)`);
-    return usage.test(printSource);
+    return usage.test(printCode);
   });
   assert.deepEqual(leaked, [], `runChairmanPrint uses menu-local names: ${leaked.join(", ")}`);
 });
