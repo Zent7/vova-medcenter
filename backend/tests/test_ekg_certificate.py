@@ -20,7 +20,7 @@ from app.models.doctor_exam import DoctorExam
 from app.models.document_template import DocumentTemplate
 from app.models.encounter import Encounter
 from app.services import document_generator as generator
-from app.services.template_catalog import sync_document_template_catalog
+from app.services.template_catalog import sync_document_template_catalog, template_is_listed_on_templates_page
 
 ASSETS = Path(__file__).resolve().parents[2] / "assets" / "templates"
 ECG_FILE_NAME = "ЭКГ_шаблон.docx"
@@ -44,6 +44,10 @@ def document_text(path):
 
 
 class EkgTemplateFilesTests(unittest.TestCase):
+    def test_ecg_blank_is_listed_on_the_templates_page(self):
+        # Без строки на странице «Шаблоны» бланк ЭКГ не виден ни в одном центре.
+        self.assertTrue(template_is_listed_on_templates_page(ECG_FILE_NAME))
+
     def test_every_ecg_blank_takes_the_patient_and_the_study_from_the_card(self):
         for path in ECG_TEMPLATE_PATHS:
             with self.subTest(path=str(path.relative_to(ASSETS))):

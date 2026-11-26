@@ -82,8 +82,9 @@ def template_display_position(file_name: str) -> int:
 
 SERVICE_LIST_TEMPLATE_FILE_NAMES = frozenset(file_name for file_name, _ in SERVICE_LIST_TEMPLATE_ORDER)
 # Договора нет в списке услуг, но заказчик правит его сам, поэтому строка
-# на странице «Шаблоны» ему нужна.
-TEMPLATES_PAGE_EXTRA_FILE_NAMES = frozenset({"Договор_шаблон_2.docx"})
+# на странице «Шаблоны» ему нужна. То же с ЭКГ: её нет в списке, но заказчик
+# прислал свои бланки ЭКГ по центрам (22.10), без строки их не видно.
+TEMPLATES_PAGE_EXTRA_FILE_NAMES = frozenset({"Договор_шаблон_2.docx", "ЭКГ_шаблон.docx"})
 
 
 def template_is_in_service_list(file_name: str) -> bool:

@@ -28,7 +28,10 @@ function serviceListNames() {
 test("the templates page lists the customer blanks and the contract", () => {
   const templatePage = sourceBetween("function renderTemplatesPage", "function renderWorkflowLoadState");
   assert.match(templatePage, /template\.listed_on_templates_page !== false/);
-  assert.match(catalogSource, /TEMPLATES_PAGE_EXTRA_FILE_NAMES = frozenset\(\{"Договор_шаблон_2\.docx"\}\)/);
+  assert.match(
+    catalogSource,
+    /TEMPLATES_PAGE_EXTRA_FILE_NAMES = frozenset\(\{"Договор_шаблон_2\.docx", "ЭКГ_шаблон\.docx"\}\)/,
+  );
 });
 
 test("the customer service list keeps its order and wording", () => {
