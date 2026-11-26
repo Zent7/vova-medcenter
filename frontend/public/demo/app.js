@@ -11203,6 +11203,17 @@ function buildServiceSeriesAbbreviation(service, options = {}) {
     .trim();
 }
 
+// Подпись кнопки услуги в окне клиента. Серия СЭНД общая для обеих справок СЭМД-196:
+// она уходит в бланки и выбор серии, поэтому не меняется, а на кнопке указываем ФЛГ.
+function buildServiceChipLabel(service, options = {}) {
+  const series = buildServiceSeriesAbbreviation(service, options);
+  if (series !== "СЭНД") return series;
+  const name = String(service?.name || "");
+  if (/без\s+флг/i.test(name)) return "СЭНД без ФЛГ";
+  if (/с\s+флг/i.test(name)) return "СЭНД с ФЛГ";
+  return series;
+}
+
 function getAutoServiceSeriesOptions() {
   const source = Array.isArray(data.serverServices) && data.serverServices.length ? data.serverServices : structuredServices;
   return (Array.isArray(source) ? source : [])

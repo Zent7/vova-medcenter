@@ -31,6 +31,7 @@ function catalog({ driverId = 2, certificatesId = 7, services = [], serverServic
   vm.runInContext([
     appSource.slice(appSource.indexOf("const SERVICE_SERIES_OVERRIDES"), appSource.indexOf("function getStoredDriverPrintSeries")),
     functionSource(appSource, "buildServiceSeriesAbbreviation"),
+    functionSource(appSource, "buildServiceChipLabel"),
     functionSource(appSource, "formatCertificate086SeriesForSex"),
     functionSource(appSource, "normalizeSemd196ServiceGroup"),
     functionSource(appSource, "refreshServiceCatalog"),
@@ -64,6 +65,27 @@ test("driver chooser omits the separate revocation service previously labeled С
   assert.equal(services.find((service) => service.id === 44).groupId, 3);
   context.appState.clientServiceGroupFilter = "8";
   assert.match(context.renderClientServiceSelector(), /СЭНД/);
+});
+
+test("two СЭМД-196 chips name their ФЛГ variant while the series stays СЭНД", () => {
+  const services = [
+    { id: 41, backendId: 41, legacySourceId: 43, name: "Справка по форме СЭМД-196 без ФЛГ", groupId: 8 },
+    { id: 42, backendId: 42, legacySourceId: 44, name: "Справка по форме СЭМД-196 с ФЛГ", groupId: 8 },
+    { id: 45, backendId: 45, legacySourceId: 45, name: "ФЛЮОРОГРАФИЯ", groupId: 8 },
+  ];
+  const context = catalog({ driverId: 3, certificatesId: 8, services });
+  context.getClientModalSexKey = () => "male";
+  vm.runInContext([
+    functionSource(modalSource, "getActiveClientServiceGroups"),
+    functionSource(modalSource, "renderClientServiceSelector"),
+  ].join("\n"), context);
+  context.appState.clientServiceGroupFilter = "8";
+  const html = context.renderClientServiceSelector();
+  assert.match(html, /<span>СЭНД без ФЛГ<\/span>/);
+  assert.match(html, /<span>СЭНД с ФЛГ<\/span>/);
+  assert.match(html, /<span>ФЛГ<\/span>/);
+  assert.equal(context.buildServiceSeriesAbbreviation(services[0]), "СЭНД");
+  assert.equal(context.buildServiceSeriesAbbreviation(services[1]), "СЭНД");
 });
 
 test("custom services never use their database ID as a legacy abbreviation ID", () => {

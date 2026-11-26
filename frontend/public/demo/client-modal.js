@@ -1233,8 +1233,8 @@ function renderClientServiceSelector(selectedServices = []) {
             ? visibleServices
                 .map(
                   (service) => {
-                    const serviceSeries = typeof buildServiceSeriesAbbreviation === "function"
-                      ? buildServiceSeriesAbbreviation(service, { sexKey: getClientModalSexKey() })
+                    const serviceSeries = typeof buildServiceChipLabel === "function"
+                      ? buildServiceChipLabel(service, { sexKey: getClientModalSexKey() })
                       : "";
                     return `
                     <label class="${selectedSet.has(service.name) ? "client-service-chip client-service-chip--active" : "client-service-chip"}">
